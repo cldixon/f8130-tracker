@@ -1,0 +1,69 @@
+{
+  "lexicon": 1,
+  "id": "dev.cldixon.f8130.release",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Public commitment to a synthetic FAA 8130-3 Authorized Release Certificate. Contains only identifiers needed for discovery plus a Merkle root over the full form; the form itself never appears here. SYNTHETIC DEMONSTRATION DATA — not an airworthiness record.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": [
+          "commitment",
+          "issuerDid",
+          "formNumber",
+          "partNumber",
+          "serialNumber",
+          "status",
+          "signerCert",
+          "completedAt"
+        ],
+        "properties": {
+          "commitment": {
+            "type": "bytes",
+            "minLength": 32,
+            "maxLength": 32,
+            "description": "Merkle root over the canonical 15-field set, schema version fieldSetVersion."
+          },
+          "fieldSetVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Version of the committed field order and normalization rules. Absent means 1. Changing field order or normalization requires a new version, never an edit."
+          },
+          "issuerDid": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the issuing organization. Must match the repo this record lives in."
+          },
+          "prev": {
+            "type": "ref",
+            "ref": "com.atproto.repo.strongRef",
+            "description": "Previous shop-visit release for this serial, as a strong reference so the predecessor can be both located and pinned. Absent means birth."
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "Generic asset reference (partNumber:serialNumber for now). Kept generic so aircraft and logbook extensions need no schema change."
+          },
+          "formNumber": { "type": "string", "maxLength": 128 },
+          "partNumber": { "type": "string", "maxLength": 128 },
+          "serialNumber": { "type": "string", "maxLength": 128 },
+          "status": {
+            "type": "string",
+            "knownValues": ["NEW", "OVERHAULED", "REPAIRED", "INSPECTED", "MODIFIED"]
+          },
+          "signerCert": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Certificate ID of the authorized individual. Deliberately a string, not a DID reference, in this demonstration."
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Claimed completion time. Attacker-controlled; compare against an observer's independently recorded time."
+          }
+        }
+      }
+    }
+  }
+}

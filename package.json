@@ -1,0 +1,10 @@
+{
+  "name": "f8130",
+  "private": true,
+  "type": "module",
+  "workspaces": ["core"],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "vectors": "npm run vectors --workspace core"
+  }
+}
