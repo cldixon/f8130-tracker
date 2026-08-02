@@ -1,0 +1,27 @@
+{
+  "name": "spike",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "spike": "tsx spike.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@atproto/api": "^0.20.36",
+    "@atproto/common": "^0.7.3",
+    "@atproto/crypto": "^0.5.4",
+    "@atproto/identity": "^0.5.7",
+    "@atproto/repo": "^0.10.7",
+    "@atproto/syntax": "^0.7.2",
+    "multiformats": "^14.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.4",
+    "typescript": "^7.0.2"
+  },
+  "type": "module"
+}
