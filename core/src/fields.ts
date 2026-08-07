@@ -44,15 +44,16 @@ export const RELEASE_STATUS = [
 /**
  * The 15 committed fields, in commitment order.
  *
- * NOTE ON `formNumber`: the handoff document names exactly four identifier
- * fields — partNumber, serialNumber, workOrder, signerCert — and formNumber is
- * not among them, so it is canonicalized as text. That is very likely an
- * oversight (a form number is an identifier by any reasonable reading), but
- * changing it is a version bump, not an edit, so it stays as specified until
- * someone decides otherwise.
+ * NOTE ON `formNumber`: the handoff document names four identifier fields —
+ * partNumber, serialNumber, workOrder, signerCert — and omits formNumber. That
+ * was an oversight; a form number is an identifier by any reasonable reading,
+ * and treating it as prose would let `SYNTHETIC-8130-0001` and
+ * `synthetic 8130 0001` commit to different roots. Corrected here while the
+ * field set is still unpublished, so it costs a regeneration rather than a
+ * version bump.
  */
 export const FIELDS: readonly FieldSpec[] = [
-  { name: 'formNumber', kind: 'text', public: true },
+  { name: 'formNumber', kind: 'identifier', public: true },
   { name: 'partNumber', kind: 'identifier', public: true },
   { name: 'serialNumber', kind: 'identifier', public: true },
   { name: 'description', kind: 'text', public: false },

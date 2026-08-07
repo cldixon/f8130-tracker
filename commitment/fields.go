@@ -48,12 +48,13 @@ var ReleaseStatus = []string{"NEW", "OVERHAULED", "REPAIRED", "INSPECTED", "MODI
 // FIELD ORDER IS SCHEMA. Never reorder, never add, never remove — bump
 // FieldSetVersion and add a new table.
 //
-// On formNumber: the specification names exactly four identifier fields
-// (partNumber, serialNumber, workOrder, signerCert) and formNumber is not
-// among them, so it is canonicalized as text. Probably an oversight, but
-// changing it is a version bump rather than an edit.
+// On formNumber: the specification names four identifier fields (partNumber,
+// serialNumber, workOrder, signerCert) and omits formNumber. That was an
+// oversight — a form number is an identifier by any reasonable reading, and
+// treating it as prose would let "SYNTHETIC-8130-0001" and
+// "synthetic 8130 0001" commit to different roots.
 var Fields = []FieldSpec{
-	{Name: "formNumber", Kind: KindText, Public: true},
+	{Name: "formNumber", Kind: KindIdentifier, Public: true},
 	{Name: "partNumber", Kind: KindIdentifier, Public: true},
 	{Name: "serialNumber", Kind: KindIdentifier, Public: true},
 	{Name: "description", Kind: KindText},
