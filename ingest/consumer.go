@@ -1,0 +1,228 @@
+package ingest
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"time"
+
+	comatproto "github.com/bluesky-social/indigo/api/atproto"
+	"github.com/bluesky-social/indigo/atproto/identity"
+	atrepo "github.com/bluesky-social/indigo/atproto/repo"
+	"github.com/bluesky-social/indigo/atproto/syntax"
+	"github.com/bluesky-social/indigo/events"
+	"github.com/bluesky-social/indigo/events/schedulers/sequential"
+	"github.com/gorilla/websocket"
+)
+
+// Consumer subscribes to a PDS firehose and maintains the derived index.
+//
+// It takes the canonical CBOR path — com.atproto.sync.subscribeRepos — rather
+// than a convenience JSON feed, because it verifies every commit signature
+// itself. That independent verification is the entire notary role: an observer
+// that trusted the server's word about what the server published would be
+// witnessing nothing.
+type Consumer struct {
+	Store     *Store
+	Directory identity.Directory
+	Logger    *slog.Logger
+
+	// Host is the PDS origin, e.g. ws://pds.railway.internal:3000 for Railway
+	// private networking (which is plain HTTP over IPv6, not TLS) or
+	// wss://pds.f8130.cldixon.dev over the public internet.
+	Host string
+
+	// Now is injectable so tests can pin the notary timestamp.
+	Now func() time.Time
+}
+
+func (c *Consumer) now() time.Time {
+	if c.Now != nil {
+		return c.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func (c *Consumer) logger() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
+}
+
+// Run consumes the firehose until the context is cancelled, reconnecting with
+// backoff and resuming from the stored cursor.
+func (c *Consumer) Run(ctx context.Context) error {
+	backoff := time.Second
+	const maxBackoff = 30 * time.Second
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		err := c.connectAndConsume(ctx)
+		if err == nil || errors.Is(err, context.Canceled) {
+			return nil
+		}
+
+		c.logger().Warn("firehose disconnected, retrying",
+			"error", err, "backoff", backoff)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
+
+func (c *Consumer) connectAndConsume(ctx context.Context) error {
+	cursor, err := c.Store.Cursor(ctx)
+	if err != nil {
+		return fmt.Errorf("read cursor: %w", err)
+	}
+
+	u, err := url.Parse(c.Host)
+	if err != nil {
+		return fmt.Errorf("bad host %q: %w", c.Host, err)
+	}
+	u.Path = "/xrpc/com.atproto.sync.subscribeRepos"
+	if cursor >= 0 {
+		q := u.Query()
+		// Resume from the next event after the last one durably applied.
+		q.Set("cursor", fmt.Sprintf("%d", cursor+1))
+		u.RawQuery = q.Encode()
+	}
+
+	c.logger().Info("connecting to firehose", "url", u.String(), "cursor", cursor)
+
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, u.String(), nil)
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	defer conn.Close()
+
+	callbacks := &events.RepoStreamCallbacks{
+		RepoCommit: func(evt *comatproto.SyncSubscribeRepos_Commit) error {
+			return c.handleCommit(ctx, evt)
+		},
+	}
+
+	sched := sequential.NewScheduler("f8130-ingest", callbacks.EventHandler)
+	return events.HandleRepoStream(ctx, conn, sched, c.logger())
+}
+
+// handleCommit verifies one commit and indexes any f8130 records it carries.
+//
+// A commit that fails verification is logged and skipped rather than fatal.
+// This is a public-network consumer in spirit: crashing on input written by
+// someone else hands them a denial of service, and the correct response to an
+// unverifiable commit is simply not to believe it.
+func (c *Consumer) handleCommit(ctx context.Context, evt *comatproto.SyncSubscribeRepos_Commit) error {
+	log := c.logger().With("did", evt.Repo, "seq", evt.Seq)
+
+	if err := atrepo.VerifyCommitSignature(ctx, c.Directory, evt); err != nil {
+		log.Warn("commit signature did not verify; skipping", "error", err)
+		return nil
+	}
+
+	repo, err := atrepo.VerifyCommitMessage(ctx, evt)
+	if err != nil {
+		log.Warn("commit structure did not verify; skipping", "error", err)
+		return nil
+	}
+
+	records, err := c.extractRecords(ctx, evt, repo)
+	if err != nil {
+		log.Warn("could not extract records; skipping", "error", err)
+		return nil
+	}
+
+	// The cursor still advances for a commit carrying nothing of ours,
+	// otherwise a quiet stretch of unrelated traffic would be replayed on
+	// every reconnect.
+	if err := c.Store.ApplyCommit(ctx, evt.Seq, c.now(), records); err != nil {
+		return fmt.Errorf("apply commit seq %d: %w", evt.Seq, err)
+	}
+
+	if len(records) > 0 {
+		log.Info("indexed records", "count", len(records))
+	}
+	return nil
+}
+
+func (c *Consumer) extractRecords(
+	ctx context.Context,
+	evt *comatproto.SyncSubscribeRepos_Commit,
+	repo *atrepo.Repo,
+) ([]IndexedRecord, error) {
+	var out []IndexedRecord
+
+	for _, op := range evt.Ops {
+		nsid, rkey, err := syntax.ParseRepoPath(op.Path)
+		if err != nil {
+			continue
+		}
+		collection := nsid.String()
+		if collection != ReleaseNSID && collection != AcceptanceNSID {
+			continue
+		}
+		uri := fmt.Sprintf("at://%s/%s/%s", evt.Repo, collection, rkey.String())
+
+		if op.Action == "delete" {
+			out = append(out, IndexedRecord{URI: uri, Collection: collection, Deleted: true})
+			continue
+		}
+		if op.Cid == nil {
+			continue
+		}
+
+		raw, recCid, err := repo.GetRecordBytes(ctx, nsid, rkey)
+		if err != nil {
+			c.logger().Warn("record named in ops but absent from commit blocks",
+				"uri", uri, "error", err)
+			continue
+		}
+
+		decoded, err := DecodeRecord(collection, raw)
+		if err != nil {
+			if !errors.Is(err, ErrNotOurs) {
+				c.logger().Warn("malformed record; skipping", "uri", uri, "error", err)
+			}
+			continue
+		}
+
+		rec := IndexedRecord{URI: uri, CID: recCid.String(), Collection: collection}
+		switch v := decoded.(type) {
+		case *Release:
+			// A record claiming to be issued by someone other than the
+			// repository it lives in is not evidence about that someone.
+			if v.IssuerDID != evt.Repo {
+				c.logger().Warn("release claims a different issuer than its repo; skipping",
+					"uri", uri, "claimed", v.IssuerDID)
+				continue
+			}
+			rec.Release = v
+		case *Acceptance:
+			if v.VerifierDID != evt.Repo {
+				c.logger().Warn("acceptance claims a different verifier than its repo; skipping",
+					"uri", uri, "claimed", v.VerifierDID)
+				continue
+			}
+			rec.Acceptance = v
+		default:
+			continue
+		}
+		out = append(out, rec)
+	}
+
+	return out, nil
+}

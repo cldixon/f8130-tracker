@@ -41,17 +41,21 @@ Early. Built so far:
 | | |
 |---|---|
 | `lexicons/` | `release`, `acceptance`, `dispute` record schemas |
-| `core/` | TypeScript commitment core — canonicalization, Merkle tree, bundles, selective disclosure |
-| `commitment/` | Go implementation of the same scheme |
-| `testdata/vectors.json` | the cross-language contract both must satisfy |
+| `core/` | TypeScript commitment core and the seven-stage verification pipeline |
+| `commitment/` | Go implementation of the same commitment scheme |
+| `ingest/` | firehose consumer, signature verification, derived Postgres index |
+| `cmd/ingest/` | `run` and `reindex` commands |
+| `testdata/vectors.json` | the cross-language contract both cores must satisfy |
 | `spike/` | validation that the atproto verification primitives hold up |
 
-Not yet built: the PDS deployment, the firehose consumer, the verification
-service, and the second AppView.
+Not yet built: the PDS deployment, the web UI, and the second AppView.
 
 ```bash
-npm install && npm test        # TypeScript core
+npm install && npm test        # TypeScript: commitment core + verification pipeline
 go test ./commitment/          # Go core, against the same vectors
+
+# Database tests need a live PostgreSQL; without the variable they skip.
+F8130_TEST_DSN='postgres://...' go test ./ingest/
 ```
 
 ## Two implementations on purpose
