@@ -116,12 +116,14 @@ Early. Built so far:
 | `cmd/ingest/` | `run` and `reindex` commands |
 | `web/` | the AppView — verify page, part timeline, dashboard, JSON API |
 | `seed/` | one-shot job that provisions the accounts and writes the scenarios |
+| `watchdog/` | AppView B — an independent reader with its own index and its own rule |
 | `testdata/vectors.json` | the cross-language contract both cores must satisfy |
 | `spike/` | validation that the atproto verification primitives hold up |
 
 Running live on Railway with real repositories, real signing keys and real
-`did:plc` identities. Not yet built: the second AppView, and record issuance
-through the web UI (the seed job writes records today).
+`did:plc` identities, and with both AppViews reading them. Not yet built:
+record issuance through the web UI (the seed job writes records today), the
+dispute lexicon, and the selective-disclosure proof interface.
 
 Run it locally with nothing installed and nothing deployed:
 
@@ -153,8 +155,23 @@ Five services in one Railway project:
 | `pds` | the stations' repositories — the data | `f8130.cldixon.dev` |
 | `ingest` | firehose consumer; verifies every commit signature | private |
 | `Postgres` | derived index, rebuildable from the firehose | private |
-| `f8130-tracker` | the AppView | [f8130-tracker-production.up.railway.app](https://f8130-tracker-production.up.railway.app) |
+| `f8130-tracker` | AppView A — verify, browse, trace | [f8130-tracker-production.up.railway.app](https://f8130-tracker-production.up.railway.app) |
 | `seed` | one-shot job; provisions accounts and scenarios | — |
+| `watchdog-ingest` | AppView B's own consumer, over the **public** firehose | private |
+| `Postgres-8BEk` | AppView B's own index | private |
+| `watchdog` | AppView B — issuers ranked by independent rejection | [watchdog-production-7c07.up.railway.app](https://watchdog-production-7c07.up.railway.app) |
+
+The two AppViews share the record schemas and nothing else: no database, no
+code, no API, no agreement. AppView B connects to
+`wss://f8130.cldixon.dev` over the public internet rather than through
+Railway's private network, because a reader with privileged access would not
+be demonstrating anything. It backfills from the start of the log, so it can
+join late and still see everything.
+
+Meridian Aeroparts verifies **cleanly in A** — every certificate really was
+signed by the organization claiming it — while being **flagged in B**, because
+three unrelated operators refused its parts. Both readings are correct. They
+answer different questions, and no platform arbitrates between them.
 
 `f8130.cldixon.dev` serves the AT Protocol PDS, not a user interface — that
 separation is the point. The five handles are subdomains of it, so

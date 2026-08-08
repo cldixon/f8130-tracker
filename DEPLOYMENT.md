@@ -42,3 +42,14 @@ Two things cannot be done through the API:
    crashes on boot with "Cannot open database because the directory does not
    exist" — SQLite has nowhere to live.
 2. **DNS records** for the PDS hostname. See the project README.
+
+## The seed is not a normal service
+
+It writes records, and Railway redeploys services on every push. An unrelated
+commit therefore wrote a second complete set of parts into the demonstration
+before anyone noticed — the deployment was green throughout.
+
+Two guards now: the seed refuses to write when an organization already holds
+records (`SEED_RESET=1` clears and rewrites, `SEED_FORCE=1` adds another set),
+and its watch patterns are limited to `seed/**` so unrelated commits do not
+redeploy it at all.
