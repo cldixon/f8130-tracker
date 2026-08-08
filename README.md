@@ -34,6 +34,75 @@ Completeness stays public even when contents are not. Each release links its
 predecessor, so a seller can withhold a document but cannot hide that the
 chain fails to reach birth.
 
+## Architecture
+
+The load-bearing line in this diagram is the dashed one. Everything to its
+right reads the repositories **only** over XRPC and the firehose — never the
+PDS's disk or database, even though they run in the same Railway project.
+Break that once and the demonstration becomes a normal database with extra
+steps.
+
+```mermaid
+flowchart LR
+    subgraph pds["pds · f8130.cldixon.dev"]
+        direction TB
+        R1["northwind-turbine<br/>repo (OEM)"]
+        R2["cascadia-mro<br/>repo (MRO)"]
+        R3["example-air<br/>southpoint-air<br/>repos (operators)"]
+        R4["meridian-aeroparts<br/>repo (broker)"]
+    end
+
+    subgraph appview["AppView A — this project"]
+        ING["ingest<br/>verifies every commit<br/>signature itself"]
+        PG[("Postgres<br/>derived index<br/>rebuildable")]
+        WEB["f8130-tracker<br/>dashboard · timeline · verify"]
+    end
+
+    WD["AppView B — watchdog<br/>(not built yet)<br/>own index, own scoring"]
+
+    pds -. "firehose<br/>subscribeRepos" .-> ING
+    ING --> PG
+    PG --> WEB
+    pds -. "XRPC sync.getRecord<br/>signed inclusion proofs" .-> WEB
+    pds -. "same firehose,<br/>no shared anything" .-> WD
+```
+
+Two paths run through the app, and they are genuinely independent:
+
+```mermaid
+flowchart TB
+    Q1["Browsing<br/>what parts exist? who is being rejected?"]
+    Q2["Verifying<br/>is this specific document real?"]
+
+    Q1 --> PG[("Postgres index")] --> A1["needs ingest to have<br/>seen the record"]
+    Q2 --> X["ask the issuer's own server<br/>for signed bytes"] --> A2["needs nothing but<br/>the internet"]
+```
+
+Verification consults **no database**. It resolves the handle through DNS,
+asks that issuer's PDS for a signed record proof, recomputes the commitment
+from the document in your hand, then follows `prev` references to birth —
+crossing whatever servers the chain happens to span. The index exists purely
+for discovery, which is why the app still verifies documents correctly with
+`DATABASE_URL` unset.
+
+And the document itself never touches this system at all:
+
+```mermaid
+flowchart LR
+    S["Cascadia MRO<br/>issues the release"]
+    O["Example Air<br/>receives the part"]
+    P["public record:<br/>identifiers + Merkle root"]
+
+    S -- "bundle: all 15 fields<br/>+ nonces, bilaterally" --> O
+    S -- publishes --> P
+    O -- "recomputes root<br/>from the bundle" --> P
+```
+
+Findings, cost, and customer travel shop-to-customer exactly as paperwork does
+today. The public record carries only what is stamped on the part plus a
+commitment. Anyone can check authorship and integrity; nobody learns the
+commercial content — and no AppView ever stores a bundle.
+
 ## Status
 
 Early. Built so far:
@@ -46,16 +115,19 @@ Early. Built so far:
 | `ingest/` | firehose consumer, signature verification, derived Postgres index |
 | `cmd/ingest/` | `run` and `reindex` commands |
 | `web/` | the AppView — verify page, part timeline, dashboard, JSON API |
+| `seed/` | one-shot job that provisions the accounts and writes the scenarios |
 | `testdata/vectors.json` | the cross-language contract both cores must satisfy |
 | `spike/` | validation that the atproto verification primitives hold up |
 
-Not yet built: the PDS deployment, record issuance, and the second AppView.
+Running live on Railway with real repositories, real signing keys and real
+`did:plc` identities. Not yet built: the second AppView, and record issuance
+through the web UI (the seed job writes records today).
 
-Run it now, with nothing installed and nothing deployed:
+Run it locally with nothing installed and nothing deployed:
 
 ```bash
 npm install
-F8130_DEMO_MODE=1 npm run dev     # http://localhost:3000
+npm run dev                             # http://localhost:3000
 curl localhost:3000/demo/bundles.json   # genuine, tampered, forged
 ```
 
@@ -74,9 +146,20 @@ F8130_TEST_DSN='postgres://...' go test ./ingest/
 
 ## Deployment
 
-A demo-mode instance of the web service runs on Railway:
+Five services in one Railway project:
 
-**https://f8130-tracker-production.up.railway.app**
+| service | role | address |
+|---|---|---|
+| `pds` | the stations' repositories — the data | `f8130.cldixon.dev` |
+| `ingest` | firehose consumer; verifies every commit signature | private |
+| `Postgres` | derived index, rebuildable from the firehose | private |
+| `f8130-tracker` | the AppView | [f8130-tracker-production.up.railway.app](https://f8130-tracker-production.up.railway.app) |
+| `seed` | one-shot job; provisions accounts and scenarios | — |
+
+`f8130.cldixon.dev` serves the AT Protocol PDS, not a user interface — that
+separation is the point. The five handles are subdomains of it, so
+`northwind-turbine.f8130.cldixon.dev/.well-known/atproto-did` returns that
+organization's DID.
 
 **A deployment with no environment variables set comes up correct.** That is a
 deliberate property, not luck. Recreating a Railway service silently drops every
