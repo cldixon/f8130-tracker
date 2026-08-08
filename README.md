@@ -78,6 +78,24 @@ A demo-mode instance of the web service runs on Railway:
 
 **https://f8130-tracker-production.up.railway.app**
 
+**A deployment with no environment variables set comes up correct.** That is a
+deliberate property, not luck. Recreating a Railway service silently drops every
+variable it had, and the first time that happened here the app booted green,
+served every page, and failed every verification — because it was pointed at the
+real network with no PDS behind it. Broken-but-healthy-looking is the worst
+failure mode available, so the zero-configuration case is now the default and is
+covered by tests.
+
+| variable | default | effect |
+|---|---|---|
+| `F8130_MODE` | `demo`, or `live` when `DATABASE_URL` is set | which network to read |
+| `DATABASE_URL` | unset | enables browsing; verification never needs it |
+| `PORT` / `HOST` | `3000` / `::` | IPv6 first, falls back to IPv4 |
+| `PLC_URL` | `plc.directory` | identity directory, live mode only |
+
+A demo instance says so in the UI and on `/api/health`, so an instance serving
+an in-memory network can never be mistaken for one reading the real thing.
+
 Configuration that matters, recorded because it was not obvious:
 
 - **`railway.json` points the build at `web/Dockerfile`.** This repository holds

@@ -1,11 +1,12 @@
 /**
  * Server bootstrap.
  *
- * Two deliberate properties. Verification works with no database — losing the
- * index degrades browsing, not the service's primary job. And with no PDS
- * configured the app boots against an in-memory network preloaded with the
- * demo scenario, so the whole thing runs from a fresh clone with nothing
- * installed but Node.
+ * Three deliberate properties. Verification works with no database — losing the
+ * index degrades browsing, not the service's primary job. With no PDS
+ * configured the app boots against an in-memory network preloaded with the demo
+ * scenario, so the whole thing runs from a fresh clone with nothing installed
+ * but Node. And a deployment carrying no environment variables at all comes up
+ * in that same working state rather than in a broken-but-green one.
  */
 
 import { serve } from '@hono/node-server'
@@ -19,17 +20,18 @@ import {
 } from '@f8130/core'
 
 import { createApp } from './app.js'
+import { describeConfig, loadConfig } from './config.js'
 import { PostgresIndex } from './postgres.js'
 
-const port = Number(process.env.PORT ?? 3000)
-
 async function main() {
+  const config = loadConfig()
+  for (const line of describeConfig(config)) console.warn(line)
+
   let resolver: IdentityResolver
   let repo: RepoClient
-
   let demoBundles: Record<string, unknown> | null = null
 
-  if (process.env.F8130_DEMO_MODE === '1') {
+  if (config.mode === 'demo') {
     const { net, birth, overhaul } = await standardNetwork()
     resolver = net
     repo = net
@@ -45,34 +47,33 @@ async function main() {
         uri: `at://${overhaul.bundle.uri.split('/')[2]}/dev.cldixon.f8130.release/3mzzzzzzzzz2z`,
       },
     }
-    console.warn(
-      'DEMO MODE: serving an in-memory network. No real repositories are consulted.',
-    )
-    console.warn('Sample bundles: GET /demo/bundles.json')
   } else {
-    resolver = new AtprotoIdentityResolver({ plcUrl: process.env.PLC_URL })
+    resolver = new AtprotoIdentityResolver({ plcUrl: config.plcUrl })
     repo = new XrpcRepoClient()
   }
 
-  const dbUrl = process.env.DATABASE_URL
-  const index = dbUrl ? PostgresIndex.fromUrl(dbUrl) : null
-  if (!index) {
-    console.warn(
-      'No DATABASE_URL: browsing is disabled, verification is unaffected.',
-    )
-  }
+  const index = config.databaseUrl
+    ? PostgresIndex.fromUrl(config.databaseUrl)
+    : null
 
-  const app = createApp({ resolver, repo, index, demoBundles })
+  const app = createApp({
+    resolver,
+    repo,
+    index,
+    demoBundles,
+    mode: config.mode,
+  })
 
-  // Railway's private network is IPv6-only, so :: is the right default there.
-  // Plenty of containers and CI runners have no IPv6 at all, though, and a
-  // hard-coded :: turns those into an unexplained EAFNOSUPPORT at boot — so
-  // fall back rather than making local development require a flag.
-  const hostname = process.env.HOST ?? '::'
+  // Plenty of containers and CI runners have no IPv6 at all, and a hard-coded
+  // :: turns those into an unexplained EAFNOSUPPORT at boot — so fall back
+  // rather than making local development require a flag.
   const start = (host: string, onFail?: (err: NodeJS.ErrnoException) => void) => {
-    const server = serve({ fetch: app.fetch, port, hostname: host }, (info) => {
-      console.log(`f8130 web listening on [${host}]:${info.port}`)
-    })
+    const server = serve(
+      { fetch: app.fetch, port: config.port, hostname: host },
+      (info) => {
+        console.log(`f8130 web listening on [${host}]:${info.port}`)
+      },
+    )
     server.on('error', (err: NodeJS.ErrnoException) => {
       if (onFail) onFail(err)
       else {
@@ -82,8 +83,8 @@ async function main() {
     })
   }
 
-  start(hostname, (err) => {
-    if (err.code === 'EAFNOSUPPORT' && hostname === '::') {
+  start(config.hostname, (err) => {
+    if (err.code === 'EAFNOSUPPORT' && config.hostname === '::') {
       console.warn('no IPv6 available; falling back to 0.0.0.0')
       start('0.0.0.0')
       return

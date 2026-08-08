@@ -29,13 +29,23 @@ export type AppDeps = {
    * reachable from a fresh clone with nothing installed.
    */
   demoBundles?: Record<string, unknown> | null
+  /**
+   * Whether the service is reading the real network or an in-memory stand-in.
+   *
+   * Surfaced in the UI and on /api/health rather than kept internal: a demo
+   * instance that looks identical to a live one is a trap for anyone who
+   * stumbles onto the URL.
+   */
+  mode?: 'demo' | 'live'
 }
 
 export function createApp(deps: AppDeps) {
   const app = new Hono()
 
+  const mode = deps.mode ?? 'live'
+
   app.get('/api/health', (c) =>
-    c.json({ ok: true, index: Boolean(deps.index) }),
+    c.json({ ok: true, mode, index: Boolean(deps.index) }),
   )
 
   // ------------------------------------------------------------- dashboard
@@ -47,6 +57,7 @@ export function createApp(deps: AppDeps) {
           issuers: [],
           handles: new Map(),
           indexAvailable: false,
+          mode,
         }),
       )
     }
@@ -59,7 +70,7 @@ export function createApp(deps: AppDeps) {
       ...issuers.map((i) => i.did),
     ])
     return c.html(
-      dashboardPage({ recent, issuers, handles, indexAvailable: true }),
+      dashboardPage({ recent, issuers, handles, indexAvailable: true, mode }),
     )
   })
 
@@ -80,6 +91,7 @@ export function createApp(deps: AppDeps) {
           acceptances: new Map(),
           handles: new Map(),
           reachedBirth: false,
+          mode,
         }),
         404,
       )
@@ -114,12 +126,13 @@ export function createApp(deps: AppDeps) {
         acceptances,
         handles,
         reachedBirth,
+        mode,
       }),
     )
   })
 
   // --------------------------------------------------------------- verify
-  app.get('/verify', (c) => c.html(verifyPage()))
+  app.get('/verify', (c) => c.html(verifyPage(mode)))
 
   app.post('/verify', async (c) => {
     const form = await c.req.parseBody()
@@ -130,7 +143,7 @@ export function createApp(deps: AppDeps) {
     try {
       parsed = JSON.parse(raw)
     } catch {
-      return c.html(verifyPage(undefined, 'That is not valid JSON.'), 400)
+      return c.html(verifyPage(mode, undefined, 'That is not valid JSON.'), 400)
     }
 
     try {
@@ -141,9 +154,9 @@ export function createApp(deps: AppDeps) {
         resolver: deps.resolver,
         repo: deps.repo,
       })
-      return c.html(verifyPage(report))
+      return c.html(verifyPage(mode, report))
     } catch (err) {
-      return c.html(verifyPage(undefined, describe(err)), 400)
+      return c.html(verifyPage(mode, undefined, describe(err)), 400)
     }
   })
 

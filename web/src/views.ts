@@ -43,6 +43,12 @@ nav a:hover { color: var(--fg); }
   color: var(--fg); margin-bottom: 1.5rem;
 }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.demo {
+  background: var(--skip-bg); border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  padding: .6rem .8rem; border-radius: 4px; font-size: .85rem;
+  margin-bottom: 1.5rem;
+}
 
 /* verification stages */
 .verdict { padding: 1rem 1.15rem; border-radius: 8px; margin-bottom: 1.25rem; border: 1px solid var(--line); }
@@ -104,7 +110,13 @@ footer { border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem;
 .empty { padding: 1.5rem 1.15rem; color: var(--muted); font-size: .9rem; }
 `
 
-export function layout(title: string, body: HtmlEscapedString | Promise<HtmlEscapedString>) {
+export type Mode = 'demo' | 'live'
+
+export function layout(
+  title: string,
+  body: HtmlEscapedString | Promise<HtmlEscapedString>,
+  mode: Mode = 'live',
+) {
   return html`<!doctype html>
 <html lang="en">
 <head>
@@ -125,6 +137,15 @@ export function layout(title: string, body: HtmlEscapedString | Promise<HtmlEsca
     Fictional organizations and non-existent part numbers. Not an
     airworthiness system, and not an approved method for one.
   </div>
+  ${mode === 'demo'
+    ? html`<div class="demo">
+        <strong>Demo instance.</strong> This server is not reading the real
+        AT Protocol network — it runs an in-memory one with real signing keys
+        and real proofs, so the cryptography below is genuine while the hosting
+        is simulated. Sample documents:
+        <a href="/demo/bundles.json">/demo/bundles.json</a>.
+      </div>`
+    : ''}
   ${body}
   <footer>
     SYNTHETIC DATA — demonstration only. Records are read from independent
@@ -160,7 +181,11 @@ function stageRow(s: Stage) {
   </div>`
 }
 
-export function verifyPage(report?: VerificationReport, error?: string) {
+export function verifyPage(
+  mode: Mode = 'live',
+  report?: VerificationReport,
+  error?: string,
+) {
   const form = html`<form method="post" action="/verify">
     <label for="bundle">Bundle JSON — the document as it was handed to you</label>
     <textarea id="bundle" name="bundle" placeholder='{ "uri": "at://…", "issuerHandle": "…", "values": { … }, "nonces": [ … ] }'></textarea>
@@ -179,6 +204,7 @@ export function verifyPage(report?: VerificationReport, error?: string) {
       </p>
       ${error ? html`<div class="verdict no"><h2>Could not read that bundle</h2><p>${error}</p></div>` : ''}
       <div class="card" style="padding:1.15rem">${form}</div>`,
+      mode,
     )
   }
 
@@ -247,6 +273,7 @@ export function verifyPage(report?: VerificationReport, error?: string) {
 
     <h2>Verify another</h2>
     <div class="card" style="padding:1.15rem">${form}</div>`,
+    mode,
   )
 }
 
@@ -257,6 +284,7 @@ export function partPage(params: {
   acceptances: Map<string, AcceptanceRow[]>
   handles: Map<string, string>
   reachedBirth: boolean
+  mode?: Mode
 }) {
   const { chain, acceptances, handles } = params
 
@@ -269,6 +297,7 @@ export function partPage(params: {
         This observer has never seen a release certificate for this part.
         That is not proof none exists — only that none has passed through here.
       </div></div>`,
+      params.mode,
     )
   }
 
@@ -331,6 +360,7 @@ export function dashboardPage(params: {
   issuers: IssuerStat[]
   handles: Map<string, string>
   indexAvailable: boolean
+  mode?: Mode
 }) {
   if (!params.indexAvailable) {
     return layout(
@@ -343,6 +373,7 @@ export function dashboardPage(params: {
         reads signed records from issuers directly and never consults this
         database.
       </div></div>`,
+      params.mode,
     )
   }
 
@@ -389,6 +420,7 @@ export function dashboardPage(params: {
             )}
           </table>`}
     </div>`,
+    params.mode,
   )
 }
 

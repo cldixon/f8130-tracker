@@ -62,11 +62,11 @@ const releaseRow = (over: Partial<ReleaseRow> = {}): ReleaseRow => ({
 })
 
 describe('health and shape', () => {
-  test('health reports whether an index is attached', async () => {
+  test('health reports the mode and whether an index is attached', async () => {
     const { app } = await appWithNetwork()
     const res = await app.request('/api/health')
     assert.equal(res.status, 200)
-    assert.deepEqual(await res.json(), { ok: true, index: false })
+    assert.deepEqual(await res.json(), { ok: true, mode: 'live', index: false })
   })
 
   test('every page carries the synthetic-data warning', async () => {
@@ -349,5 +349,71 @@ describe('browsing with an index', () => {
   test('the chain API 404s for an unknown record', async () => {
     const { app } = await appWithNetwork(emptyIndex())
     assert.equal((await app.request('/api/chain/bafynope')).status, 404)
+  })
+})
+
+describe('zero-configuration deployment', () => {
+  test('an empty environment resolves to demo mode', async () => {
+    const { loadConfig } = await import('../src/config.js')
+    const c = loadConfig({} as NodeJS.ProcessEnv)
+    assert.equal(c.mode, 'demo')
+    assert.equal(c.modeInferred, true)
+    assert.equal(c.databaseUrl, null)
+    assert.equal(c.hostname, '::')
+  })
+
+  test('a database implies a real deployment', async () => {
+    const { loadConfig } = await import('../src/config.js')
+    const c = loadConfig({ DATABASE_URL: 'postgres://x' } as NodeJS.ProcessEnv)
+    assert.equal(c.mode, 'live')
+    assert.equal(c.modeInferred, true)
+  })
+
+  test('an explicit mode always wins', async () => {
+    const { loadConfig } = await import('../src/config.js')
+    assert.equal(
+      loadConfig({ F8130_MODE: 'demo', DATABASE_URL: 'postgres://x' } as NodeJS.ProcessEnv).mode,
+      'demo',
+    )
+    assert.equal(
+      loadConfig({ F8130_MODE: 'live' } as NodeJS.ProcessEnv).mode,
+      'live',
+    )
+  })
+
+  test('the previous variable still works, so a live service does not break', async () => {
+    const { loadConfig } = await import('../src/config.js')
+    const c = loadConfig({ F8130_DEMO_MODE: '1' } as NodeJS.ProcessEnv)
+    assert.equal(c.mode, 'demo')
+    assert.equal(c.modeInferred, false)
+  })
+
+  test('a demo instance says so on every page', async () => {
+    const { net } = await standardNetwork()
+    const { createApp } = await import('../src/app.js')
+    const app = createApp({ resolver: net, repo: net, mode: 'demo' })
+    for (const path of ['/', '/verify']) {
+      const body = await (await app.request(path)).text()
+      assert.match(body, /Demo instance/, `${path} does not disclose demo mode`)
+    }
+  })
+
+  test('a live instance does not claim to be a demo', async () => {
+    const { net } = await standardNetwork()
+    const { createApp } = await import('../src/app.js')
+    const app = createApp({ resolver: net, repo: net, mode: 'live' })
+    const body = await (await app.request('/verify')).text()
+    assert.ok(!body.includes('Demo instance'))
+  })
+
+  test('health reports the mode', async () => {
+    const { net } = await standardNetwork()
+    const { createApp } = await import('../src/app.js')
+    const app = createApp({ resolver: net, repo: net, mode: 'demo' })
+    assert.deepEqual(await (await app.request('/api/health')).json(), {
+      ok: true,
+      mode: 'demo',
+      index: false,
+    })
   })
 })
