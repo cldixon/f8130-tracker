@@ -9,6 +9,8 @@
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "vectors": "npm run vectors --workspace core",
-    "dev": "npm run dev --workspace web"
+    "dev": "npm run dev --workspace web",
+    "start": "npm start --workspace web",
+    "ingest": "go run ./cmd/ingest"
   }
 }
