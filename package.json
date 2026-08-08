@@ -5,7 +5,8 @@
   "workspaces": [
     "core",
     "web",
-    "seed"
+    "seed",
+    "watchdog"
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
