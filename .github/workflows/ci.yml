@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck --workspaces --if-present
+      - run: npm test
+
+  go:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: f8130_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports: ['5432:5432']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - run: gofmt -l . | tee /dev/stderr | (! read)
+        name: gofmt
+      - run: go vet ./...
+      - run: go test ./... -count=1
+        env:
+          # Without this the database tests skip rather than fail, so CI would
+          # go green having never exercised the index.
+          F8130_TEST_DSN: postgres://postgres:postgres@localhost:5432/f8130_test?sslmode=disable
+
+  cross-language:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - run: npm ci
+      # Regenerating the vectors must be a no-op. If this diff is non-empty,
+      # a canonicalization rule changed and every commitment ever published
+      # under this field set version is invalidated — which should be a
+      # deliberate version bump, never a silent drift.
+      - run: npm run vectors
+      - run: git diff --exit-code testdata/vectors.json
+      - run: go test ./commitment/ -count=1
