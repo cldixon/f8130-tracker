@@ -76,20 +76,23 @@ F8130_TEST_DSN='postgres://...' go test ./ingest/
 
 A demo-mode instance of the web service runs on Railway:
 
-**https://web-production-287a3.up.railway.app**
+**https://f8130-tracker-production.up.railway.app**
 
 Configuration that matters, recorded because it was not obvious:
 
-- **`RAILWAY_DOCKERFILE_PATH=web/Dockerfile`.** This repository holds a Node
-  workspace and a Go module side by side, and Railway's build detection finds
-  `go.mod` at the root first — the first deploy attempt built the Go service by
-  mistake and failed fetching a Go toolchain. Each service declares its own
-  Dockerfile rather than relying on detection.
+- **`railway.json` points the build at `web/Dockerfile`.** This repository holds
+  a Node workspace and a Go module side by side, and Railway's build detection
+  finds `go.mod` at the root first — an early deploy attempt built the Go
+  service by mistake and failed fetching a Go toolchain. Each service declares
+  its own Dockerfile rather than relying on detection. (Setting
+  `RAILWAY_DOCKERFILE_PATH` achieves the same thing if the config file is ever
+  not picked up.)
 - **`F8130_DEMO_MODE=1`.** No PDS or database is attached yet, so the service
   runs against the in-memory network and serves sample bundles at
   `/demo/bundles.json`.
-- Pushing to the branch does not appear to trigger a rebuild on its own;
-  changing any service variable does.
+- Autodeploy needs the Railway GitHub App to have access to this repository,
+  granted at github.com/settings/installations. Changing any service variable
+  also forces a rebuild from the branch head.
 
 ## Two implementations on purpose
 
