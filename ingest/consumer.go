@@ -95,12 +95,20 @@ func (c *Consumer) connectAndConsume(ctx context.Context) error {
 		return fmt.Errorf("bad host %q: %w", c.Host, err)
 	}
 	u.Path = "/xrpc/com.atproto.sync.subscribeRepos"
+	q := u.Query()
 	if cursor >= 0 {
-		q := u.Query()
 		// Resume from the next event after the last one durably applied.
 		q.Set("cursor", fmt.Sprintf("%d", cursor+1))
-		u.RawQuery = q.Encode()
+	} else {
+		// A brand new index backfills from the start of the log rather than
+		// tailing live. Omitting the cursor entirely would silently skip
+		// everything published before this observer happened to start, which
+		// for a second AppView joining later means an index that is empty and
+		// looks correct. Catching up on history without needing anyone's
+		// cooperation is the point.
+		q.Set("cursor", "0")
 	}
+	u.RawQuery = q.Encode()
 
 	c.logger().Info("connecting to firehose", "url", u.String(), "cursor", cursor)
 
