@@ -1,0 +1,281 @@
+/**
+ * Seeds the demonstration: provisions the five fictional organizations on the
+ * PDS and writes the seven scenarios into their own repositories.
+ *
+ * Runs as a Railway service rather than from a developer's laptop, and reaches
+ * the PDS over private networking. That is not just convenience — it means the
+ * demonstration can be rebuilt by anyone with the project, with no credentials
+ * on any workstation and no dependence on a particular egress policy.
+ *
+ * Idempotent. Re-running logs in to accounts that already exist rather than
+ * failing, so it is safe to redeploy.
+ *
+ * EVERY ORGANIZATION AND PART NUMBER HERE IS FICTIONAL. did:plc registrations
+ * are permanent and public, which makes that a hard constraint rather than a
+ * matter of taste.
+ */
+
+import { AtpAgent } from '@atproto/api'
+import {
+  buildBundle,
+  commitForm,
+  commitmentFromBundle,
+  toHex,
+  type Bundle,
+  type RawForm,
+} from '@f8130/core'
+
+import {
+  birthForm,
+  brokerForms,
+  orphanForm,
+  orgs,
+  overhaulForm,
+  rejectionNotes,
+  type Org,
+} from './scenarios.js'
+
+const RELEASE = 'dev.cldixon.f8130.release'
+const ACCEPTANCE = 'dev.cldixon.f8130.acceptance'
+
+const PDS_URL = process.env.PDS_INTERNAL_URL ?? 'http://pds.railway.internal:3000'
+const PDS_HOSTNAME = process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev'
+const ADMIN_PASSWORD = process.env.PDS_ADMIN_PASSWORD ?? ''
+const ACCOUNT_PASSWORD = process.env.SEED_ACCOUNT_PASSWORD ?? 'synthetic-demo-password'
+
+type Session = { org: Org; agent: AtpAgent; did: string }
+
+type StrongRef = { uri: string; cid: string }
+
+async function waitForPds(): Promise<void> {
+  for (let attempt = 1; attempt <= 30; attempt++) {
+    try {
+      const res = await fetch(`${PDS_URL}/xrpc/_health`)
+      if (res.ok) {
+        console.log(`PDS reachable at ${PDS_URL}`)
+        return
+      }
+    } catch {
+      // not up yet
+    }
+    console.log(`waiting for PDS (${attempt}/30)…`)
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+  throw new Error(`PDS never became reachable at ${PDS_URL}`)
+}
+
+function adminHeaders(): Record<string, string> {
+  const token = Buffer.from(`admin:${ADMIN_PASSWORD}`).toString('base64')
+  return { authorization: `Basic ${token}`, 'content-type': 'application/json' }
+}
+
+async function createInviteCode(): Promise<string> {
+  const res = await fetch(`${PDS_URL}/xrpc/com.atproto.server.createInviteCode`, {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ useCount: 1 }),
+  })
+  if (!res.ok) {
+    throw new Error(`createInviteCode failed: ${res.status} ${await res.text()}`)
+  }
+  return ((await res.json()) as { code: string }).code
+}
+
+/**
+ * Creates an account, or logs in if it already exists.
+ *
+ * The distinction matters for re-runs: an already-provisioned demo should be
+ * refreshable without tearing down identities, because every did:plc created
+ * here is permanent.
+ */
+async function provision(org: Org): Promise<Session> {
+  const agent = new AtpAgent({ service: PDS_URL })
+
+  try {
+    await agent.login({ identifier: org.handle, password: ACCOUNT_PASSWORD })
+    console.log(`  ${org.handle} — already exists, logged in (${agent.session!.did})`)
+    return { org, agent, did: agent.session!.did }
+  } catch {
+    // fall through to creation
+  }
+
+  const inviteCode = await createInviteCode()
+  await agent.createAccount({
+    email: org.email,
+    handle: org.handle,
+    password: ACCOUNT_PASSWORD,
+    inviteCode,
+  })
+  console.log(`  ${org.handle} — created (${agent.session!.did})`)
+  return { org, agent, did: agent.session!.did }
+}
+
+/** Publishes a release commitment and returns its reference plus the bundle. */
+async function issueRelease(
+  session: Session,
+  form: RawForm,
+  prev?: StrongRef,
+): Promise<{ ref: StrongRef; bundle: Bundle }> {
+  const commitment = commitForm(form)
+
+  const record: Record<string, unknown> = {
+    $type: RELEASE,
+    commitment: commitment.root,
+    fieldSetVersion: commitment.version,
+    issuerDid: session.did,
+    formNumber: commitment.values.formNumber,
+    partNumber: commitment.values.partNumber,
+    serialNumber: commitment.values.serialNumber,
+    status: commitment.values.status,
+    signerCert: commitment.values.signerCert,
+    completedAt: commitment.values.completedAt,
+  }
+  if (prev) record.prev = prev
+
+  const res = await session.agent.com.atproto.repo.createRecord({
+    repo: session.did,
+    collection: RELEASE,
+    record,
+  })
+
+  const bundle = buildBundle({
+    uri: res.data.uri,
+    issuerHandle: session.org.handle,
+    commitment,
+  })
+
+  console.log(
+    `    ${commitment.values.partNumber}/${commitment.values.serialNumber} ` +
+      `${commitment.values.status} → ${res.data.uri}`,
+  )
+
+  return { ref: { uri: res.data.uri, cid: res.data.cid }, bundle }
+}
+
+async function issueAcceptance(
+  session: Session,
+  params: {
+    subject: StrongRef
+    issuerDid: string
+    partNumber: string
+    serialNumber: string
+    outcome: 'accepted' | 'rejected' | 'discrepancy'
+    note?: string
+    receivedAt: string
+  },
+): Promise<void> {
+  await session.agent.com.atproto.repo.createRecord({
+    repo: session.did,
+    collection: ACCEPTANCE,
+    record: {
+      $type: ACCEPTANCE,
+      subject: params.subject,
+      issuerDid: params.issuerDid,
+      verifierDid: session.did,
+      partNumber: params.partNumber,
+      serialNumber: params.serialNumber,
+      outcome: params.outcome,
+      ...(params.note ? { note: params.note } : {}),
+      receivedAt: params.receivedAt,
+    },
+  })
+  console.log(
+    `    ${session.org.displayName} ${params.outcome} ${params.partNumber}/${params.serialNumber}`,
+  )
+}
+
+async function main() {
+  if (!ADMIN_PASSWORD) throw new Error('PDS_ADMIN_PASSWORD is required')
+
+  console.log('=== f8130 seed — SYNTHETIC DEMONSTRATION DATA ===\n')
+  await waitForPds()
+
+  console.log('\nProvisioning organizations:')
+  const cast = orgs(PDS_HOSTNAME)
+  const sessions: Record<string, Session> = {}
+  for (const org of cast) {
+    sessions[org.key] = await provision(org)
+  }
+
+  const northwind = sessions.northwind!
+  const cascadia = sessions.cascadia!
+  const exampleair = sessions.exampleair!
+  const southpoint = sessions.southpoint!
+  const meridian = sessions.meridian!
+
+  const bundles: Record<string, unknown> = {}
+
+  // ---------------------------------------------- 1. birth → overhaul → accept
+  console.log('\nScenario 1 — a part with a complete history:')
+  const birth = await issueRelease(northwind, birthForm)
+  const overhaul = await issueRelease(cascadia, overhaulForm, birth.ref)
+  await issueAcceptance(exampleair, {
+    subject: overhaul.ref,
+    issuerDid: cascadia.did,
+    partNumber: 'NT882104',
+    serialNumber: 'SN000417',
+    outcome: 'accepted',
+    receivedAt: '2026-01-29T15:00:00Z',
+  })
+  bundles.genuine = overhaul.bundle
+  bundles.birth = birth.bundle
+
+  // --------------------------------------------------------- 2 & 3. fixtures
+  //
+  // Derived from the genuine bundle rather than published: a tampered document
+  // is by definition one that was never issued in that form, and a forged one
+  // names a record that does not exist.
+  console.log('\nScenarios 2 and 3 — tampered and forged fixtures (not published)')
+  bundles.tampered = {
+    ...overhaul.bundle,
+    values: { ...overhaul.bundle.values, findings: 'No defects found' },
+  }
+  bundles.forged = {
+    ...overhaul.bundle,
+    uri: `at://${cascadia.did}/${RELEASE}/3mzzzzzzzzz2z`,
+  }
+
+  // ----------------------------------------------------------- 4. broken chain
+  console.log('\nScenario 4 — a genuine release whose history stops short:')
+  const orphan = await issueRelease(cascadia, orphanForm, {
+    // Points at a record that was never published. Well-formed, and unresolvable.
+    uri: `at://${northwind.did}/${RELEASE}/3mnevrpublishd`,
+    cid: birth.ref.cid,
+  })
+  bundles.orphan = orphan.bundle
+
+  // ------------------------------------------------- 5. the accumulating signal
+  console.log('\nScenario 5 — three independent operators reject the same broker:')
+  const rejectors = [exampleair, southpoint, cascadia]
+  for (let i = 0; i < brokerForms.length; i++) {
+    const issued = await issueRelease(meridian, brokerForms[i]!)
+    await issueAcceptance(rejectors[i]!, {
+      subject: issued.ref,
+      issuerDid: meridian.did,
+      partNumber: String(issued.bundle.values.partNumber),
+      serialNumber: String(issued.bundle.values.serialNumber),
+      outcome: 'rejected',
+      note: rejectionNotes[i],
+      receivedAt: `2026-03-1${i + 2}T10:00:00Z`,
+    })
+  }
+
+  // ------------------------------------------------------------------ output
+  //
+  // Printed so the bundles can be captured into the repository as fixtures.
+  // This is the issuer side of the exchange — a station legitimately holds the
+  // documents it wrote. No AppView ever stores these.
+  console.log('\n=== BUNDLES BEGIN ===')
+  console.log(JSON.stringify(bundles, null, 2))
+  console.log('=== BUNDLES END ===')
+
+  console.log('\nSanity check:')
+  const root = toHex(commitmentFromBundle(overhaul.bundle).root)
+  console.log(`  genuine bundle reopens commitment ${root.slice(0, 16)}…`)
+  console.log('\nSeed complete.')
+}
+
+main().catch((err) => {
+  console.error('seed failed:', err)
+  process.exit(1)
+})

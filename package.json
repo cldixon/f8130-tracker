@@ -4,7 +4,8 @@
   "type": "module",
   "workspaces": [
     "core",
-    "web"
+    "web",
+    "seed"
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
