@@ -1,0 +1,400 @@
+import { html, raw } from 'hono/html'
+import type { HtmlEscapedString } from 'hono/utils/html'
+
+import type { Stage, VerificationReport } from '@f8130/core'
+import type { AcceptanceRow, IssuerStat, ReleaseRow } from './index-port.js'
+
+const STYLES = `
+:root {
+  --bg: #fbfbfa; --fg: #1a1a19; --muted: #6b6b68; --line: #e2e2df;
+  --card: #ffffff; --pass: #1a7f47; --fail: #b3261e; --warn: #8a6100;
+  --skip: #8a8a86; --accent: #2c5aa0;
+  --pass-bg: #eaf5ee; --fail-bg: #fdecea; --warn-bg: #fdf5e3; --skip-bg: #f4f4f2;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16161a; --fg: #e8e8e6; --muted: #9a9a96; --line: #2e2e34;
+    --card: #1e1e23; --pass: #6cc48d; --fail: #f2857c; --warn: #e0b354;
+    --skip: #7a7a78; --accent: #86aae8;
+    --pass-bg: #17301f; --fail-bg: #351b19; --warn-bg: #33290f; --skip-bg: #232328;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 62rem; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+a { color: var(--accent); }
+h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.05rem; margin: 2rem 0 .75rem; letter-spacing: -0.01em; }
+.sub { color: var(--muted); margin: 0 0 1.75rem; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86em; }
+nav { border-bottom: 1px solid var(--line); background: var(--card); }
+nav div { max-width: 62rem; margin: 0 auto; padding: .8rem 1.25rem; display: flex; gap: 1.25rem; align-items: baseline; }
+nav strong { letter-spacing: -0.02em; }
+nav a { text-decoration: none; color: var(--muted); font-size: .92rem; }
+nav a:hover { color: var(--fg); }
+
+.banner {
+  background: var(--warn-bg); border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  padding: .6rem .8rem; border-radius: 4px; font-size: .85rem;
+  color: var(--fg); margin-bottom: 1.5rem;
+}
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+
+/* verification stages */
+.verdict { padding: 1rem 1.15rem; border-radius: 8px; margin-bottom: 1.25rem; border: 1px solid var(--line); }
+.verdict.ok { background: var(--pass-bg); border-left: 3px solid var(--pass); }
+.verdict.no { background: var(--fail-bg); border-left: 3px solid var(--fail); }
+.verdict h2 { margin: 0 0 .2rem; font-size: 1.15rem; }
+.verdict p { margin: 0; color: var(--muted); font-size: .92rem; }
+
+.stage { display: flex; gap: .9rem; padding: .85rem 1.15rem; border-bottom: 1px solid var(--line); }
+.stage:last-child { border-bottom: 0; }
+.stage .badge {
+  flex: 0 0 auto; width: 4.4rem; text-align: center; align-self: flex-start;
+  font-size: .68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  padding: .2rem 0; border-radius: 3px;
+}
+.badge.pass { color: var(--pass); background: var(--pass-bg); }
+.badge.fail { color: var(--fail); background: var(--fail-bg); }
+.badge.warn { color: var(--warn); background: var(--warn-bg); }
+.badge.skipped { color: var(--skip); background: var(--skip-bg); }
+.stage .body { min-width: 0; }
+.stage .title { font-weight: 600; font-size: .93rem; }
+.stage .detail { color: var(--muted); font-size: .88rem; margin-top: .12rem; }
+.stage .evidence { margin-top: .4rem; font-size: .78rem; color: var(--muted); word-break: break-all; }
+
+/* the lesson: a real signature over a document that has since changed */
+.contrast {
+  margin-top: 1.25rem; padding: .85rem 1.15rem; border-radius: 6px;
+  background: var(--fail-bg); border: 1px dashed var(--fail); font-size: .89rem;
+}
+.contrast strong { color: var(--fail); }
+
+/* timeline */
+.link { display: flex; gap: 1rem; padding: 1rem 1.15rem; border-bottom: 1px solid var(--line); }
+.link:last-child { border-bottom: 0; }
+.link .rail { flex: 0 0 auto; width: .6rem; display: flex; flex-direction: column; align-items: center; }
+.link .dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--accent); margin-top: .45rem; }
+.link .line { flex: 1; width: 1px; background: var(--line); }
+.times { display: flex; gap: 1.75rem; margin-top: .5rem; flex-wrap: wrap; }
+.times div { font-size: .78rem; }
+.times .label { color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-size: .68rem; }
+.gap { background: var(--fail-bg); border: 1px dashed var(--fail); border-radius: 6px; padding: .85rem 1.15rem; margin-top: 1rem; font-size: .89rem; }
+
+table { width: 100%; border-collapse: collapse; font-size: .89rem; }
+th { text-align: left; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: .6rem 1.15rem; border-bottom: 1px solid var(--line); font-weight: 600; }
+td { padding: .65rem 1.15rem; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+.flagged { color: var(--fail); font-weight: 600; }
+.scroll { overflow-x: auto; }
+
+textarea { width: 100%; min-height: 11rem; font-family: ui-monospace, monospace; font-size: .82rem;
+  padding: .75rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
+input[type=text] { padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--card); color: var(--fg); font-size: .9rem; width: 100%; max-width: 22rem; }
+label { display: block; font-size: .8rem; color: var(--muted); margin: 1rem 0 .3rem; }
+button { margin-top: 1.15rem; padding: .55rem 1.1rem; font-size: .92rem; font-weight: 600;
+  border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+footer { border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem;
+  color: var(--muted); font-size: .78rem; }
+.empty { padding: 1.5rem 1.15rem; color: var(--muted); font-size: .9rem; }
+`
+
+export function layout(title: string, body: HtmlEscapedString | Promise<HtmlEscapedString>) {
+  return html`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title} · f8130</title>
+<style>${raw(STYLES)}</style>
+</head>
+<body>
+<nav><div>
+  <strong>f8130</strong>
+  <a href="/">Dashboard</a>
+  <a href="/verify">Verify a document</a>
+</div></nav>
+<main>
+  <div class="banner">
+    <strong>Synthetic demonstration data.</strong>
+    Fictional organizations and non-existent part numbers. Not an
+    airworthiness system, and not an approved method for one.
+  </div>
+  ${body}
+  <footer>
+    SYNTHETIC DATA — demonstration only. Records are read from independent
+    AT Protocol repositories; this service holds no signing keys and is not
+    the source of truth for anything shown.
+  </footer>
+</main>
+</body>
+</html>`
+}
+
+const fmt = (d: Date | string | null | undefined) => {
+  if (!d) return '—'
+  const date = typeof d === 'string' ? new Date(d) : d
+  return date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, 'Z')
+}
+
+const short = (s: string, n = 14) =>
+  s.length <= n * 2 ? s : `${s.slice(0, n)}…${s.slice(-6)}`
+
+function stageRow(s: Stage) {
+  const evidence =
+    s.data && Object.keys(s.data).length > 0
+      ? html`<div class="evidence mono">${JSON.stringify(s.data)}</div>`
+      : ''
+  return html`<div class="stage">
+    <span class="badge ${s.status}">${s.status}</span>
+    <div class="body">
+      <div class="title">${s.title}</div>
+      <div class="detail">${s.detail}</div>
+      ${evidence}
+    </div>
+  </div>`
+}
+
+export function verifyPage(report?: VerificationReport, error?: string) {
+  const form = html`<form method="post" action="/verify">
+    <label for="bundle">Bundle JSON — the document as it was handed to you</label>
+    <textarea id="bundle" name="bundle" placeholder='{ "uri": "at://…", "issuerHandle": "…", "values": { … }, "nonces": [ … ] }'></textarea>
+    <label for="serial">Serial number stamped on the part (optional)</label>
+    <input type="text" id="serial" name="serial" placeholder="SN-000417">
+    <button type="submit">Verify</button>
+  </form>`
+
+  if (!report) {
+    return layout(
+      'Verify',
+      html`<h1>Verify a release certificate</h1>
+      <p class="sub">
+        Checks a document against the commitment its issuer published in their
+        own repository. No account required, and nothing you paste is stored.
+      </p>
+      ${error ? html`<div class="verdict no"><h2>Could not read that bundle</h2><p>${error}</p></div>` : ''}
+      <div class="card" style="padding:1.15rem">${form}</div>`,
+    )
+  }
+
+  const byName = new Map(report.stages.map((s) => [s.name, s]))
+  const sig = byName.get('signature')
+  const recompute = byName.get('recompute')
+
+  // The single most instructive outcome in the whole demonstration, called out
+  // explicitly rather than left for the reader to infer from two adjacent rows.
+  const lesson =
+    sig?.status === 'pass' && recompute?.status === 'fail'
+      ? html`<div class="contrast">
+          <strong>Read these two together.</strong> The signature is genuine —
+          ${report.issuer?.handle} really did sign a release for this part. The
+          commitment is not — the document you were handed is no longer the one
+          they signed. A convincing signature on an altered document is exactly
+          what this design exists to separate.
+        </div>`
+      : ''
+
+  return layout(
+    'Verification result',
+    html`<h1>Verification result</h1>
+    <p class="sub">
+      ${report.issuer
+        ? html`Document attributed to <code>${report.issuer.handle}</code>`
+        : 'Issuer could not be identified'}
+    </p>
+
+    <div class="verdict ${report.verified ? 'ok' : 'no'}">
+      <h2>${report.verified ? 'Verified' : 'Not verified'}</h2>
+      <p>
+        ${report.verified
+          ? 'Every check passed. This document is what its issuer published.'
+          : 'At least one check failed. See the stages below for what and why.'}
+      </p>
+    </div>
+
+    <div class="card">${report.stages.map(stageRow)}</div>
+    ${lesson}
+
+    ${report.chain.length > 0
+      ? html`<h2>History as this document reports it</h2>
+          <div class="card">
+            ${report.chain.map(
+              (l, i) => html`<div class="link">
+                <div class="rail"><div class="dot"></div>${i < report.chain.length - 1 ? html`<div class="line"></div>` : ''}</div>
+                <div class="body">
+                  <div class="title">${l.status} · ${l.partNumber} / ${l.serialNumber}</div>
+                  <div class="detail mono">${short(l.issuerDid)}</div>
+                  <div class="times">
+                    <div><div class="label">Completed (claimed)</div>${fmt(l.completedAt)}</div>
+                  </div>
+                </div>
+              </div>`,
+            )}
+          </div>
+          ${report.reachedBirth
+            ? ''
+            : html`<div class="gap">
+                This history does not reach the part's original manufacture.
+                A seller can decline to hand over a document, but they cannot
+                hide that the chain stops short.
+              </div>`}`
+      : ''}
+
+    <h2>Verify another</h2>
+    <div class="card" style="padding:1.15rem">${form}</div>`,
+  )
+}
+
+export function partPage(params: {
+  partNumber: string
+  serialNumber: string
+  chain: ReleaseRow[]
+  acceptances: Map<string, AcceptanceRow[]>
+  handles: Map<string, string>
+  reachedBirth: boolean
+}) {
+  const { chain, acceptances, handles } = params
+
+  if (chain.length === 0) {
+    return layout(
+      `${params.partNumber} / ${params.serialNumber}`,
+      html`<h1>${params.partNumber} / ${params.serialNumber}</h1>
+      <p class="sub">No records for this part have been observed.</p>
+      <div class="card"><div class="empty">
+        This observer has never seen a release certificate for this part.
+        That is not proof none exists — only that none has passed through here.
+      </div></div>`,
+    )
+  }
+
+  return layout(
+    `${params.partNumber} / ${params.serialNumber}`,
+    html`<h1>${params.partNumber} / ${params.serialNumber}</h1>
+    <p class="sub">
+      ${chain.length} shop visit${chain.length === 1 ? '' : 's'} observed,
+      newest first. Claimed times come from the issuer; observed times come
+      from this service watching the firehose.
+    </p>
+
+    <div class="card">
+      ${chain.map((r, i) => {
+        const verdicts = acceptances.get(r.cid) ?? []
+        return html`<div class="link">
+          <div class="rail"><div class="dot"></div>${i < chain.length - 1 ? html`<div class="line"></div>` : ''}</div>
+          <div class="body" style="flex:1">
+            <div class="title">${r.status}</div>
+            <div class="detail">
+              ${handles.get(r.issuerDid) ?? r.issuerDid}
+              · form <span class="mono">${r.formNumber}</span>
+            </div>
+            <div class="times">
+              <div><div class="label">Completed (claimed)</div>${fmt(r.completedAt)}</div>
+              <div><div class="label">First observed here</div>${fmt(r.observedAt)}</div>
+            </div>
+            ${verdicts.length > 0
+              ? html`<div class="times">
+                  <div>
+                    <div class="label">Operator verdicts</div>
+                    ${verdicts.map(
+                      (v) => html`<span class="${v.outcome === 'rejected' ? 'flagged' : ''}">
+                        ${v.outcome} by ${handles.get(v.verifierDid) ?? short(v.verifierDid)}
+                      </span><br>`,
+                    )}
+                  </div>
+                </div>`
+              : ''}
+          </div>
+        </div>`
+      })}
+    </div>
+
+    ${params.reachedBirth
+      ? ''
+      : html`<div class="gap">
+          The observed history stops before the part's original manufacture.
+          The oldest record here references a predecessor
+          ${chain[chain.length - 1]?.prevUri
+            ? html`(<span class="mono">${short(chain[chain.length - 1]!.prevUri!, 24)}</span>)`
+            : ''}
+          that this observer has never seen.
+        </div>`}`,
+  )
+}
+
+export function dashboardPage(params: {
+  recent: ReleaseRow[]
+  issuers: IssuerStat[]
+  handles: Map<string, string>
+  indexAvailable: boolean
+}) {
+  if (!params.indexAvailable) {
+    return layout(
+      'Dashboard',
+      html`<h1>Dashboard</h1>
+      <p class="sub">Browsing is unavailable; verification is not.</p>
+      <div class="card"><div class="empty">
+        No index is configured, so there is nothing to browse. Note that
+        <a href="/verify">verifying a document</a> still works: verification
+        reads signed records from issuers directly and never consults this
+        database.
+      </div></div>`,
+    )
+  }
+
+  return layout(
+    'Dashboard',
+    html`<h1>Release certificates observed</h1>
+    <p class="sub">
+      Everything below was read from independent repositories over the
+      firehose and verified against its issuer's signing key.
+    </p>
+
+    <h2>Recent releases</h2>
+    <div class="card scroll">
+      ${params.recent.length === 0
+        ? html`<div class="empty">Nothing observed yet.</div>`
+        : html`<table>
+            <tr><th>Part</th><th>Serial</th><th>Status</th><th>Issuer</th><th>Observed</th></tr>
+            ${params.recent.map(
+              (r) => html`<tr>
+                <td><a href="/part/${encodeURIComponent(r.partNumber)}/${encodeURIComponent(r.serialNumber)}">${r.partNumber}</a></td>
+                <td class="mono">${r.serialNumber}</td>
+                <td>${r.status}</td>
+                <td>${params.handles.get(r.issuerDid) ?? short(r.issuerDid)}</td>
+                <td>${fmt(r.observedAt)}</td>
+              </tr>`,
+            )}
+          </table>`}
+    </div>
+
+    <h2>Issuers</h2>
+    <div class="card scroll">
+      ${params.issuers.length === 0
+        ? html`<div class="empty">No issuers observed yet.</div>`
+        : html`<table>
+            <tr><th>Issuer</th><th>Releases</th><th>Independent rejections</th></tr>
+            ${params.issuers.map(
+              (s) => html`<tr>
+                <td>${params.handles.get(s.did) ?? short(s.did)}</td>
+                <td>${s.releases}</td>
+                <td class="${s.distinctRejectors >= 2 ? 'flagged' : ''}">
+                  ${s.distinctRejectors === 0 ? '—' : s.distinctRejectors}
+                </td>
+              </tr>`,
+            )}
+          </table>`}
+    </div>`,
+  )
+}
+
+export function errorPage(status: number, message: string) {
+  return layout(
+    'Error',
+    html`<h1>${status}</h1><p class="sub">${message}</p>`,
+  )
+}

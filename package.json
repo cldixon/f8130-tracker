@@ -2,9 +2,13 @@
   "name": "f8130",
   "private": true,
   "type": "module",
-  "workspaces": ["core"],
+  "workspaces": [
+    "core",
+    "web"
+  ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
-    "vectors": "npm run vectors --workspace core"
+    "vectors": "npm run vectors --workspace core",
+    "dev": "npm run dev --workspace web"
   }
 }

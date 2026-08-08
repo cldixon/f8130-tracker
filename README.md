@@ -45,10 +45,24 @@ Early. Built so far:
 | `commitment/` | Go implementation of the same commitment scheme |
 | `ingest/` | firehose consumer, signature verification, derived Postgres index |
 | `cmd/ingest/` | `run` and `reindex` commands |
+| `web/` | the AppView — verify page, part timeline, dashboard, JSON API |
 | `testdata/vectors.json` | the cross-language contract both cores must satisfy |
 | `spike/` | validation that the atproto verification primitives hold up |
 
-Not yet built: the PDS deployment, the web UI, and the second AppView.
+Not yet built: the PDS deployment, record issuance, and the second AppView.
+
+Run it now, with nothing installed and nothing deployed:
+
+```bash
+npm install
+F8130_DEMO_MODE=1 npm run dev     # http://localhost:3000
+curl localhost:3000/demo/bundles.json   # genuine, tampered, forged
+```
+
+Demo mode serves an in-memory network of real repositories with real signing
+keys and real inclusion proofs. Paste the `tampered` bundle into the verify
+page to see the moment the design is built around: a genuine signature beside
+a commitment that no longer matches.
 
 ```bash
 npm install && npm test        # TypeScript: commitment core + verification pipeline
