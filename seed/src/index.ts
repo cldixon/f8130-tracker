@@ -43,6 +43,11 @@ const PDS_HOSTNAME = process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev'
 const ADMIN_PASSWORD = process.env.PDS_ADMIN_PASSWORD ?? ''
 const ACCOUNT_PASSWORD = process.env.SEED_ACCOUNT_PASSWORD ?? 'synthetic-demo-password'
 
+/** Delete this org's existing f8130 records before writing, then write. */
+const RESET = process.env.SEED_RESET === '1'
+/** Write again even though records already exist. Produces duplicates. */
+const FORCE = process.env.SEED_FORCE === '1'
+
 type Session = { org: Org; agent: AtpAgent; did: string }
 
 type StrongRef = { uri: string; cid: string }
@@ -108,6 +113,50 @@ async function provision(org: Org): Promise<Session> {
   })
   console.log(`  ${org.handle} — created (${agent.session!.did})`)
   return { org, agent, did: agent.session!.did }
+}
+
+/**
+ * Whether this organization has already been seeded.
+ *
+ * Account creation was idempotent from the start, but record writing was not,
+ * and the seed service redeploys on every push to the branch — so an unrelated
+ * commit quietly wrote a second complete set of parts. Existence of prior
+ * records is the only reliable signal, since records are keyed by TID and a
+ * fresh run cannot recognise its own earlier output.
+ */
+async function alreadySeeded(session: Session): Promise<boolean> {
+  const res = await session.agent.com.atproto.repo.listRecords({
+    repo: session.did,
+    collection: RELEASE,
+    limit: 1,
+  })
+  return res.data.records.length > 0
+}
+
+/** Removes every f8130 record from an organization's repository. */
+async function clearRecords(session: Session): Promise<number> {
+  let removed = 0
+  for (const collection of [RELEASE, ACCEPTANCE]) {
+    for (;;) {
+      const res = await session.agent.com.atproto.repo.listRecords({
+        repo: session.did,
+        collection,
+        limit: 100,
+      })
+      if (res.data.records.length === 0) break
+      for (const rec of res.data.records) {
+        const rkey = rec.uri.split('/').pop()!
+        await session.agent.com.atproto.repo.deleteRecord({
+          repo: session.did,
+          collection,
+          rkey,
+        })
+        removed++
+      }
+      if (res.data.records.length < 100) break
+    }
+  }
+  return removed
 }
 
 /** Publishes a release commitment and returns its reference plus the bundle. */
@@ -195,6 +244,26 @@ async function main() {
   const sessions: Record<string, Session> = {}
   for (const org of cast) {
     sessions[org.key] = await provision(org)
+  }
+
+  if (RESET) {
+    console.log('\nSEED_RESET — clearing existing records:')
+    for (const org of cast) {
+      const n = await clearRecords(sessions[org.key]!)
+      console.log(`  ${org.handle} — removed ${n} record(s)`)
+    }
+  } else if (!FORCE) {
+    const seeded: string[] = []
+    for (const org of cast) {
+      if (await alreadySeeded(sessions[org.key]!)) seeded.push(org.handle)
+    }
+    if (seeded.length > 0) {
+      console.log(
+        `\nAlready seeded (${seeded.length} org(s) hold records). Doing nothing.\n` +
+          'Set SEED_RESET=1 to clear and rewrite, or SEED_FORCE=1 to add another set.',
+      )
+      return
+    }
   }
 
   const northwind = sessions.northwind!
