@@ -72,6 +72,25 @@ go test ./commitment/          # Go core, against the same vectors
 F8130_TEST_DSN='postgres://...' go test ./ingest/
 ```
 
+## Deployment
+
+A demo-mode instance of the web service runs on Railway:
+
+**https://web-production-287a3.up.railway.app**
+
+Configuration that matters, recorded because it was not obvious:
+
+- **`RAILWAY_DOCKERFILE_PATH=web/Dockerfile`.** This repository holds a Node
+  workspace and a Go module side by side, and Railway's build detection finds
+  `go.mod` at the root first — the first deploy attempt built the Go service by
+  mistake and failed fetching a Go toolchain. Each service declares its own
+  Dockerfile rather than relying on detection.
+- **`F8130_DEMO_MODE=1`.** No PDS or database is attached yet, so the service
+  runs against the in-memory network and serves sample bundles at
+  `/demo/bundles.json`.
+- Pushing to the branch does not appear to trigger a rebuild on its own;
+  changing any service variable does.
+
 ## Two implementations on purpose
 
 The commitment scheme is meant to be implementable from its specification
