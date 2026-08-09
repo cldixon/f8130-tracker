@@ -34,6 +34,11 @@ Completeness stays public even when contents are not. Each release links its
 predecessor, so a seller can withhold a document but cannot hide that the
 chain fails to reach birth.
 
+[**docs/commitments.md**](docs/commitments.md) works the cryptography through
+from first principles — a four-field toy tree with reproducible hashes, why the
+nonces are not optional, how one field is opened against the published root
+without the issuer's involvement, and what the scheme still cannot do.
+
 ## Architecture
 
 The load-bearing line in this diagram is the dashed one. Everything to its
@@ -119,6 +124,7 @@ Early. Built so far:
 | `watchdog/` | AppView B — an independent reader with its own index and its own rule |
 | `testdata/vectors.json` | the cross-language contract both cores must satisfy |
 | `spike/` | validation that the atproto verification primitives hold up |
+| `docs/commitments.md` | the commitment scheme explained, with worked examples |
 
 Running live on Railway with real repositories, real signing keys and real
 `did:plc` identities, both AppViews reading them, issuance and verdicts
