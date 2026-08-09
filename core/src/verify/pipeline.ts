@@ -105,6 +105,82 @@ function asBytes(v: unknown): Uint8Array | null {
   return null
 }
 
+/**
+ * Fetches a release record and returns it only if it genuinely came from the
+ * issuer named in its URI.
+ *
+ * Split out for callers that need the published commitment without running the
+ * whole pipeline — checking a selective disclosure, for instance, where there
+ * is no bundle to recompute and nothing to say about the chain.
+ */
+export async function fetchVerifiedRelease(params: {
+  uri: string
+  resolver: IdentityResolver
+  repo: RepoClient
+  keyValidityAnchor?: Date
+}): Promise<
+  | { ok: true; record: Record<string, unknown>; commitment: Uint8Array; did: string }
+  | { ok: false; reason: string }
+> {
+  let parts: ReturnType<typeof parseAtUri>
+  try {
+    parts = parseAtUri(params.uri)
+  } catch {
+    return { ok: false, reason: 'The record URI is malformed.' }
+  }
+
+  const identity = await params.resolver.resolveDid(parts.did)
+  if (!identity) {
+    return { ok: false, reason: `${parts.did} has no resolvable identity document.` }
+  }
+
+  let proof: Uint8Array
+  try {
+    proof = await params.repo.getRecordProof({
+      pds: identity.pds,
+      did: parts.did,
+      collection: parts.collection,
+      rkey: parts.rkey,
+    })
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `The issuer's server could not be reached: ${err instanceof Error ? err.message : String(err)}`,
+    }
+  }
+
+  const anchor = params.keyValidityAnchor ?? new Date()
+  const keys =
+    (await params.resolver.signingKeysAt(parts.did, anchor)) ?? [identity.signingKey]
+  const verified = await verifyWithAnyKey(proof, parts.did, keys)
+  if (!verified.ok) {
+    return { ok: false, reason: 'The record does not verify against the issuer\'s key.' }
+  }
+
+  const claim = verified.records.find(
+    (r: any) => r.collection === parts.collection && r.rkey === parts.rkey,
+  )
+  if (!claim?.record) {
+    return {
+      ok: false,
+      reason: 'The issuer has never published this record — their repository proves its absence.',
+    }
+  }
+
+  const record = claim.record as ReleaseRecord
+  const commitment = asBytes(record.commitment)
+  if (!commitment) {
+    return { ok: false, reason: 'That record carries no commitment.' }
+  }
+
+  return {
+    ok: true,
+    record: record as Record<string, unknown>,
+    commitment,
+    did: parts.did,
+  }
+}
+
 export async function verifyBundle(
   opts: VerifyOptions,
 ): Promise<VerificationReport> {

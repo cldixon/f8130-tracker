@@ -1,7 +1,12 @@
 import { html, raw } from 'hono/html'
 import type { HtmlEscapedString } from 'hono/utils/html'
 
-import type { Stage, VerificationReport } from '@f8130/core'
+import type {
+  Disclosure,
+  DisclosureResult,
+  Stage,
+  VerificationReport,
+} from '@f8130/core'
 import type { AcceptanceRow, IssuerStat, ReleaseRow } from './index-port.js'
 
 const STYLES = `
@@ -108,6 +113,9 @@ button { margin-top: 1.15rem; padding: .55rem 1.1rem; font-size: .92rem; font-we
 footer { border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem;
   color: var(--muted); font-size: .78rem; }
 .empty { padding: 1.5rem 1.15rem; color: var(--muted); font-size: .9rem; }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .3rem .8rem; margin-top: .4rem; }
+.check { display: flex; align-items: center; gap: .4rem; margin: 0; font-size: .85rem; color: var(--fg); }
+.check input { margin: 0; }
 `
 
 export type Mode = 'demo' | 'live'
@@ -130,6 +138,7 @@ export function layout(
   <strong>f8130</strong>
   <a href="/">Dashboard</a>
   <a href="/verify">Verify a document</a>
+  <a href="/disclose">Selective disclosure</a>
 </div></nav>
 <main>
   <div class="banner">
@@ -428,5 +437,142 @@ export function errorPage(status: number, message: string) {
   return layout(
     'Error',
     html`<h1>${status}</h1><p class="sub">${message}</p>`,
+  )
+}
+
+
+/* ------------------------------------------------------- selective disclosure */
+
+const FIELD_LABELS: Record<string, string> = {
+  formNumber: 'Form number',
+  partNumber: 'Part number',
+  serialNumber: 'Serial number',
+  description: 'Description',
+  status: 'Status',
+  quantity: 'Quantity',
+  workOrder: 'Work order',
+  findings: 'Findings',
+  workscope: 'Workscope',
+  costCents: 'Cost (cents)',
+  customer: 'Customer',
+  signerCert: 'Signer certificate',
+  signerName: 'Signer name',
+  remarks: 'Remarks',
+  completedAt: 'Completed at',
+}
+
+export function disclosePage(params: {
+  mode?: Mode
+  fields: readonly string[]
+  disclosure?: Disclosure
+  result?: DisclosureResult
+  exposed?: string[]
+  error?: string
+}) {
+  const form = html`<form method="post" action="/disclose">
+    <label for="bundle">Your bundle — the document you were given</label>
+    <textarea id="bundle" name="bundle" placeholder='{ "uri": "at://…", … }'></textarea>
+    <label>Reveal only these fields</label>
+    <div class="checks">
+      ${params.fields.map(
+        (f) => html`<label class="check">
+          <input type="checkbox" name="field" value="${f}"
+            ${f === 'costCents' || f === 'completedAt' ? 'checked' : ''}>
+          ${FIELD_LABELS[f] ?? f}
+        </label>`,
+      )}
+    </div>
+    <button type="submit">Build disclosure</button>
+  </form>`
+
+  const intro = html`<h1>Prove one field, reveal nothing else</h1>
+    <p class="sub">
+      A lessor auditing maintenance spend needs the cost figure and has no
+      business seeing the findings, the customer, or the workscope. Hand over
+      the whole bundle and they hold a competitor's cost structure forever.
+      A disclosure proves the chosen fields against the commitment the issuer
+      already published — no new signature, and no cooperation from anyone.
+    </p>`
+
+  if (!params.disclosure) {
+    return layout(
+      'Selective disclosure',
+      html`${intro}
+      ${params.error
+        ? html`<div class="verdict no"><h2>Could not build that</h2><p>${params.error}</p></div>`
+        : ''}
+      <div class="card" style="padding:1.15rem">${form}</div>`,
+      params.mode,
+    )
+  }
+
+  const d = params.disclosure
+  const r = params.result
+
+  return layout(
+    'Selective disclosure',
+    html`${intro}
+
+    ${r
+      ? html`<div class="verdict ${r.verified ? 'ok' : 'no'}">
+          <h2>${r.verified ? 'Disclosure verifies' : 'Disclosure does not verify'}</h2>
+          <p>
+            ${r.verified
+              ? `Every revealed field is provably part of the record ${d.issuerHandle} published.`
+              : 'At least one revealed field does not match the published commitment.'}
+          </p>
+        </div>`
+      : ''}
+
+    <h2>Revealed</h2>
+    <div class="card">
+      ${(r?.fields ?? []).map(
+        (f) => html`<div class="stage">
+          <span class="badge ${f.verified ? 'pass' : 'fail'}">${f.verified ? 'proven' : 'bad'}</span>
+          <div class="body">
+            <div class="title">${FIELD_LABELS[f.field] ?? f.field}</div>
+            <div class="detail">${f.value === null ? '(empty)' : String(f.value)}</div>
+          </div>
+        </div>`,
+      )}
+    </div>
+
+    <h2>Withheld</h2>
+    <div class="card">
+      <div class="empty">
+        ${(r?.withheld ?? []).map((f) => FIELD_LABELS[f] ?? f).join(' · ')}
+        <p style="margin:.6rem 0 0">
+          The verifier is told which fields exist and were not shown. A verifier
+          who could not tell the difference could be handed a flattering subset
+          and told it was the whole form.
+        </p>
+      </div>
+    </div>
+
+    <h2>What this leaks</h2>
+    <div class="card">
+      <div class="empty">
+        ${params.exposed?.length ?? 0} sibling hashes travel with the proof —
+        unavoidable, since they are how the root is recomputed. Each covers a
+        field salted with 32 random bytes, so a status with five possible values
+        still cannot be recovered from one.
+        <div class="evidence mono" style="margin-top:.5rem">
+          ${(params.exposed ?? []).map((h) => `${h.slice(0, 16)}…`).join('  ')}
+        </div>
+      </div>
+    </div>
+
+    <h2>The disclosure document</h2>
+    <p class="sub">
+      This is what you hand over. Search it for the findings or the customer —
+      they are not in it.
+    </p>
+    <div class="card" style="padding:1.15rem">
+      <textarea readonly>${JSON.stringify(d, null, 2)}</textarea>
+    </div>
+
+    <h2>Build another</h2>
+    <div class="card" style="padding:1.15rem">${form}</div>`,
+    params.mode,
   )
 }

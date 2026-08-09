@@ -2,6 +2,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  CASCADIA,
   parseBundle,
   standardNetwork,
   type Bundle,
@@ -415,5 +416,110 @@ describe('zero-configuration deployment', () => {
       mode: 'demo',
       index: false,
     })
+  })
+})
+
+describe('selective disclosure', () => {
+  test('proves a private field without revealing the others', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const res = await app.request('/disclose', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams([
+        ['bundle', JSON.stringify(overhaul.bundle)],
+        ['field', 'costCents'],
+      ]),
+    })
+    assert.equal(res.status, 200)
+    const body = await res.text()
+
+    assert.match(body, /Disclosure verifies/)
+    assert.match(body, /proven/)
+    // The whole point: the rest of the form is not in the page.
+    assert.ok(!body.includes('Metering valve wear'), 'findings leaked')
+    assert.ok(!body.includes('Full overhaul per CMM'), 'workscope leaked')
+  })
+
+  test('the disclosure document carries one nonce, not fifteen', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const res = await app.request('/api/disclose', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ bundle: overhaul.bundle, fields: ['costCents'] }),
+    })
+    const doc = JSON.stringify(await res.json())
+    const leaked = overhaul.bundle.nonces.filter((n) => doc.includes(n))
+    assert.equal(leaked.length, 1)
+  })
+
+  test('a disclosure verifies against the published record', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const disclosure = await (
+      await app.request('/api/disclose', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ bundle: overhaul.bundle, fields: ['status', 'costCents'] }),
+      })
+    ).json()
+
+    const res = await app.request('/api/disclose/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ disclosure }),
+    })
+    assert.equal(res.status, 200)
+    const result = (await res.json()) as any
+    assert.equal(result.verified, true)
+    assert.equal(result.withheld.length, 13)
+  })
+
+  test('an overstated field is caught', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const disclosure: any = await (
+      await app.request('/api/disclose', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ bundle: overhaul.bundle, fields: ['costCents'] }),
+      })
+    ).json()
+    disclosure.fields[0].value = 99
+
+    const res = await app.request('/api/disclose/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ disclosure }),
+    })
+    assert.equal(res.status, 422)
+    assert.equal(((await res.json()) as any).verified, false)
+  })
+
+  test('a disclosure for a record that was never published 404s', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const disclosure: any = await (
+      await app.request('/api/disclose', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ bundle: overhaul.bundle, fields: ['costCents'] }),
+      })
+    ).json()
+    disclosure.uri = `at://${CASCADIA.did}/dev.cldixon.f8130.release/3mzzzzzzzzz2z`
+
+    const res = await app.request('/api/disclose/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ disclosure }),
+    })
+    assert.equal(res.status, 404)
+  })
+
+  test('choosing no fields is refused', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const res = await app.request('/disclose', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ bundle: JSON.stringify(overhaul.bundle) }),
+    })
+    assert.equal(res.status, 400)
+    assert.match(await res.text(), /at least one field/)
   })
 })

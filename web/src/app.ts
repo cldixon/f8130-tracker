@@ -1,14 +1,26 @@
 import { Hono } from 'hono'
 
 import {
+  buildDisclosure,
+  exposedHashes,
+  fetchVerifiedRelease,
+  FIELD_ORDER,
   parseBundle,
+  parseDisclosure,
   verifyBundle,
+  verifyDisclosure,
   type IdentityResolver,
   type RepoClient,
 } from '@f8130/core'
 
 import type { AcceptanceRow, ReadIndex, ReleaseRow } from './index-port.js'
-import { dashboardPage, errorPage, partPage, verifyPage } from './views.js'
+import {
+  dashboardPage,
+  disclosePage,
+  errorPage,
+  partPage,
+  verifyPage,
+} from './views.js'
 
 const MAX_CHAIN_DEPTH = 100
 const MAX_BUNDLE_BYTES = 256 * 1024
@@ -196,6 +208,102 @@ export function createApp(deps: AppDeps) {
     } catch (err) {
       return c.json({ error: describe(err) }, 400)
     }
+  })
+
+  // ------------------------------------------------- selective disclosure
+  app.get('/disclose', (c) => c.html(disclosePage({ mode, fields: FIELD_ORDER })))
+
+  app.post('/disclose', async (c) => {
+    const form = await c.req.parseBody({ all: true })
+    const raw = typeof form.bundle === 'string' ? form.bundle : ''
+    const picked = Array.isArray(form.field)
+      ? (form.field as string[])
+      : typeof form.field === 'string'
+        ? [form.field]
+        : []
+
+    const fail = (error: string, status: 400 | 404 = 400) =>
+      c.html(disclosePage({ mode, fields: FIELD_ORDER, error }), status)
+
+    if (picked.length === 0) return fail('Choose at least one field to reveal.')
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return fail('That is not valid JSON.')
+    }
+
+    let disclosure
+    try {
+      disclosure = buildDisclosure({ bundle: parseBundle(parsed), fields: picked })
+    } catch (err) {
+      return fail(describe(err))
+    }
+
+    // Check it the way the recipient would: against the commitment the issuer
+    // published, fetched from their own server. Building and checking are the
+    // same screen here only because it is a demonstration.
+    const fetched = await fetchVerifiedRelease({
+      uri: disclosure.uri,
+      resolver: deps.resolver,
+      repo: deps.repo,
+    })
+    if (!fetched.ok) return fail(fetched.reason, 404)
+
+    return c.html(
+      disclosePage({
+        mode,
+        fields: FIELD_ORDER,
+        disclosure,
+        result: verifyDisclosure(disclosure, fetched.commitment),
+        exposed: exposedHashes(disclosure),
+      }),
+    )
+  })
+
+  app.post('/api/disclose', async (c) => {
+    let body: any
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: 'body must be JSON' }, 400)
+    }
+    try {
+      const disclosure = buildDisclosure({
+        bundle: parseBundle(body?.bundle ?? body),
+        fields: Array.isArray(body?.fields) ? body.fields : [],
+      })
+      return c.json(disclosure)
+    } catch (err) {
+      return c.json({ error: describe(err) }, 400)
+    }
+  })
+
+  app.post('/api/disclose/verify', async (c) => {
+    let body: unknown
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: 'body must be JSON' }, 400)
+    }
+
+    let disclosure
+    try {
+      disclosure = parseDisclosure((body as any)?.disclosure ?? body)
+    } catch (err) {
+      return c.json({ error: describe(err) }, 400)
+    }
+
+    const fetched = await fetchVerifiedRelease({
+      uri: disclosure.uri,
+      resolver: deps.resolver,
+      repo: deps.repo,
+    })
+    if (!fetched.ok) return c.json({ error: fetched.reason }, 404)
+
+    const result = verifyDisclosure(disclosure, fetched.commitment)
+    return c.json(result, result.verified ? 200 : 422)
   })
 
   app.get('/api/chain/:cid', async (c) => {
