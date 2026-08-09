@@ -121,9 +121,13 @@ Early. Built so far:
 | `spike/` | validation that the atproto verification primitives hold up |
 
 Running live on Railway with real repositories, real signing keys and real
-`did:plc` identities, and with both AppViews reading them. Not yet built:
-record issuance through the web UI (the seed job writes records today), the
-dispute lexicon, and the selective-disclosure proof interface.
+`did:plc` identities, both AppViews reading them, issuance and verdicts
+through the UI, and selective disclosure. Every milestone from the original
+plan is built.
+
+Deliberately not built, and documented as gaps rather than quietly fixed:
+individual counter-signing, aircraft logbooks, revocation, and nonce
+custody — see [Known gaps](#known-gaps).
 
 Run it locally with nothing installed and nothing deployed:
 
