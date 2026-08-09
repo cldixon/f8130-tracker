@@ -523,3 +523,186 @@ describe('selective disclosure', () => {
     assert.match(await res.text(), /at least one field/)
   })
 })
+
+/* --------------------------------------------------------------- writing */
+
+import type { Actor, RecordWriter, StrongRef } from '../src/writer.js'
+
+/** Records what was asked for, so the tests can assert on intent. */
+function fakeWriter(over: Partial<RecordWriter> = {}) {
+  const calls: any[] = []
+  const actors: Actor[] = [
+    { handle: 'cascadia-mro.f8130.cldixon.dev', displayName: 'Cascadia MRO', kind: 'mro' },
+    { handle: 'example-air.f8130.cldixon.dev', displayName: 'Example Air', kind: 'operator' },
+  ]
+  const writer: RecordWriter = {
+    actors: () => actors,
+    createRelease: async (p) => {
+      calls.push({ kind: 'release', ...p })
+      return {
+        uri: 'at://did:plc:x/dev.cldixon.f8130.release/3new',
+        cid: 'bafynew',
+        bundle: { synthetic: 'S', version: 1, uri: 'at://x', issuerHandle: p.handle, values: {}, nonces: [] } as any,
+      }
+    },
+    createAcceptance: async (p) => {
+      calls.push({ kind: 'acceptance', ...p })
+      return { uri: 'at://did:plc:y/dev.cldixon.f8130.acceptance/3acc', cid: 'bafyacc' }
+    },
+    createDispute: async (p) => {
+      calls.push({ kind: 'dispute', ...p })
+      return { uri: 'at://did:plc:z/dev.cldixon.f8130.dispute/3dis', cid: 'bafydis' }
+    },
+    ...over,
+  }
+  return { writer, calls }
+}
+
+async function appWithWriter(over: Partial<RecordWriter> = {}) {
+  const { net, overhaul } = await standardNetwork()
+  const { writer, calls } = fakeWriter(over)
+  const app = createApp({ resolver: net, repo: net, writer, mode: 'live' })
+  return { app, calls, overhaul, net }
+}
+
+describe('issuance', () => {
+  test('the write pages are absent when no writer is configured', async () => {
+    const { app } = await appWithNetwork()
+    assert.equal((await app.request('/issue')).status, 404)
+    assert.equal((await app.request('/accept')).status, 404)
+  })
+
+  test('issuing returns a bundle and says to keep it', async () => {
+    const { app, calls } = await appWithWriter()
+    const res = await app.request('/issue', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        formNumber: 'SYNTHETIC-8130-9001',
+        partNumber: 'NT-1234-56',
+        serialNumber: 'SN-999001',
+        status: 'REPAIRED',
+        signerCert: 'SYNTHETIC-CERT-1',
+        completedAt: '2026-04-01T12:00:00Z',
+        costCents: '4200',
+        findings: 'Nothing of note',
+      }),
+    })
+    assert.equal(res.status, 200)
+    const body = await res.text()
+    assert.match(body, /Issued/)
+    assert.match(body, /cannot be reconstructed/)
+
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].form.partNumber, 'NT-1234-56')
+    assert.equal(calls[0].form.costCents, 4200, 'numbers must arrive as numbers')
+  })
+
+  test('empty optional fields are omitted rather than sent as empty strings', async () => {
+    const { app, calls } = await appWithWriter()
+    await app.request('/issue', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        formNumber: 'F', partNumber: 'P', serialNumber: 'S', status: 'NEW',
+        signerCert: 'C', completedAt: '2026-04-01T12:00:00Z',
+        findings: '', costCents: '',
+      }),
+    })
+    // An empty string is a committed value meaning "blank"; absent means "no
+    // such field". Sending the wrong one silently changes the commitment.
+    assert.ok(!('findings' in calls[0].form))
+    assert.ok(!('costCents' in calls[0].form))
+  })
+
+  test('a malformed form surfaces the canonicalization error', async () => {
+    const { app } = await appWithWriter({
+      createRelease: async () => {
+        throw new Error('completedAt: expected RFC 3339 with a UTC offset')
+      },
+    })
+    const res = await app.request('/issue', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ completedAt: 'yesterday' }),
+    })
+    assert.equal(res.status, 400)
+    assert.match(await res.text(), /RFC 3339/)
+  })
+
+  test('the persona picker only accepts known accounts', async () => {
+    const { app } = await appWithWriter()
+    const res = await app.request('/act-as', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ handle: 'attacker.example.com' }),
+    })
+    assert.equal(res.headers.get('set-cookie'), null)
+  })
+})
+
+describe('verdicts', () => {
+  test('the issuer is looked up rather than taken from the form', async () => {
+    const { app, calls, overhaul } = await appWithWriter()
+    const res = await app.request('/accept', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        subjectUri: overhaul.bundle.uri,
+        subjectCid: 'bafywhatever',
+        outcome: 'rejected',
+        note: 'Chain does not reach birth',
+      }),
+    })
+    assert.equal(res.status, 200)
+    assert.match(await res.text(), /Verdict published/)
+
+    // A verdict naming the wrong issuer would be evidence against an innocent
+    // party, so the issuer and part come from the fetched record.
+    assert.equal(calls[0].issuerDid, CASCADIA.did)
+    assert.equal(calls[0].partNumber, 'NT882104')
+    assert.equal(calls[0].outcome, 'rejected')
+  })
+
+  test('a verdict on a record that does not exist is refused', async () => {
+    const { app } = await appWithWriter()
+    const res = await app.request('/accept', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        subjectUri: `at://${CASCADIA.did}/dev.cldixon.f8130.release/3mzzzzzzzzz2z`,
+        subjectCid: 'bafynope',
+        outcome: 'rejected',
+      }),
+    })
+    assert.equal(res.status, 400)
+    assert.match(await res.text(), /never published/)
+  })
+
+  test('a dispute answers a verdict without removing it', async () => {
+    const { app, calls } = await appWithWriter()
+    const res = await app.request('/dispute', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        subjectUri: 'at://did:plc:e/dev.cldixon.f8130.acceptance/3a',
+        subjectCid: 'bafyacc',
+        response: 'Documentation was supplied on 3 March.',
+      }),
+    })
+    assert.equal(res.status, 200)
+    assert.match(await res.text(), /Reply published/)
+    assert.equal(calls[0].kind, 'dispute')
+    assert.match(calls[0].response, /3 March/)
+  })
+
+  test('an incomplete dispute is refused', async () => {
+    const { app } = await appWithWriter()
+    const res = await app.request('/dispute', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ subjectUri: 'at://x/y/z' }),
+    })
+    assert.equal(res.status, 400)
+  })
+})

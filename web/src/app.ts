@@ -15,12 +15,15 @@ import {
 
 import type { AcceptanceRow, ReadIndex, ReleaseRow } from './index-port.js'
 import {
+  acceptPage,
   dashboardPage,
   disclosePage,
   errorPage,
+  issuePage,
   partPage,
   verifyPage,
 } from './views.js'
+import type { RecordWriter } from './writer.js'
 
 const MAX_CHAIN_DEPTH = 100
 const MAX_BUNDLE_BYTES = 256 * 1024
@@ -49,6 +52,11 @@ export type AppDeps = {
    * stumbles onto the URL.
    */
   mode?: 'demo' | 'live'
+  /**
+   * Optional. Without it the app is read-only, which is the correct posture
+   * for a deployment that has no PDS to write to.
+   */
+  writer?: RecordWriter | null
 }
 
 export function createApp(deps: AppDeps) {
@@ -319,6 +327,206 @@ export function createApp(deps: AppDeps) {
 
   if (deps.demoBundles) {
     app.get('/demo/bundles.json', (c) => c.json(deps.demoBundles!))
+  }
+
+  // ------------------------------------------------------------- writing
+  //
+  // The persona cookie is not authentication and is not treated as such — it
+  // selects which demonstration organization to act as, and every account it
+  // can select is fictional. Real issuance would authenticate the individual
+  // who holds the certificate, which is a different problem this demo does not
+  // pretend to solve.
+  const ACTOR_COOKIE = 'f8130_actor'
+
+  const currentActor = (c: any): string | undefined => {
+    const raw = c.req.header('cookie') ?? ''
+    const match = /(?:^|;\s*)f8130_actor=([^;]+)/.exec(raw)
+    const handle = match ? decodeURIComponent(match[1]!) : undefined
+    // Only ever a handle the writer already knows; a tampered cookie selects
+    // nothing rather than becoming an injection point.
+    return deps.writer?.actors().some((a) => a.handle === handle) ? handle : undefined
+  }
+
+  const actorOr = (c: any): string => {
+    const handle = currentActor(c) ?? deps.writer?.actors()[0]?.handle
+    if (!handle) throw new Error('no demonstration accounts are configured')
+    return handle
+  }
+
+  if (deps.writer) {
+    const writer = deps.writer
+
+    app.post('/act-as', async (c) => {
+      const form = await c.req.parseBody()
+      const handle = typeof form.handle === 'string' ? form.handle : ''
+      if (writer.actors().some((a) => a.handle === handle)) {
+        c.header(
+          'set-cookie',
+          `${ACTOR_COOKIE}=${encodeURIComponent(handle)}; Path=/; HttpOnly; SameSite=Lax`,
+        )
+      }
+      return c.redirect(c.req.header('referer') ?? '/issue', 303)
+    })
+
+    app.get('/issue', (c) =>
+      c.html(issuePage({ mode, actors: writer.actors(), current: actorOr(c) })),
+    )
+
+    app.post('/issue', async (c) => {
+      const form = await c.req.parseBody()
+      const handle = actorOr(c)
+      const str = (k: string) =>
+        typeof form[k] === 'string' && form[k] !== '' ? (form[k] as string) : undefined
+      const num = (k: string) => {
+        const v = str(k)
+        return v === undefined ? undefined : Number(v)
+      }
+
+      const raw: Record<string, unknown> = {}
+      for (const k of [
+        'formNumber', 'partNumber', 'serialNumber', 'description', 'status',
+        'workOrder', 'findings', 'workscope', 'customer', 'signerCert',
+        'signerName', 'remarks', 'completedAt',
+      ]) {
+        const v = str(k)
+        if (v !== undefined) raw[k] = v
+      }
+      for (const k of ['quantity', 'costCents']) {
+        const v = num(k)
+        if (v !== undefined) raw[k] = v
+      }
+
+      const prevUri = str('prevUri')
+      const prevCid = str('prevCid')
+
+      try {
+        const issued = await writer.createRelease({
+          handle,
+          form: raw,
+          prev: prevUri && prevCid ? { uri: prevUri, cid: prevCid } : undefined,
+        })
+        return c.html(
+          issuePage({
+            mode,
+            actors: writer.actors(),
+            current: handle,
+            issued: { uri: issued.uri, bundle: issued.bundle },
+          }),
+        )
+      } catch (err) {
+        return c.html(
+          issuePage({
+            mode,
+            actors: writer.actors(),
+            current: handle,
+            error: describe(err),
+          }),
+          400,
+        )
+      }
+    })
+
+    app.get('/accept', (c) =>
+      c.html(acceptPage({ mode, actors: writer.actors(), current: actorOr(c) })),
+    )
+
+    app.post('/accept', async (c) => {
+      const form = await c.req.parseBody()
+      const handle = actorOr(c)
+      const get = (k: string) => (typeof form[k] === 'string' ? (form[k] as string) : '')
+
+      const uri = get('subjectUri')
+      const cid = get('subjectCid')
+      const outcome = get('outcome') as 'accepted' | 'rejected' | 'discrepancy'
+
+      const fail = (msg: string) =>
+        c.html(
+          acceptPage({ mode, actors: writer.actors(), current: handle, error: msg }),
+          400,
+        )
+
+      if (!uri || !cid) return fail('A release URI and CID are both required.')
+
+      // Look up what is actually being judged rather than trusting the form:
+      // a verdict that named the wrong issuer would be evidence against an
+      // innocent party.
+      const fetched = await fetchVerifiedRelease({
+        uri,
+        resolver: deps.resolver,
+        repo: deps.repo,
+      })
+      if (!fetched.ok) return fail(fetched.reason)
+
+      try {
+        const written = await writer.createAcceptance({
+          handle,
+          subject: { uri, cid },
+          issuerDid: fetched.did,
+          partNumber: String(fetched.record.partNumber ?? ''),
+          serialNumber: String(fetched.record.serialNumber ?? ''),
+          outcome,
+          note: get('note') || undefined,
+        })
+        return c.html(
+          acceptPage({
+            mode,
+            actors: writer.actors(),
+            current: handle,
+            written: { uri: written.uri, kind: 'acceptance' },
+          }),
+        )
+      } catch (err) {
+        return fail(describe(err))
+      }
+    })
+
+    app.post('/dispute', async (c) => {
+      const form = await c.req.parseBody()
+      const handle = actorOr(c)
+      const get = (k: string) => (typeof form[k] === 'string' ? (form[k] as string) : '')
+
+      const uri = get('subjectUri')
+      const cid = get('subjectCid')
+      const response = get('response')
+
+      if (!uri || !cid || !response) {
+        return c.html(
+          acceptPage({
+            mode,
+            actors: writer.actors(),
+            current: handle,
+            error: 'An acceptance URI, CID and response are all required.',
+          }),
+          400,
+        )
+      }
+
+      try {
+        const written = await writer.createDispute({
+          handle,
+          subject: { uri, cid },
+          response,
+        })
+        return c.html(
+          acceptPage({
+            mode,
+            actors: writer.actors(),
+            current: handle,
+            written: { uri: written.uri, kind: 'dispute' },
+          }),
+        )
+      } catch (err) {
+        return c.html(
+          acceptPage({
+            mode,
+            actors: writer.actors(),
+            current: handle,
+            error: describe(err),
+          }),
+          400,
+        )
+      }
+    })
   }
 
   app.notFound((c) => c.html(errorPage(404, 'No such page.'), 404))

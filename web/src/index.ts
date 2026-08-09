@@ -22,6 +22,7 @@ import {
 import { createApp } from './app.js'
 import { describeConfig, loadConfig } from './config.js'
 import { PostgresIndex } from './postgres.js'
+import { AtpRecordWriter, demoActors, type RecordWriter } from './writer.js'
 
 async function main() {
   const config = loadConfig()
@@ -56,12 +57,29 @@ async function main() {
     ? PostgresIndex.fromUrl(config.databaseUrl)
     : null
 
+  // Writing needs a live PDS and the demonstration account password. Without
+  // both, the app runs read-only rather than offering forms that cannot work.
+  let writer: RecordWriter | null = null
+  const pdsUrl = process.env.PDS_INTERNAL_URL
+  const actPassword = process.env.SEED_ACCOUNT_PASSWORD
+  if (config.mode === 'live' && pdsUrl && actPassword) {
+    writer = new AtpRecordWriter({
+      service: pdsUrl,
+      password: actPassword,
+      actors: demoActors(process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev'),
+    })
+    console.warn(`Issuance enabled against ${pdsUrl}`)
+  } else {
+    console.warn('Issuance disabled: needs live mode, PDS_INTERNAL_URL and SEED_ACCOUNT_PASSWORD.')
+  }
+
   const app = createApp({
     resolver,
     repo,
     index,
     demoBundles,
     mode: config.mode,
+    writer,
   })
 
   // Plenty of containers and CI runners have no IPv6 at all, and a hard-coded

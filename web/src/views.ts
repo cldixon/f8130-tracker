@@ -8,6 +8,7 @@ import type {
   VerificationReport,
 } from '@f8130/core'
 import type { AcceptanceRow, IssuerStat, ReleaseRow } from './index-port.js'
+import type { Actor } from './writer.js'
 
 const STYLES = `
 :root {
@@ -116,6 +117,13 @@ footer { border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem;
 .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .3rem .8rem; margin-top: .4rem; }
 .check { display: flex; align-items: center; gap: .4rem; margin: 0; font-size: .85rem; color: var(--fg); }
 .check input { margin: 0; }
+select { padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--card); color: var(--fg); font-size: .9rem; max-width: 22rem; width: 100%; }
+.hint { font-size: .68rem; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--accent); border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; }
+.persona { display: flex; gap: .6rem; align-items: flex-end; flex-wrap: wrap; }
+.persona label { margin: 0 0 .3rem; }
+.persona button { margin-top: 0; }
 `
 
 export type Mode = 'demo' | 'live'
@@ -139,6 +147,7 @@ export function layout(
   <a href="/">Dashboard</a>
   <a href="/verify">Verify a document</a>
   <a href="/disclose">Selective disclosure</a>
+  <a href="/issue">Issue</a>
 </div></nav>
 <main>
   <div class="banner">
@@ -573,6 +582,184 @@ export function disclosePage(params: {
 
     <h2>Build another</h2>
     <div class="card" style="padding:1.15rem">${form}</div>`,
+    params.mode,
+  )
+}
+
+
+/* ------------------------------------------------------------------ writing */
+
+const RELEASE_FIELDS: { name: string; label: string; type: 'text' | 'number' | 'enum'; hint?: string }[] = [
+  { name: 'formNumber', label: 'Form number', type: 'text' },
+  { name: 'partNumber', label: 'Part number', type: 'text' },
+  { name: 'serialNumber', label: 'Serial number', type: 'text' },
+  { name: 'description', label: 'Description', type: 'text' },
+  { name: 'status', label: 'Status', type: 'enum' },
+  { name: 'quantity', label: 'Quantity', type: 'number' },
+  { name: 'workOrder', label: 'Work order', type: 'text' },
+  { name: 'findings', label: 'Findings', type: 'text', hint: 'private' },
+  { name: 'workscope', label: 'Workscope', type: 'text', hint: 'private' },
+  { name: 'costCents', label: 'Cost in cents', type: 'number', hint: 'private' },
+  { name: 'customer', label: 'Customer', type: 'text', hint: 'private' },
+  { name: 'signerCert', label: 'Signer certificate', type: 'text' },
+  { name: 'signerName', label: 'Signer name', type: 'text', hint: 'private' },
+  { name: 'remarks', label: 'Remarks', type: 'text', hint: 'private' },
+  { name: 'completedAt', label: 'Completed at (RFC 3339 UTC)', type: 'text' },
+]
+
+const STATUSES = ['NEW', 'OVERHAULED', 'REPAIRED', 'INSPECTED', 'MODIFIED']
+
+function personaPicker(actors: Actor[], current?: string) {
+  return html`<form method="post" action="/act-as" class="persona">
+    <label for="actor">Acting as</label>
+    <select id="actor" name="handle">
+      ${actors.map(
+        (a) => html`<option value="${a.handle}" ${a.handle === current ? 'selected' : ''}>
+          ${a.displayName} (${a.kind})
+        </option>`,
+      )}
+    </select>
+    <button type="submit">Switch</button>
+  </form>`
+}
+
+export function issuePage(params: {
+  mode?: Mode
+  actors: Actor[]
+  current?: string
+  issued?: { uri: string; bundle: unknown }
+  error?: string
+}) {
+  const issued = params.issued
+
+  return layout(
+    'Issue a release',
+    html`<h1>Issue a release certificate</h1>
+    <p class="sub">
+      Fields marked private never appear on the public record — only inside the
+      commitment. This service builds the record and hands it to
+      ${params.current ?? 'the issuer'}'s own server to sign; it holds no
+      signing key of its own.
+    </p>
+
+    <div class="banner">
+      <strong>Persona switcher, not a login.</strong> Anyone may act as any
+      demonstration organization here. Real issuance would authenticate the
+      individual holding the certificate.
+    </div>
+
+    <div class="card" style="padding:1.15rem">${personaPicker(params.actors, params.current)}</div>
+
+    ${params.error
+      ? html`<div class="verdict no" style="margin-top:1.25rem"><h2>Could not issue</h2><p>${params.error}</p></div>`
+      : ''}
+
+    ${issued
+      ? html`<div class="verdict ok" style="margin-top:1.25rem">
+          <h2>Issued</h2>
+          <p>The commitment is public. The bundle below is not — deliver it to your customer.</p>
+        </div>
+        <div class="card" style="padding:1.15rem">
+          <div class="detail mono" style="word-break:break-all">${issued.uri}</div>
+          <label for="out">Bundle — save this, it cannot be reconstructed</label>
+          <textarea id="out" readonly>${JSON.stringify(issued.bundle, null, 2)}</textarea>
+          <p class="sub" style="margin-top:.8rem">
+            Paste it into <a href="/verify">verify</a> to see it check out, or
+            into <a href="/disclose">selective disclosure</a> to reveal one
+            field of it.
+          </p>
+        </div>`
+      : ''}
+
+    <h2>New release</h2>
+    <div class="card" style="padding:1.15rem">
+      <form method="post" action="/issue">
+        ${RELEASE_FIELDS.map((f) =>
+          f.type === 'enum'
+            ? html`<label for="${f.name}">${f.label}</label>
+                <select id="${f.name}" name="${f.name}">
+                  ${STATUSES.map((s) => html`<option value="${s}">${s}</option>`)}
+                </select>`
+            : html`<label for="${f.name}">
+                  ${f.label}${f.hint ? html` <span class="hint">${f.hint}</span>` : ''}
+                </label>
+                <input type="${f.type === 'number' ? 'number' : 'text'}"
+                  id="${f.name}" name="${f.name}">`,
+        )}
+        <label for="prevUri">Previous release URI (optional)</label>
+        <input type="text" id="prevUri" name="prevUri" placeholder="at://…">
+        <label for="prevCid">Previous release CID (optional)</label>
+        <input type="text" id="prevCid" name="prevCid" placeholder="bafyrei…">
+        <button type="submit">Sign and publish</button>
+      </form>
+    </div>`,
+    params.mode,
+  )
+}
+
+export function acceptPage(params: {
+  mode?: Mode
+  actors: Actor[]
+  current?: string
+  written?: { uri: string; kind: 'acceptance' | 'dispute' }
+  error?: string
+}) {
+  return layout(
+    'Record a verdict',
+    html`<h1>Record a verdict on a part you received</h1>
+    <p class="sub">
+      This verdict is published in <em>your</em> repository, not the issuer's.
+      They cannot delete it, and no service sits in between with the power to
+      suppress it. They can only answer it.
+    </p>
+
+    <div class="card" style="padding:1.15rem">${personaPicker(params.actors, params.current)}</div>
+
+    ${params.error
+      ? html`<div class="verdict no" style="margin-top:1.25rem"><h2>Could not record</h2><p>${params.error}</p></div>`
+      : ''}
+    ${params.written
+      ? html`<div class="verdict ok" style="margin-top:1.25rem">
+          <h2>${params.written.kind === 'dispute' ? 'Reply published' : 'Verdict published'}</h2>
+          <p class="mono" style="word-break:break-all">${params.written.uri}</p>
+        </div>`
+      : ''}
+
+    <h2>Acceptance or rejection</h2>
+    <div class="card" style="padding:1.15rem">
+      <form method="post" action="/accept">
+        <label for="subjectUri">Release URI</label>
+        <input type="text" id="subjectUri" name="subjectUri" placeholder="at://…">
+        <label for="subjectCid">Release CID</label>
+        <input type="text" id="subjectCid" name="subjectCid" placeholder="bafyrei…">
+        <label for="outcome">Outcome</label>
+        <select id="outcome" name="outcome">
+          <option value="accepted">accepted</option>
+          <option value="rejected">rejected</option>
+          <option value="discrepancy">discrepancy</option>
+        </select>
+        <label for="note">Stated reason</label>
+        <input type="text" id="note" name="note">
+        <button type="submit">Publish verdict</button>
+      </form>
+    </div>
+
+    <h2>Right of reply</h2>
+    <p class="sub">
+      For an issuer answering a verdict against them. It cannot remove the
+      verdict — only respond to it, publicly and under their own signature.
+    </p>
+    <div class="card" style="padding:1.15rem">
+      <form method="post" action="/dispute">
+        <label for="dSubjectUri">Acceptance URI</label>
+        <input type="text" id="dSubjectUri" name="subjectUri" placeholder="at://…">
+        <label for="dSubjectCid">Acceptance CID</label>
+        <input type="text" id="dSubjectCid" name="subjectCid" placeholder="bafyrei…">
+        <label for="response">Response</label>
+        <input type="text" id="response" name="response">
+        <button type="submit">Publish reply</button>
+      </form>
+    </div>`,
     params.mode,
   )
 }
