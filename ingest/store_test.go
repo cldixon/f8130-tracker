@@ -44,22 +44,28 @@ var (
 	meridian  = "did:plc:mr5jq8tn3wz7pbcdefghijkm"
 )
 
+// The `status` parameter is retained because the callers read as maintenance
+// history — but Block 11 no longer reaches the public record, so it survives
+// only inside Raw, where an AppView keeps the bytes it was actually given.
 func releaseRec(cid, uri, issuer, part, serial, status string, completed time.Time, prev *StrongRef) IndexedRecord {
 	return IndexedRecord{
 		URI:        uri,
 		CID:        cid,
 		Collection: ReleaseNSID,
 		Release: &Release{
-			Commitment:   make([]byte, 32),
-			IssuerDID:    issuer,
-			Prev:         prev,
-			FormNumber:   "SYNTHETIC81300001",
-			PartNumber:   part,
-			SerialNumber: serial,
-			Status:       status,
-			SignerCert:   "SYNTHETICCERT12345",
-			CompletedAt:  completed,
-			Raw:          map[string]any{"$type": ReleaseNSID, "status": status},
+			Commitment:          make([]byte, 32),
+			IssuerDID:           issuer,
+			Prev:                prev,
+			ApprovingAuthority:  "FAA/United States",
+			FormNumber:          "SYNTHETIC81300001",
+			OrganizationName:    "Cascadia MRO",
+			OrganizationAddress: "4400 Airport Way, Everett, WA 98204",
+			Description:         "Fuel control unit",
+			PartNumber:          part,
+			SerialNumber:        serial,
+			SignerCert:          "SYNTHETICCERT12345",
+			CompletedAt:         completed,
+			Raw:                 map[string]any{"$type": ReleaseNSID, "status": status},
 		},
 	}
 }

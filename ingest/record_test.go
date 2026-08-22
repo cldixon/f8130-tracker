@@ -23,15 +23,18 @@ func encode(t *testing.T, obj map[string]any) []byte {
 
 func validRelease() map[string]any {
 	return map[string]any{
-		"$type":        ReleaseNSID,
-		"commitment":   atdata.Bytes(make([]byte, 32)),
-		"issuerDid":    "did:plc:cs4gk2mp7yv6nbcdefghijkl",
-		"formNumber":   "SYNTHETIC81300002",
-		"partNumber":   "NT882104",
-		"serialNumber": "SN000417",
-		"status":       "OVERHAULED",
-		"signerCert":   "SYNTHETICCERT12345",
-		"completedAt":  "2026-01-22T09:30:00Z",
+		"$type":               ReleaseNSID,
+		"commitment":          atdata.Bytes(make([]byte, 32)),
+		"issuerDid":           "did:plc:cs4gk2mp7yv6nbcdefghijkl",
+		"approvingAuthority":  "FAA/United States",
+		"formNumber":          "SYNTHETIC81300002",
+		"organizationName":    "Cascadia MRO",
+		"organizationAddress": "4400 Airport Way, Everett, WA 98204",
+		"description":         "Fuel control unit",
+		"partNumber":          "NT882104",
+		"serialNumber":        "SN000417",
+		"signerCert":          "SYNTHETICCERT12345",
+		"completedAt":         "2026-01-22T09:30:00Z",
 	}
 }
 
@@ -44,7 +47,7 @@ func TestDecodeValidRelease(t *testing.T) {
 	if !ok {
 		t.Fatalf("wrong type: %T", r)
 	}
-	if rel.PartNumber != "NT882104" || rel.Status != "OVERHAULED" {
+	if rel.PartNumber != "NT882104" || rel.OrganizationName != "Cascadia MRO" {
 		t.Errorf("fields not decoded: %+v", rel)
 	}
 	if len(rel.Commitment) != 32 {
@@ -84,7 +87,14 @@ func TestDecodeRejectsMalformedReleases(t *testing.T) {
 			m["commitment"] = atdata.Bytes(make([]byte, 16))
 		}},
 		{"commitment not bytes", func(m map[string]any) { m["commitment"] = "not bytes" }},
-		{"status not a string", func(m map[string]any) { m["status"] = int64(3) }},
+		{"missing organizationName", func(m map[string]any) { delete(m, "organizationName") }},
+		{"missing organizationAddress", func(m map[string]any) {
+			delete(m, "organizationAddress")
+		}},
+		{"missing approvingAuthority", func(m map[string]any) {
+			delete(m, "approvingAuthority")
+		}},
+		{"description not a string", func(m map[string]any) { m["description"] = int64(3) }},
 		{"completedAt not a datetime", func(m map[string]any) { m["completedAt"] = "yesterday" }},
 		{"prev is not an object", func(m map[string]any) { m["prev"] = "at://something" }},
 		{"prev missing cid", func(m map[string]any) {

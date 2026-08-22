@@ -36,21 +36,22 @@ field, without the issuer's involvement.
 
 ## The one-paragraph version
 
-The station computes a single 32-byte fingerprint over all fifteen fields of
-the form and publishes only that. The document itself travels privately, hand
+The station computes a single 32-byte fingerprint over every block of the
+form and publishes only that. The document itself travels privately, hand
 to hand, as it does today. Anyone holding the document can recompute the
 fingerprint and check it against the published one: match means the document
 is exactly what the station committed to, down to the byte. The fingerprint is
 built as a tree rather than a single hash, which additionally lets the holder
 prove any one field against the same published fingerprint without revealing
-the other fourteen.
+the other sixteen.
 
 ---
 
 ## Part 1 — A toy example
 
-The real scheme uses fifteen fields. Four is enough to see the whole shape, so
-this section uses four. Everything else is identical.
+The real scheme uses seventeen fields — one for every block of FAA Form 8130-3
+that a releasing organization fills in. Four is enough to see the whole shape,
+so this section uses four. Everything else is identical.
 
 ### Step 1: canonicalize
 
@@ -91,12 +92,15 @@ document. Part 2 explains why it is not optional.
 Toy values, using deliberately fake nonces (`01` repeated 32 times, `02`
 repeated 32 times, and so on) so you can reproduce them:
 
-| | field | value | leaf |
-|---|---|---|---|
-| `L0` | partNumber | `"NT882104"` | `9fb1995ba3048963…` |
-| `L1` | status | `"OVERHAULED"` | `2f7ae5d0506b4d6f…` |
-| `L2` | costCents | `1284500` | `0979c41638f499b9…` |
-| `L3` | customer | `"Example Air"` | `e6f00f90b5fd4ebf…` |
+| | field | block | value | leaf |
+|---|---|---|---|---|
+| `L0` | partNumber | 8 | `"NT882104"` | `9fb1995ba3048963…` |
+| `L1` | status | 11 | `"OVERHAULED"` | `2f7ae5d0506b4d6f…` |
+| `L2` | remarks | 12 | `"Metering valve wear beyond limits."` | `546316e3e5e31225…` |
+| `L3` | workOrder | 5 | `"WO20260042"` | `7ab1efcd87ef9acb…` |
+
+Only `partNumber` of those four appears on the public record. The other three
+are committed and withheld.
 
 ### Step 3: pair them up until one value remains
 
@@ -108,9 +112,9 @@ node = SHA256( 0x01 ‖ left ‖ right )
 flowchart BT
     L0["L0 partNumber<br/>9fb1995b…"] --> N01["N01<br/>7e10a055…"]
     L1["L1 status<br/>2f7ae5d0…"] --> N01
-    L2["L2 costCents<br/>0979c416…"] --> N23["N23<br/>35c3f2f6…"]
-    L3["L3 customer<br/>e6f00f90…"] --> N23
-    N01 --> ROOT["ROOT<br/>df5005c7186e3940…<br/>the commitment"]
+    L2["L2 remarks<br/>546316e3…"] --> N23["N23<br/>e09ef1b5…"]
+    L3["L3 workOrder<br/>7ab1efcd…"] --> N23
+    N01 --> ROOT["ROOT<br/>5dc0630e6ea6d3a3…<br/>the commitment"]
     N23 --> ROOT
 ```
 
@@ -118,8 +122,8 @@ The full values:
 
 ```
 N01  = node(L0, L1)   7e10a055f05c937b92d4b8494ec2c34bdc8272fd0c32baa4b776c14574e284ae
-N23  = node(L2, L3)   35c3f2f6ee98e438e7458dc18bb31dab612189d2b40c745e59166751a411b84b
-ROOT = node(N01, N23) df5005c7186e3940ef151b58063ee4cbc738a9c52febfbbc587b1f8e75948f75
+N23  = node(L2, L3)   e09ef1b585c3d4dfba087af0a468a9cfa3b0dbfd3c410111fb97512b92f00138
+ROOT = node(N01, N23) 5dc0630e6ea6d3a3c6ac5e00a43252176acbb5a7320c0c682fd14693302179c2
 ```
 
 ### Step 4: publish the root, and only the root
@@ -129,12 +133,12 @@ is the published output. The leaves and intermediate nodes are computed and
 thrown away — anyone holding the values and nonces can rebuild them, and
 nobody else can rebuild any of them.
 
-Change one field and the root is unrecognisable. Same tree, cost changed from
-`1284500` to `100000`:
+Change one field and the root is unrecognisable. Same tree, Block 11 changed
+from `OVERHAULED` to `INSPECTED` — one word on the form:
 
 ```
-ROOT  = df5005c7186e3940ef151b58063ee4cbc738a9c52febfbbc587b1f8e75948f75
-ROOT' = a32fb12d9096b2f86c633f856cb1e2fec4245e61acdd120bde7ac88c55517f48
+ROOT  = 5dc0630e6ea6d3a3c6ac5e00a43252176acbb5a7320c0c682fd14693302179c2
+ROOT' = b298d042e41647aa66772135cde371456b230d35c247282ed6742a08a47c2be4
 ```
 
 There is no partial similarity to detect and no threshold to tune. It matches
@@ -144,25 +148,25 @@ or it does not.
 
 ## Part 2 — Why the nonces are not optional
 
-8130-3 fields have almost no entropy. A status is one of five values. A cost
-is a number of dollars. If a leaf were just `hash(fieldName, value)`, the hash
-*is* the value, because the search space is tiny.
+8130-3 fields have almost no entropy. Block 11 is one of six words. Block 9 is
+a small number. If a leaf were just `hash(fieldName, value)`, the hash *is* the
+value, because the search space is tiny.
 
 Measured against the real implementation with the nonces removed:
 
-| field | search space | guesses to crack |
-|---|---|---|
-| `status` | 5 enum values | **2** |
-| `costCents` | round dollars to $50,000 | **12,846** — well under a second |
+| field | block | search space | guesses to crack |
+|---|---|---|---|
+| `status` | 11 | 6 enum values | **2** |
+| `quantity` | 9 | 1 to 1,000 | **12** |
 
-With a 32-byte nonce, the same attack tried **1,000,020 (value, nonce) pairs
+With a 32-byte nonce, the same attack tried **1,200,000 (value, nonce) pairs
 and found nothing**, because the attacker must now guess the value *and* the
 nonce — a 2^256 space, around 10^77. The low entropy of the value buys the
 attacker nothing at all.
 
 Note the causal chain, because it is easy to get backwards. A single hash over
 the *whole form* would not have this weakness — you would have to guess all
-fifteen fields at once, which is genuinely hard. **The exposure is created by
+seventeen fields at once, which is genuinely hard. **The exposure is created by
 splitting into per-field leaves**, and we split into per-field leaves
 specifically to enable Part 4. The nonces are the cost of that feature, not
 optional hardening.
@@ -200,7 +204,7 @@ check it against.
 
 An opening for one field is three things:
 
-1. the **value** — `costCents = 1284500`
+1. the **value** — `remarks = "Metering valve wear beyond limits."`
 2. its **nonce** — the 32 bytes hashed with it
 3. the **sibling path** — the hashes needed to climb to the root
 
@@ -208,29 +212,30 @@ For `L2` in the toy tree, the path is two hashes:
 
 | level | sibling | side |
 |---|---|---|
-| 0 | `L3` = `e6f00f90b5fd4ebf…` | right |
+| 0 | `L3` = `7ab1efcd87ef9acb…` | right |
 | 1 | `N01` = `7e10a055f05c937b…` | left |
 
-The verifier folds them:
+The verifier folds them, each line being the result of combining the one above
+with the sibling named:
 
 ```
-leaf(costCents, 1284500, nonce)   0979c41638f499b94e0407dae2d8bfa5157ff6534d56567ea1c02ab614a1adb3
-+ L3   (right)                    35c3f2f6ee98e438e7458dc18bb31dab612189d2b40c745e59166751a411b84b
-+ N01  (left)                     df5005c7186e3940ef151b58063ee4cbc738a9c52febfbbc587b1f8e75948f75
-                                  ← identical to the published ROOT
+leaf(remarks, "Metering valve…", nonce)  546316e3e5e312255b18287ef261b786fc1954df646d88577ea8d58cd6bc6d4a
++ L3   (right)  →  N23                   e09ef1b585c3d4dfba087af0a468a9cfa3b0dbfd3c410111fb97512b92f00138
++ N01  (left)   →  ROOT                  5dc0630e6ea6d3a3c6ac5e00a43252176acbb5a7320c0c682fd14693302179c2
+                                         ← identical to the published ROOT
 ```
 
-**What the verifier learned:** the cost was $12,845.00, and the station
-committed to that figure.
+**What the verifier learned:** what Block 12 says, and that the station
+committed to exactly those words.
 
 **What the verifier did not learn:** anything about `partNumber`, `status`, or
-`customer`. `N01` is a single hash covering two salted leaves. `L3` is the
-`customer` leaf itself, and it is useless for exactly the reason Part 2
+`workOrder`. `N01` is a single hash covering two salted leaves. `L3` is the
+`workOrder` leaf itself, and it is useless for exactly the reason Part 2
 demonstrated — without the nonce it cannot be brute-forced.
 
 Sibling hashes are unavoidable; they are how the root is recomputed. They are
-also inert. In the real fifteen-field tree a single-field proof carries four of
-them.
+also inert. In the real seventeen-field tree a single-field proof carries five
+of them.
 
 ### The verifier fetches the root itself
 
@@ -247,13 +252,46 @@ party; the thing it is checked against comes from another.**
 
 Same shape, three additions.
 
-**Fifteen fields, padded to sixteen.** The committed set is fixed and ordered:
-`formNumber, partNumber, serialNumber, description, status, quantity,
-workOrder, findings, workscope, costCents, customer, signerCert, signerName,
-remarks, completedAt`. Every form commits to every field, with explicit `null`
-for absent ones, so the tree shape is identical for every document ever
-issued — a sparse form is not distinguishable from a full one by its structure.
-One constant pad leaf brings sixteen to a power of two:
+**Seventeen fields, padded to thirty-two.** The committed set is fixed, ordered
+by block number, and covers the whole form:
+
+| # | field | block | on the public record? |
+|---|---|---|---|
+| 1 | `approvingAuthority` | 1 — Approving Civil Aviation Authority/Country | yes |
+| 2 | `formNumber` | 3 — Form Tracking Number | yes |
+| 3 | `organizationName` | 4 — Organization Name and Address | yes |
+| 4 | `organizationAddress` | 4 | yes |
+| 5 | `workOrder` | 5 — Work Order/Contract/Invoice | no |
+| 6 | `item` | 6 — Item | no |
+| 7 | `description` | 7 — Description | yes |
+| 8 | `partNumber` | 8 — Part Number | yes |
+| 9 | `quantity` | 9 — Quantity | no |
+| 10 | `serialNumber` | 10 — Serial Number | yes |
+| 11 | `status` | 11 — Status/Work | no |
+| 12 | `remarks` | 12 — Remarks | no |
+| 13 | `certifyingBlock` | 13 or 14 — which column certifies | no |
+| 14 | `approvalBasis` | 13a/14a — the statement selected | no |
+| 15 | `signerCert` | 13c/14c — Approval/Certificate No. | yes |
+| 16 | `signerName` | 13d/14d — Name | no |
+| 17 | `completedAt` | 13e/14e — Date | yes |
+
+**Every block is committed; only some are published.** That distinction is the
+whole design, and it is worth being precise about which way round it runs. The
+commitment covers all seventeen. The public record carries nine of them — enough
+to find a record and know who signed it. The other eight are committed and
+withheld: Block 11 says what was done to the part and Block 12 carries the
+detail behind it, and both are commercially sensitive to an operator.
+
+An earlier version of this scheme committed to fifteen fields chosen by what
+seemed interesting, which left four blocks of the real form uncovered. That is
+not a gap in coverage but a hole in the guarantee: a bundle could have been
+rendered under a different organization's name and address and every check
+would still have passed, because the commitment never covered Block 4.
+
+Every form commits to every field, with explicit `null` for absent ones, so the
+tree shape is identical for every document ever issued — a sparse form is not
+distinguishable from a full one by its structure. One constant pad leaf brings
+seventeen up to a power of two:
 
 ```
 pad = SHA256( 0x02 )
@@ -277,8 +315,8 @@ five ASCII characters, so a form pasted out of a spreadsheet canonicalized
 differently in the two languages. That would have surfaced much later as an
 unverifiable document rather than as a test failure.
 
-A single-field proof in the real tree is 4 sibling hashes, and the whole
-disclosure document is about 750 bytes of JSON.
+A single-field proof in the real tree is 5 sibling hashes, and the whole
+disclosure document is about 900 bytes of JSON.
 
 ---
 
@@ -287,8 +325,8 @@ disclosure document is about 750 bytes of JSON.
 Two independent checks, and both are needed.
 
 **Check one — does this document produce that fingerprint?** The holder
-recomputes the tree from the fifteen values and fifteen nonces and compares to
-the published commitment. A match means the document is byte-for-byte what the
+recomputes the tree from the seventeen values and seventeen nonces and compares
+to the published commitment. A match means the document is byte-for-byte what the
 issuer committed to.
 
 **Check two — is that fingerprint really the issuer's?** The commitment sits
@@ -332,8 +370,8 @@ and it dies because there is no record in that station's repository at all.
 Whoever holds the document. That is the whole answer, and the consequences are
 where the design earns its keep.
 
-The bundle — all fifteen values and all fifteen nonces — is what travels with
-the part. Its holder can mint an opening for any subset of fields, for anyone,
+The bundle — all seventeen values and all seventeen nonces — is what travels
+with the part. Its holder can mint an opening for any subset of fields, for anyone,
 at any time.
 
 Follow a part through its life:
@@ -343,7 +381,7 @@ flowchart LR
     C["Cascadia MRO<br/>issues the release"] -->|"bundle, with the part"| E["Example Air<br/>operator"]
     E -->|"bundle, on sale"| B["Later buyer"]
     C -->|publishes commitment| R[("public record")]
-    E -.->|"opening: cost only"| L["Lessor<br/>auditing spend"]
+    E -.->|"opening: Block 12 only"| L["Lessor<br/>auditing condition"]
     L -.->|"checks against"| R
     B -.->|"opening: any field"| F["FAA / next buyer"]
 ```
@@ -413,10 +451,10 @@ pad  = SHA256( 0x02 )
 where `cbor()` is DAG-CBOR, `nonce` is 32 bytes, leaves are in the fixed field
 order, and the leaf count is padded to the next power of two.
 
-The toy example uses four fields with nonces of `0x01` × 32, `0x02` × 32,
-`0x03` × 32, `0x04` × 32 in that order.
+The toy example uses `partNumber`, `status`, `remarks` and `workOrder` in that
+order, with nonces of `0x01` × 32, `0x02` × 32, `0x03` × 32, `0x04` × 32.
 
-The authoritative fixtures for the real fifteen-field scheme are in
+The authoritative fixtures for the real seventeen-field scheme are in
 [`testdata/vectors.json`](../testdata/vectors.json) — input forms, nonces,
 every leaf hash, roots, record CIDs, and worked disclosure proofs. Both
 implementations are tested against them, and CI fails if regenerating them

@@ -25,10 +25,12 @@ document. A release certificate is valid only if a matching commitment record
 exists in the issuer's own repo. Forging one requires compromising the
 station's domain *and* its signing key, not editing a PDF.
 
-The public record carries only identifiers and a Merkle root over the form's
-fields. The document itself — findings, cost, customer — travels bilaterally
-as a "bundle," exactly as paperwork moves today. Anyone can verify authorship
-and integrity; nobody learns the commercial content.
+The commitment covers **every block of the form** — a Merkle root over all
+seventeen. The public record carries nine of them, enough to find a record and
+know who signed it. The rest, including Block 11 (what was done) and Block 12
+(what the shop found), travel bilaterally as a "bundle," exactly as paperwork
+moves today. Anyone can verify authorship and integrity; nobody learns the
+commercially sensitive content.
 
 Completeness stays public even when contents are not. Each release links its
 predecessor, so a seller can withhold a document but cannot hide that the
@@ -98,15 +100,15 @@ flowchart LR
     O["Example Air<br/>receives the part"]
     P["public record:<br/>identifiers + Merkle root"]
 
-    S -- "bundle: all 15 fields<br/>+ nonces, bilaterally" --> O
+    S -- "bundle: all 17 fields<br/>+ nonces, bilaterally" --> O
     S -- publishes --> P
     O -- "recomputes root<br/>from the bundle" --> P
 ```
 
-Findings, cost, and customer travel shop-to-customer exactly as paperwork does
-today. The public record carries only what is stamped on the part plus a
-commitment. Anyone can check authorship and integrity; nobody learns the
-commercial content — and no AppView ever stores a bundle.
+Blocks 11 and 12 travel shop-to-customer exactly as paperwork does today. The
+public record carries what identifies the document and who issued it, plus a
+commitment over the whole of it. Anyone can check authorship and integrity;
+nobody learns what was done to the part — and no AppView ever stores a bundle.
 
 ## Status
 

@@ -2,10 +2,10 @@
  * Selective disclosure (§4.2).
  *
  * A bundle opens the whole document. Often that is more than the situation
- * calls for: a lessor auditing maintenance spend needs the cost figure and has
- * no business seeing the findings, the customer, or the workscope. A leasing
- * company that must be handed the entire form to check one number is a leasing
- * company that now holds a competitor's cost structure.
+ * calls for: a lessor checking what condition an asset came back in needs
+ * Block 12 and has no business seeing the work order or the operator's whole
+ * maintenance posture. A leasing company that must be handed the entire form to
+ * read one box is a leasing company that now holds more than it asked for.
  *
  * A disclosure carries only the fields being revealed, each with its own nonce
  * and the sibling path back to the published root. Everything else appears as

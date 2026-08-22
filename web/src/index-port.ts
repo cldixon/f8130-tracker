@@ -9,17 +9,27 @@
  * losing the database degrades browsing without weakening verification.
  */
 
+/**
+ * A release as this observer indexed it.
+ *
+ * No status and no remarks: Blocks 11 and 12 are committed but not published,
+ * so an index built from the firehose cannot say what was done to a part. A
+ * browser learns who touched it and when; the rest requires a disclosure.
+ */
 export type ReleaseRow = {
   cid: string
   uri: string
   issuerDid: string
   prevUri: string | null
   prevCid: string | null
+  approvingAuthority: string
+  formNumber: string
+  organizationName: string
+  organizationAddress: string
+  description: string
   partNumber: string
   serialNumber: string
-  status: string
   signerCert: string
-  formNumber: string
   /** Claimed by the issuer, and forgeable by one. */
   completedAt: Date
   /** When this observer first saw it. Not forgeable by the issuer. */

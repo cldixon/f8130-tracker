@@ -17,6 +17,7 @@ import {
   buildBundle,
   commitForm,
   orgs,
+  publicValues,
   type Bundle,
   type OrgKind,
   type RawForm,
@@ -123,12 +124,7 @@ export class AtpRecordWriter implements RecordWriter {
       commitment: commitment.root,
       fieldSetVersion: commitment.version,
       issuerDid: did,
-      formNumber: commitment.values.formNumber,
-      partNumber: commitment.values.partNumber,
-      serialNumber: commitment.values.serialNumber,
-      status: commitment.values.status,
-      signerCert: commitment.values.signerCert,
-      completedAt: commitment.values.completedAt,
+      ...publicValues(commitment.values),
     }
     if (params.prev) record.prev = params.prev
 

@@ -1,6 +1,9 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
+import { FIELD_ORDER } from '@f8130/core'
+import { fieldLabel } from '../src/views.js'
+
 import {
   CASCADIA,
   parseBundle,
@@ -52,11 +55,14 @@ const releaseRow = (over: Partial<ReleaseRow> = {}): ReleaseRow => ({
   issuerDid: 'did:plc:cs4gk2mp7yv6nbcdefghijkl',
   prevUri: null,
   prevCid: null,
+  approvingAuthority: 'FAA/United States',
+  formNumber: 'SYNTHETIC81300002',
+  organizationName: 'Cascadia MRO',
+  organizationAddress: '4400 Airport Way, Everett, WA 98204',
+  description: 'Fuel control unit',
   partNumber: 'NT882104',
   serialNumber: 'SN000417',
-  status: 'OVERHAULED',
   signerCert: 'SYNTHETICCERT12345',
-  formNumber: 'SYNTHETIC81300002',
   completedAt: new Date('2026-01-22T09:30:00Z'),
   observedAt: new Date('2026-01-22T10:00:00Z'),
   ...over,
@@ -127,7 +133,7 @@ describe('verification without a database', () => {
     const res = await app.request('/api/verify', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(tamper(overhaul.bundle, { findings: 'No defects' })),
+      body: JSON.stringify(tamper(overhaul.bundle, { remarks: 'No defects.' })),
     })
     assert.equal(res.status, 422)
     const report = (await res.json()) as any
@@ -185,7 +191,7 @@ describe('the verify page', () => {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
-          bundle: JSON.stringify(tamper(overhaul.bundle, { findings: 'No defects found' })),
+          bundle: JSON.stringify(tamper(overhaul.bundle, { remarks: 'No defects found.' })),
         }),
       })
     ).text()
@@ -427,7 +433,7 @@ describe('selective disclosure', () => {
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams([
         ['bundle', JSON.stringify(overhaul.bundle)],
-        ['field', 'costCents'],
+        ['field', 'remarks'],
       ]),
     })
     assert.equal(res.status, 200)
@@ -436,16 +442,16 @@ describe('selective disclosure', () => {
     assert.match(body, /Disclosure verifies/)
     assert.match(body, /proven/)
     // The whole point: the rest of the form is not in the page.
-    assert.ok(!body.includes('Metering valve wear'), 'findings leaked')
-    assert.ok(!body.includes('Full overhaul per CMM'), 'workscope leaked')
+    assert.ok(!body.includes('A. Technician'), 'signerName leaked')
+    assert.ok(!body.includes('WO20260042'), 'workOrder leaked')
   })
 
-  test('the disclosure document carries one nonce, not fifteen', async () => {
+  test('the disclosure document carries one nonce, not seventeen', async () => {
     const { app, overhaul } = await appWithNetwork()
     const res = await app.request('/api/disclose', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ bundle: overhaul.bundle, fields: ['costCents'] }),
+      body: JSON.stringify({ bundle: overhaul.bundle, fields: ['remarks'] }),
     })
     const doc = JSON.stringify(await res.json())
     const leaked = overhaul.bundle.nonces.filter((n) => doc.includes(n))
@@ -458,7 +464,7 @@ describe('selective disclosure', () => {
       await app.request('/api/disclose', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ bundle: overhaul.bundle, fields: ['status', 'costCents'] }),
+        body: JSON.stringify({ bundle: overhaul.bundle, fields: ['status', 'remarks'] }),
       })
     ).json()
 
@@ -470,7 +476,7 @@ describe('selective disclosure', () => {
     assert.equal(res.status, 200)
     const result = (await res.json()) as any
     assert.equal(result.verified, true)
-    assert.equal(result.withheld.length, 13)
+    assert.equal(result.withheld.length, 15)
   })
 
   test('an overstated field is caught', async () => {
@@ -479,7 +485,7 @@ describe('selective disclosure', () => {
       await app.request('/api/disclose', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ bundle: overhaul.bundle, fields: ['costCents'] }),
+        body: JSON.stringify({ bundle: overhaul.bundle, fields: ['remarks'] }),
       })
     ).json()
     disclosure.fields[0].value = 99
@@ -499,7 +505,7 @@ describe('selective disclosure', () => {
       await app.request('/api/disclose', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ bundle: overhaul.bundle, fields: ['costCents'] }),
+        body: JSON.stringify({ bundle: overhaul.bundle, fields: ['remarks'] }),
       })
     ).json()
     disclosure.uri = `at://${CASCADIA.did}/dev.cldixon.f8130.release/3mzzzzzzzzz2z`
@@ -578,14 +584,20 @@ describe('issuance', () => {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
+        approvingAuthority: 'FAA/United States',
         formNumber: 'SYNTHETIC-8130-9001',
+        organizationName: 'Cascadia MRO',
+        organizationAddress: '4400 Airport Way, Everett, WA 98204',
+        description: 'Fuel control unit',
         partNumber: 'NT-1234-56',
         serialNumber: 'SN-999001',
         status: 'REPAIRED',
+        certifyingBlock: 'RETURN_TO_SERVICE',
+        approvalBasis: 'PART_43_RETURN_TO_SERVICE',
         signerCert: 'SYNTHETIC-CERT-1',
         completedAt: '2026-04-01T12:00:00Z',
-        costCents: '4200',
-        findings: 'Nothing of note',
+        quantity: '2',
+        remarks: 'Nothing of note.',
       }),
     })
     assert.equal(res.status, 200)
@@ -595,7 +607,7 @@ describe('issuance', () => {
 
     assert.equal(calls.length, 1)
     assert.equal(calls[0].form.partNumber, 'NT-1234-56')
-    assert.equal(calls[0].form.costCents, 4200, 'numbers must arrive as numbers')
+    assert.equal(calls[0].form.quantity, 2, 'numbers must arrive as numbers')
   })
 
   test('empty optional fields are omitted rather than sent as empty strings', async () => {
@@ -604,15 +616,18 @@ describe('issuance', () => {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
+        approvingAuthority: 'FAA/United States',
         formNumber: 'F', partNumber: 'P', serialNumber: 'S', status: 'NEW',
+        organizationName: 'O', organizationAddress: 'A', description: 'D',
+        certifyingBlock: 'CONFORMITY', approvalBasis: 'APPROVED_DESIGN_DATA',
         signerCert: 'C', completedAt: '2026-04-01T12:00:00Z',
-        findings: '', costCents: '',
+        remarks: '', quantity: '',
       }),
     })
     // An empty string is a committed value meaning "blank"; absent means "no
     // such field". Sending the wrong one silently changes the commitment.
-    assert.ok(!('findings' in calls[0].form))
-    assert.ok(!('costCents' in calls[0].form))
+    assert.ok(!('quantity' in calls[0].form))
+    assert.ok(!('remarks' in calls[0].form))
   })
 
   test('a malformed form surfaces the canonicalization error', async () => {
@@ -704,5 +719,20 @@ describe('verdicts', () => {
       body: new URLSearchParams({ subjectUri: 'at://x/y/z' }),
     })
     assert.equal(res.status, 400)
+  })
+})
+
+describe('field labels', () => {
+  /**
+   * A field with no label renders as a camelCase identifier, which looks like
+   * a bug to nobody and reads as one to everybody. Growing the field set
+   * without growing the label table is the way that happens.
+   */
+  test('every committed field has a human label naming its block', () => {
+    for (const name of FIELD_ORDER) {
+      const label = fieldLabel(name)
+      assert.notEqual(label, name, `${name} has no label`)
+      assert.match(label, /^Block \S+ · /, `${name}: ${label}`)
+    }
   })
 })

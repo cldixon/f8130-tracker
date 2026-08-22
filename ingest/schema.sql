@@ -26,12 +26,19 @@ CREATE TABLE IF NOT EXISTS release (
   prev_uri      TEXT,
   prev_cid      TEXT,
 
-  part_number   TEXT NOT NULL,
-  serial_number TEXT NOT NULL,
-  status        TEXT NOT NULL,
-  signer_cert   TEXT NOT NULL,
-  form_number   TEXT NOT NULL,
-  commitment    BYTEA NOT NULL,
+  -- The blocks of the form that travel in plaintext on the public record.
+  -- Block 11 (status) and Block 12 (remarks) are deliberately absent: they are
+  -- committed but not published, so this index cannot answer what was done to
+  -- a part or what the shop found. That is the point.
+  approving_authority  TEXT NOT NULL,
+  form_number          TEXT NOT NULL,
+  organization_name    TEXT NOT NULL,
+  organization_address TEXT NOT NULL,
+  description          TEXT NOT NULL,
+  part_number          TEXT NOT NULL,
+  serial_number        TEXT NOT NULL,
+  signer_cert          TEXT NOT NULL,
+  commitment           BYTEA NOT NULL,
 
   -- Claimed by the issuer. A self-hosted server can write anything here, and
   -- backdating is precisely the fraudster's move.

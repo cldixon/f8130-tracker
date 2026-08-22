@@ -16,39 +16,43 @@ export type { Org, OrgKind } from '@f8130/core'
 
 /** Scenario 1a — the part is manufactured. */
 export const birthForm: RawForm = {
+  approvingAuthority: 'FAA/United States',
   formNumber: 'SYNTHETIC-8130-0001',
-  partNumber: 'NT-8821-04',
-  serialNumber: 'SN-000417',
-  description: 'Fuel control unit',
-  status: 'NEW',
-  quantity: 1,
+  organizationName: 'Northwind Turbine',
+  organizationAddress: '1200 Industrial Loop, Wichita, KS 67209',
   workOrder: 'WO/2019/1180',
-  findings: 'None; new manufacture',
-  workscope: 'Production acceptance test',
-  costCents: 4_250_000,
-  customer: 'Cascadia MRO',
+  item: 1,
+  description: 'Fuel control unit',
+  partNumber: 'NT-8821-04',
+  quantity: 1,
+  serialNumber: 'SN-000417',
+  status: 'NEW',
+  remarks: 'Production acceptance test complete. New manufacture; no findings.',
+  certifyingBlock: 'CONFORMITY',
+  approvalBasis: 'APPROVED_DESIGN_DATA',
   signerCert: 'SYNTHETIC-CERT-00081',
   signerName: 'R. Inspector',
-  remarks: '',
   completedAt: '2019-03-11T14:02:00Z',
 }
 
 /** Scenario 1b — seven years later it comes in for overhaul. */
 export const overhaulForm: RawForm = {
+  approvingAuthority: 'FAA/United States',
   formNumber: 'SYNTHETIC-8130-0002',
-  partNumber: 'NT-8821-04',
-  serialNumber: 'SN-000417',
-  description: 'Fuel control unit',
-  status: 'OVERHAULED',
-  quantity: 1,
+  organizationName: 'Cascadia MRO',
+  organizationAddress: '4400 Airport Way, Everett, WA 98204',
   workOrder: 'WO/2026/0042',
-  findings: 'Metering valve wear beyond limits',
-  workscope: 'Full overhaul per CMM 73-21-05',
-  costCents: 1_284_500,
-  customer: 'Example Air',
+  item: 1,
+  description: 'Fuel control unit',
+  partNumber: 'NT-8821-04',
+  quantity: 1,
+  serialNumber: 'SN-000417',
+  status: 'OVERHAULED',
+  remarks: 'Metering valve wear beyond limits. Full overhaul per CMM 73-21-05. Returned to service.',
+  certifyingBlock: 'RETURN_TO_SERVICE',
+  approvalBasis: 'PART_43_RETURN_TO_SERVICE',
   signerCert: 'SYNTHETIC-CERT-12345',
   signerName: 'A. Technician',
-  remarks: 'Returned to service',
   completedAt: '2026-01-22T09:30:00Z',
 }
 
@@ -60,20 +64,22 @@ export const overhaulForm: RawForm = {
  * birth, which is precisely the thing a buyer cannot otherwise discover.
  */
 export const orphanForm: RawForm = {
+  approvingAuthority: 'FAA/United States',
   formNumber: 'SYNTHETIC-8130-0004',
-  partNumber: 'NT-9004-11',
-  serialNumber: 'SN-551200',
-  description: 'Hydraulic actuator',
-  status: 'REPAIRED',
-  quantity: 1,
+  organizationName: 'Cascadia MRO',
+  organizationAddress: '4400 Airport Way, Everett, WA 98204',
   workOrder: 'WO/2026/0077',
-  findings: 'Seal degradation',
-  workscope: 'Seal replacement per CMM 29-11-08',
-  costCents: 310_000,
-  customer: 'Southpoint Air',
+  item: 1,
+  description: 'Hydraulic actuator',
+  partNumber: 'NT-9004-11',
+  quantity: 1,
+  serialNumber: 'SN-551200',
+  status: 'REPAIRED',
+  remarks: 'Seal degradation. Seal replacement per CMM 29-11-08. Prior history not supplied by seller.',
+  certifyingBlock: 'RETURN_TO_SERVICE',
+  approvalBasis: 'PART_43_RETURN_TO_SERVICE',
   signerCert: 'SYNTHETIC-CERT-12345',
   signerName: 'A. Technician',
-  remarks: 'Prior history not supplied by seller',
   completedAt: '2026-02-14T11:05:00Z',
 }
 
@@ -86,54 +92,60 @@ export const orphanForm: RawForm = {
  */
 export const brokerForms: RawForm[] = [
   {
+    approvingAuthority: 'FAA/United States',
     formNumber: 'SYNTHETIC-8130-0101',
-    partNumber: 'NT-7702-09',
-    serialNumber: 'SN-330011',
-    description: 'Bleed air valve',
-    status: 'OVERHAULED',
-    quantity: 1,
+    organizationName: 'Meridian Aeroparts',
+    organizationAddress: '90 Cargo Road, Miami, FL 33122',
     workOrder: 'WO/2026/1001',
-    findings: 'Overhauled to serviceable condition',
-    workscope: 'Overhaul',
-    costCents: 890_000,
-    customer: 'Example Air',
+    item: 1,
+    description: 'Bleed air valve',
+    partNumber: 'NT-7702-09',
+    quantity: 1,
+    serialNumber: 'SN-330011',
+    status: 'OVERHAULED',
+    remarks: 'Overhauled to serviceable condition.',
+    certifyingBlock: 'RETURN_TO_SERVICE',
+    approvalBasis: 'PART_43_RETURN_TO_SERVICE',
     signerCert: 'SYNTHETIC-CERT-90001',
     signerName: 'M. Broker',
-    remarks: '',
     completedAt: '2026-03-02T08:00:00Z',
   },
   {
+    approvingAuthority: 'FAA/United States',
     formNumber: 'SYNTHETIC-8130-0102',
-    partNumber: 'NT-7702-09',
-    serialNumber: 'SN-330012',
-    description: 'Bleed air valve',
-    status: 'OVERHAULED',
-    quantity: 1,
+    organizationName: 'Meridian Aeroparts',
+    organizationAddress: '90 Cargo Road, Miami, FL 33122',
     workOrder: 'WO/2026/1002',
-    findings: 'Overhauled to serviceable condition',
-    workscope: 'Overhaul',
-    costCents: 890_000,
-    customer: 'Southpoint Air',
+    item: 1,
+    description: 'Bleed air valve',
+    partNumber: 'NT-7702-09',
+    quantity: 1,
+    serialNumber: 'SN-330012',
+    status: 'OVERHAULED',
+    remarks: 'Overhauled to serviceable condition.',
+    certifyingBlock: 'RETURN_TO_SERVICE',
+    approvalBasis: 'PART_43_RETURN_TO_SERVICE',
     signerCert: 'SYNTHETIC-CERT-90001',
     signerName: 'M. Broker',
-    remarks: '',
     completedAt: '2026-03-05T08:00:00Z',
   },
   {
+    approvingAuthority: 'FAA/United States',
     formNumber: 'SYNTHETIC-8130-0103',
-    partNumber: 'NT-7702-09',
-    serialNumber: 'SN-330013',
-    description: 'Bleed air valve',
-    status: 'OVERHAULED',
-    quantity: 1,
+    organizationName: 'Meridian Aeroparts',
+    organizationAddress: '90 Cargo Road, Miami, FL 33122',
     workOrder: 'WO/2026/1003',
-    findings: 'Overhauled to serviceable condition',
-    workscope: 'Overhaul',
-    costCents: 890_000,
-    customer: 'Cascadia MRO',
+    item: 1,
+    description: 'Bleed air valve',
+    partNumber: 'NT-7702-09',
+    quantity: 1,
+    serialNumber: 'SN-330013',
+    status: 'OVERHAULED',
+    remarks: 'Overhauled to serviceable condition.',
+    certifyingBlock: 'RETURN_TO_SERVICE',
+    approvalBasis: 'PART_43_RETURN_TO_SERVICE',
     signerCert: 'SYNTHETIC-CERT-90001',
     signerName: 'M. Broker',
-    remarks: '',
     completedAt: '2026-03-09T08:00:00Z',
   },
 ]
@@ -167,10 +179,21 @@ export type Visit = {
   receivedAt?: string
   outcome?: 'accepted' | 'rejected' | 'discrepancy'
   note?: string
-  costCents: number
-  findings: string
-  workscope: string
-  remarks?: string
+  /** Block 12. Findings, workscope and anything else the shop wrote down. */
+  remarks: string
+  /**
+   * Block 13a/14a override.
+   *
+   * Left absent, the basis is derived from the status: new manufacture is
+   * certified for conformity against approved design data, everything else is
+   * approved for return to service under part 43. Set this only for the
+   * unusual case.
+   */
+  approvalBasis?:
+    | 'APPROVED_DESIGN_DATA'
+    | 'NON_APPROVED_DESIGN_DATA'
+    | 'PART_43_RETURN_TO_SERVICE'
+    | 'OTHER_REGULATION'
 }
 
 export type PartLineage = {
@@ -182,37 +205,52 @@ export type PartLineage = {
 }
 
 /**
- * Builds the full fifteen-field form for one visit.
+ * Builds the full seventeen-field form for one visit.
  *
  * `formNumber` and `workOrder` are derived from the sequence rather than
  * hand-assigned, so they cannot silently collide across scenarios.
+ *
+ * The receiving operator is NOT a field. Version 1 committed to a `customer`,
+ * which is not a block on an 8130-3 — the form says who issued it, not who
+ * it was issued to. Who received the part is expressed the way the protocol
+ * expresses it: by that operator publishing an acceptance from its own repo.
  */
 export function visitForm(params: {
   lineage: PartLineage
   visit: Visit
   index: number
   formSeq: number
+  organizationName: string
+  organizationAddress: string
   signerCert: string
   signerName: string
-  customerName: string
 }): RawForm {
   const { lineage, visit, formSeq } = params
   const year = visit.completedAt.slice(0, 4)
+  const certifyingBlock = visit.status === 'NEW' ? 'CONFORMITY' : 'RETURN_TO_SERVICE'
+  const approvalBasis =
+    visit.approvalBasis ??
+    (certifyingBlock === 'CONFORMITY'
+      ? 'APPROVED_DESIGN_DATA'
+      : 'PART_43_RETURN_TO_SERVICE')
+
   return {
+    approvingAuthority: 'FAA/United States',
     formNumber: `SYNTHETIC-8130-${String(formSeq).padStart(4, '0')}`,
-    partNumber: lineage.partNumber,
-    serialNumber: lineage.serialNumber,
-    description: lineage.description,
-    status: visit.status,
-    quantity: 1,
+    organizationName: params.organizationName,
+    organizationAddress: params.organizationAddress,
     workOrder: `WO/${year}/${String(formSeq).padStart(4, '0')}`,
-    findings: visit.findings,
-    workscope: visit.workscope,
-    costCents: visit.costCents,
-    customer: params.customerName,
+    item: 1,
+    description: lineage.description,
+    partNumber: lineage.partNumber,
+    quantity: 1,
+    serialNumber: lineage.serialNumber,
+    status: visit.status,
+    remarks: visit.remarks,
+    certifyingBlock,
+    approvalBasis,
     signerCert: params.signerCert,
     signerName: params.signerName,
-    remarks: visit.remarks ?? '',
     completedAt: visit.completedAt,
   }
 }
@@ -243,32 +281,25 @@ export const deepLineage: PartLineage = {
       completedAt: '2009-06-18T13:20:00Z',
       receivedAt: '2009-07-02T16:00:00Z',
       outcome: 'accepted',
-      costCents: 3_890_000,
-      findings: 'None; new manufacture',
-      workscope: 'Production acceptance test',
-      remarks: 'Delivered with engine build',
+      remarks: 'None; new manufacture. Production acceptance test. Delivered with engine build.',
     },
     {
       issuer: 'ironwood',
       customer: 'exampleair',
+      remarks: 'Case porosity at mounting flange. Flange repair per CMM 29-11-42.',
       status: 'REPAIRED',
       completedAt: '2012-09-04T10:45:00Z',
       receivedAt: '2012-09-19T09:15:00Z',
       outcome: 'accepted',
-      costCents: 842_000,
-      findings: 'Case porosity at mounting flange',
-      workscope: 'Flange repair per CMM 29-11-42',
     },
     {
       issuer: 'cascadia',
       customer: 'exampleair',
+      remarks: 'Bearing wear at limits; shaft seal weeping. Full overhaul per CMM 29-11-40.',
       status: 'OVERHAULED',
       completedAt: '2015-02-27T15:10:00Z',
       receivedAt: '2015-03-14T11:30:00Z',
       outcome: 'accepted',
-      costCents: 1_975_000,
-      findings: 'Bearing wear at limits; shaft seal weeping',
-      workscope: 'Full overhaul per CMM 29-11-40',
     },
     {
       issuer: 'harborpoint',
@@ -277,21 +308,16 @@ export const deepLineage: PartLineage = {
       completedAt: '2017-11-13T09:05:00Z',
       receivedAt: '2017-11-28T14:20:00Z',
       outcome: 'accepted',
-      costCents: 218_000,
-      findings: 'No defects noted',
-      workscope: 'Receiving inspection on asset transfer',
-      remarks: 'Inspected on change of ownership',
+      remarks: 'No defects noted. Receiving inspection on asset transfer. Inspected on change of ownership.',
     },
     {
       issuer: 'alpine',
       customer: 'southpoint',
+      remarks: 'Gear scoring; pressure decay beyond limits. Full overhaul per CMM 29-11-40 rev 6.',
       status: 'OVERHAULED',
       completedAt: '2020-05-29T12:00:00Z',
       receivedAt: '2020-06-18T10:00:00Z',
       outcome: 'accepted',
-      costCents: 2_230_000,
-      findings: 'Gear scoring; pressure decay beyond limits',
-      workscope: 'Full overhaul per CMM 29-11-40 rev 6',
     },
     {
       issuer: 'fjordholm',
@@ -300,10 +326,7 @@ export const deepLineage: PartLineage = {
       completedAt: '2023-08-07T08:40:00Z',
       receivedAt: '2023-08-29T13:05:00Z',
       outcome: 'accepted',
-      costCents: 1_460_000,
-      findings: 'Pre-modification condition serviceable',
-      workscope: 'Service bulletin embodiment SB-29-0114',
-      remarks: 'Modification standard raised to -02B',
+      remarks: 'Pre-modification condition serviceable. Service bulletin embodiment SB-29-0114. Modification standard raised to -02B.',
     },
     {
       issuer: 'cascadia',
@@ -312,10 +335,7 @@ export const deepLineage: PartLineage = {
       completedAt: '2026-04-16T11:25:00Z',
       receivedAt: '2026-05-04T09:45:00Z',
       outcome: 'accepted',
-      costCents: 2_145_000,
-      findings: 'Bearing wear; impeller erosion',
-      workscope: 'Full overhaul per CMM 29-11-40 rev 8',
-      remarks: 'Returned to service',
+      remarks: 'Bearing wear; impeller erosion. Full overhaul per CMM 29-11-40 rev 8. Returned to service.',
     },
   ],
 }
@@ -345,22 +365,17 @@ export const vanishedLineage: PartLineage = {
       completedAt: '2022-03-11T14:30:00Z',
       receivedAt: '2022-03-25T10:10:00Z',
       outcome: 'accepted',
-      costCents: 1_180_000,
-      findings: 'Outflow valve drive wear',
-      workscope: 'Full overhaul per CMM 21-31-16',
-      remarks: 'History prior to 2022 not supplied',
+      remarks: 'Outflow valve drive wear. Full overhaul per CMM 21-31-16. History prior to 2022 not supplied.',
     },
     {
       issuer: 'clearwater',
       customer: 'redcliff',
+      remarks: 'Pressure transducer drift. Transducer replacement per CMM 21-31-16.',
       status: 'REPAIRED',
       completedAt: '2026-05-20T10:15:00Z',
       receivedAt: '2026-06-08T15:40:00Z',
       outcome: 'discrepancy',
       note: 'Part serviceable and paperwork verifies, but the chain stops at a station we cannot locate.',
-      costCents: 430_000,
-      findings: 'Pressure transducer drift',
-      workscope: 'Transducer replacement per CMM 21-31-16',
     },
   ],
 }
@@ -399,13 +414,11 @@ export const routineLineages: PartLineage[] = [
       {
         issuer: 'saltmarsh',
         customer: 'cobaltcoast',
+        remarks: 'Turbine wheel erosion. Full overhaul per CMM 21-52-08.',
         status: 'OVERHAULED',
         completedAt: '2026-05-04T09:00:00Z',
         receivedAt: '2026-05-19T13:00:00Z',
         outcome: 'accepted',
-        costCents: 1_640_000,
-        findings: 'Turbine wheel erosion',
-        workscope: 'Full overhaul per CMM 21-52-08',
       },
     ],
   },
@@ -417,13 +430,11 @@ export const routineLineages: PartLineage[] = [
       {
         issuer: 'flinthills',
         customer: 'highline',
+        remarks: 'Brush wear beyond limits. Brush and bearing replacement per CMM 24-31-11.',
         status: 'REPAIRED',
         completedAt: '2026-05-11T16:20:00Z',
         receivedAt: '2026-05-27T08:30:00Z',
         outcome: 'accepted',
-        costCents: 612_000,
-        findings: 'Brush wear beyond limits',
-        workscope: 'Brush and bearing replacement per CMM 24-31-11',
       },
     ],
   },
@@ -435,13 +446,11 @@ export const routineLineages: PartLineage[] = [
       {
         issuer: 'graniteridge',
         customer: 'pinewood',
+        remarks: 'Servo valve contamination. Full overhaul per CMM 73-21-11.',
         status: 'OVERHAULED',
         completedAt: '2026-05-22T11:40:00Z',
         receivedAt: '2026-06-09T10:00:00Z',
         outcome: 'accepted',
-        costCents: 1_915_000,
-        findings: 'Servo valve contamination',
-        workscope: 'Full overhaul per CMM 73-21-11',
       },
     ],
   },
@@ -453,13 +462,11 @@ export const routineLineages: PartLineage[] = [
       {
         issuer: 'sandhills',
         customer: 'kenai',
+        remarks: 'Clutch pack wear; oil contamination. Full overhaul per CMM 24-11-27.',
         status: 'OVERHAULED',
         completedAt: '2026-06-01T08:15:00Z',
         receivedAt: '2026-06-22T12:20:00Z',
         outcome: 'accepted',
-        costCents: 2_480_000,
-        findings: 'Clutch pack wear; oil contamination',
-        workscope: 'Full overhaul per CMM 24-11-27',
       },
     ],
   },
@@ -471,13 +478,11 @@ export const routineLineages: PartLineage[] = [
       {
         issuer: 'basalt',
         customer: 'marisol',
+        remarks: 'No defects noted. Bench functional check per CMM 30-11-04.',
         status: 'INSPECTED',
         completedAt: '2026-06-05T13:50:00Z',
         receivedAt: '2026-06-20T09:10:00Z',
         outcome: 'accepted',
-        costCents: 186_000,
-        findings: 'No defects noted',
-        workscope: 'Bench functional check per CMM 30-11-04',
       },
     ],
   },
@@ -489,14 +494,12 @@ export const routineLineages: PartLineage[] = [
       {
         issuer: 'wexford',
         customer: 'cobaltcoast',
+        remarks: 'Core fin damage, localized. Core repair per CMM 79-21-05.',
         status: 'REPAIRED',
         completedAt: '2026-06-12T10:05:00Z',
         receivedAt: '2026-07-01T14:45:00Z',
         outcome: 'discrepancy',
         note: 'Paperwork verifies; core shows impact damage not noted on the release.',
-        costCents: 398_000,
-        findings: 'Core fin damage, localized',
-        workscope: 'Core repair per CMM 79-21-05',
       },
     ],
   },
@@ -508,14 +511,12 @@ export const routineLineages: PartLineage[] = [
       {
         issuer: 'fairlead',
         customer: 'highline',
+        remarks: 'Overhauled to serviceable condition. Overhaul.',
         status: 'OVERHAULED',
         completedAt: '2026-06-18T09:30:00Z',
         receivedAt: '2026-07-06T11:15:00Z',
         outcome: 'rejected',
         note: 'Release references a shop visit the issuer will not identify.',
-        costCents: 1_050_000,
-        findings: 'Overhauled to serviceable condition',
-        workscope: 'Overhaul',
       },
     ],
   },
@@ -527,13 +528,11 @@ export const routineLineages: PartLineage[] = [
       {
         issuer: 'ironwood',
         customer: 'redcliff',
+        remarks: 'Bearing wear; seal leakage. Full overhaul per CMM 21-52-08.',
         status: 'OVERHAULED',
         completedAt: '2026-06-24T15:00:00Z',
         receivedAt: '2026-07-11T10:30:00Z',
         outcome: 'accepted',
-        costCents: 1_702_000,
-        findings: 'Bearing wear; seal leakage',
-        workscope: 'Full overhaul per CMM 21-52-08',
       },
     ],
   },
@@ -547,10 +546,7 @@ export const routineLineages: PartLineage[] = [
         customer: 'southpoint',
         status: 'REPAIRED',
         completedAt: '2026-07-02T12:25:00Z',
-        costCents: 587_000,
-        findings: 'Field winding insulation breakdown',
-        workscope: 'Rewind per CMM 24-31-11',
-        remarks: 'In transit at time of writing',
+        remarks: 'Field winding insulation breakdown. Rewind per CMM 24-31-11. In transit at time of writing.',
       },
     ],
   },
@@ -565,24 +561,20 @@ export const routineLineages: PartLineage[] = [
       {
         issuer: 'clearwater',
         customer: 'pinewood',
+        remarks: 'Butterfly shaft wear. Full overhaul per CMM 30-11-04.',
         status: 'OVERHAULED',
         completedAt: '2022-04-19T09:20:00Z',
         receivedAt: '2022-05-06T13:40:00Z',
         outcome: 'accepted',
-        costCents: 744_000,
-        findings: 'Butterfly shaft wear',
-        workscope: 'Full overhaul per CMM 30-11-04',
       },
       {
         issuer: 'copperline',
         customer: 'pinewood',
+        remarks: 'No defects noted. Bench functional check per CMM 30-11-04.',
         status: 'INSPECTED',
         completedAt: '2026-07-09T14:10:00Z',
         receivedAt: '2026-07-24T09:55:00Z',
         outcome: 'accepted',
-        costCents: 164_000,
-        findings: 'No defects noted',
-        workscope: 'Bench functional check per CMM 30-11-04',
       },
     ],
   },
@@ -594,13 +586,11 @@ export const routineLineages: PartLineage[] = [
       {
         issuer: 'rioseco',
         customer: 'kenai',
+        remarks: 'Overhauled to serviceable condition. Overhaul.',
         status: 'OVERHAULED',
         completedAt: '2026-07-15T10:50:00Z',
         receivedAt: '2026-08-03T16:05:00Z',
         outcome: 'accepted',
-        costCents: 2_310_000,
-        findings: 'Overhauled to serviceable condition',
-        workscope: 'Overhaul',
       },
     ],
   },

@@ -5,6 +5,7 @@ import {
   exposedHashes,
   fetchVerifiedRelease,
   FIELD_ORDER,
+  FIELDS,
   parseBundle,
   parseDisclosure,
   verifyBundle,
@@ -382,18 +383,12 @@ export function createApp(deps: AppDeps) {
         return v === undefined ? undefined : Number(v)
       }
 
+      // Walked from FIELDS rather than listed, so adding a block to the form
+      // cannot leave the issue form quietly unable to submit it.
       const raw: Record<string, unknown> = {}
-      for (const k of [
-        'formNumber', 'partNumber', 'serialNumber', 'description', 'status',
-        'workOrder', 'findings', 'workscope', 'customer', 'signerCert',
-        'signerName', 'remarks', 'completedAt',
-      ]) {
-        const v = str(k)
-        if (v !== undefined) raw[k] = v
-      }
-      for (const k of ['quantity', 'costCents']) {
-        const v = num(k)
-        if (v !== undefined) raw[k] = v
+      for (const spec of FIELDS) {
+        const v = spec.kind === 'integer' ? num(spec.name) : str(spec.name)
+        if (v !== undefined) raw[spec.name] = v
       }
 
       const prevUri = str('prevUri')
@@ -552,10 +547,13 @@ function serializeRelease(r: ReleaseRow) {
     uri: r.uri,
     issuerDid: r.issuerDid,
     prev: r.prevUri ? { uri: r.prevUri, cid: r.prevCid } : null,
+    approvingAuthority: r.approvingAuthority,
+    formNumber: r.formNumber,
+    organizationName: r.organizationName,
+    organizationAddress: r.organizationAddress,
+    description: r.description,
     partNumber: r.partNumber,
     serialNumber: r.serialNumber,
-    status: r.status,
-    formNumber: r.formNumber,
     signerCert: r.signerCert,
     completedAt: r.completedAt,
     observedAt: r.observedAt,

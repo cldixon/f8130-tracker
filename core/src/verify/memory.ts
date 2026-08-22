@@ -245,40 +245,51 @@ export class MemoryNetwork implements IdentityResolver, RepoClient {
   }
 }
 
-/** A realistic overhaul form, used as the base for most cases. */
+/**
+ * A realistic return-to-service form, used as the base for most cases.
+ *
+ * Block 14 is the certifying column, so the approval basis is one of the two
+ * legal under it. Block 12 carries what the shop found, which is where the
+ * commercially sensitive detail of a real 8130-3 actually lives.
+ */
 export const overhaulForm: RawForm = {
+  approvingAuthority: 'FAA/United States',
   formNumber: 'SYNTHETIC-8130-0002',
-  partNumber: 'NT-8821-04',
-  serialNumber: 'SN-000417',
-  description: 'Fuel control unit',
-  status: 'OVERHAULED',
-  quantity: 1,
+  organizationName: 'Cascadia MRO',
+  organizationAddress: '4400 Airport Way, Everett, WA 98204',
   workOrder: 'WO/2026/0042',
-  findings: 'Metering valve wear beyond limits',
-  workscope: 'Full overhaul per CMM 73-21-05',
-  costCents: 1_284_500,
-  customer: 'Example Air',
+  item: 1,
+  description: 'Fuel control unit',
+  partNumber: 'NT-8821-04',
+  quantity: 1,
+  serialNumber: 'SN-000417',
+  status: 'OVERHAULED',
+  remarks: 'Metering valve wear beyond limits. Full overhaul per CMM 73-21-05.',
+  certifyingBlock: 'RETURN_TO_SERVICE',
+  approvalBasis: 'PART_43_RETURN_TO_SERVICE',
   signerCert: 'SYNTHETIC-CERT-12345',
   signerName: 'A. Technician',
-  remarks: 'Returned to service',
   completedAt: '2026-01-22T09:30:00Z',
 }
 
+/** New manufacture, so Block 13 certifies conformity instead. */
 export const birthForm: RawForm = {
+  approvingAuthority: 'FAA/United States',
   formNumber: 'SYNTHETIC-8130-0001',
-  partNumber: 'NT-8821-04',
-  serialNumber: 'SN-000417',
-  description: 'Fuel control unit',
-  status: 'NEW',
-  quantity: 1,
+  organizationName: 'Northwind Turbine',
+  organizationAddress: '1200 Industrial Loop, Wichita, KS 67209',
   workOrder: 'WO/2019/1180',
-  findings: 'None; new manufacture',
-  workscope: 'Production acceptance test',
-  costCents: 4_250_000,
-  customer: 'Cascadia MRO',
+  item: 1,
+  description: 'Fuel control unit',
+  partNumber: 'NT-8821-04',
+  quantity: 1,
+  serialNumber: 'SN-000417',
+  status: 'NEW',
+  remarks: 'Production acceptance test complete.',
+  certifyingBlock: 'CONFORMITY',
+  approvalBasis: 'APPROVED_DESIGN_DATA',
   signerCert: 'SYNTHETIC-CERT-00081',
   signerName: 'R. Inspector',
-  remarks: '',
   completedAt: '2019-03-11T14:02:00Z',
 }
 

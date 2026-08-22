@@ -14,7 +14,7 @@ import { resolve } from 'node:path'
 import { cidForLex } from '@atproto/lex-cbor'
 
 import { commitForm, fromHex, toHex, verifyFieldProof } from '../src/commitment.js'
-import { FIELD_ORDER, FIELD_SET_VERSION } from '../src/fields.js'
+import { FIELD_ORDER, FIELD_SET_VERSION, publicValues } from '../src/fields.js'
 
 const vectorsPath = resolve(import.meta.dirname, '../../testdata/vectors.json')
 const doc = JSON.parse(readFileSync(vectorsPath, 'utf8'))
@@ -44,18 +44,17 @@ describe('shared vectors', () => {
       })
 
       test('record CID matches', async () => {
-        const cid = await cidForLex({
+        // Assembled from PUBLIC_FIELDS rather than a restated field list, for
+        // the same reason the generator is: a restated list is how a record
+        // and its field set drift apart without anything failing.
+        const record: Record<string, unknown> = {
           $type: doc.lexicon,
           commitment: commitment.root,
           fieldSetVersion: FIELD_SET_VERSION,
           issuerDid: v.issuerDid,
-          formNumber: commitment.values.formNumber,
-          partNumber: commitment.values.partNumber,
-          serialNumber: commitment.values.serialNumber,
-          status: commitment.values.status,
-          signerCert: commitment.values.signerCert,
-          completedAt: commitment.values.completedAt,
-        } as any)
+          ...publicValues(commitment.values),
+        }
+        const cid = await cidForLex(record as any)
         assert.equal(cid.toString(), v.recordCid)
       })
 

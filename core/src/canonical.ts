@@ -7,7 +7,13 @@
  * normalized on the way in.
  */
 
-import { FIELDS, type CanonicalForm, type FieldSpec, type RawForm } from './fields.js'
+import {
+  FIELDS,
+  FIELD_SET_VERSION,
+  type CanonicalForm,
+  type FieldSpec,
+  type RawForm,
+} from './fields.js'
 
 export class CanonicalizationError extends Error {
   constructor(
@@ -167,7 +173,8 @@ export function canonicalizeForm(form: RawForm): CanonicalForm {
   if (unknown.length > 0) {
     throw new CanonicalizationError(
       unknown[0]!,
-      `not part of the committed field set (v1); got unknown keys: ${unknown.join(', ')}`,
+      `not part of the committed field set (v${FIELD_SET_VERSION}); ` +
+        `got unknown keys: ${unknown.join(', ')}`,
     )
   }
 
