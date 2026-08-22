@@ -305,10 +305,24 @@ func (s *Store) IssuerRejections(ctx context.Context) (map[string]int, error) {
 // This is what makes "Postgres is rebuildable from the firehose" a testable
 // claim rather than a comforting sentence in a README.
 func (s *Store) Reset(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `
-		TRUNCATE release, acceptance, actor, ingest_cursor RESTART IDENTITY
-	`)
-	return err
+	// Drop rather than truncate, then migrate again.
+	//
+	// Truncating empties the tables but keeps their shape, which is fine when
+	// only the rows are stale and wrong when the schema is. A field set change
+	// moves columns — v2 added Block 1, 4 and 7 to the public record and took
+	// Block 11 off it — and a truncated table still carries yesterday's
+	// columns, so every insert afterwards fails on a column that no longer
+	// exists or a NOT NULL that no longer gets written.
+	//
+	// Reindex means the index is rebuilt from sequence zero. Nothing here is a
+	// source of truth, so there is nothing to lose by taking the tables with
+	// it.
+	if _, err := s.pool.Exec(ctx, `
+		DROP TABLE IF EXISTS release, acceptance, actor, ingest_cursor CASCADE
+	`); err != nil {
+		return err
+	}
+	return s.Migrate(ctx)
 }
 
 func nullIfEmpty(s string) *string {

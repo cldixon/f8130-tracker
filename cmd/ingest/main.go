@@ -38,12 +38,19 @@ func run() error {
 		fmt.Fprintf(os.Stderr, "  DATABASE_URL  PostgreSQL connection string (required)\n")
 		fmt.Fprintf(os.Stderr, "  PDS_HOST      firehose origin, e.g. ws://pds.railway.internal:3000 (required)\n")
 		fmt.Fprintf(os.Stderr, "  LOG_LEVEL     debug|info|warn|error (default info)\n")
+		fmt.Fprintf(os.Stderr, "  F8130_REINDEX =1 forces reindex regardless of the subcommand\n")
 	}
 	flag.Parse()
 
 	cmd := flag.Arg(0)
 	if cmd == "" {
 		cmd = "run"
+	}
+	// A deployed service has a fixed start command, so the only way to ask a
+	// running container for a rebuild is a variable. Same shape as SEED_RESET
+	// on the seed job: set it, redeploy, unset it.
+	if os.Getenv("F8130_REINDEX") == "1" {
+		cmd = "reindex"
 	}
 	if cmd != "run" && cmd != "reindex" {
 		flag.Usage()
