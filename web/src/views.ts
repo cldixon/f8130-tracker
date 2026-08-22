@@ -716,25 +716,46 @@ export function disclosePage(params: {
 
 /* ------------------------------------------------------------------ writing */
 
-const RELEASE_FIELDS: { name: string; label: string; type: 'text' | 'number' | 'enum'; hint?: string }[] = [
-  { name: 'formNumber', label: 'Form number', type: 'text' },
-  { name: 'partNumber', label: 'Part number', type: 'text' },
-  { name: 'serialNumber', label: 'Serial number', type: 'text' },
-  { name: 'description', label: 'Description', type: 'text' },
-  { name: 'status', label: 'Status', type: 'enum' },
-  { name: 'quantity', label: 'Quantity', type: 'number' },
-  { name: 'workOrder', label: 'Work order', type: 'text' },
-  { name: 'findings', label: 'Findings', type: 'text', hint: 'private' },
-  { name: 'workscope', label: 'Workscope', type: 'text', hint: 'private' },
-  { name: 'costCents', label: 'Cost in cents', type: 'number', hint: 'private' },
-  { name: 'customer', label: 'Customer', type: 'text', hint: 'private' },
-  { name: 'signerCert', label: 'Signer certificate', type: 'text' },
-  { name: 'signerName', label: 'Signer name', type: 'text', hint: 'private' },
-  { name: 'remarks', label: 'Remarks', type: 'text', hint: 'private' },
-  { name: 'completedAt', label: 'Completed at (RFC 3339 UTC)', type: 'text' },
-]
-
-const STATUSES = ['NEW', 'OVERHAULED', 'REPAIRED', 'INSPECTED', 'MODIFIED']
+/**
+ * The issue form, drawn from the committed field set.
+ *
+ * It used to be a hand-written list, and the field set moved out from under it:
+ * for a while the form asked for cost and customer, which are not blocks on an
+ * 8130-3, and never asked for Block 1, Block 4 or the certifying column, all of
+ * which a record requires. It rendered fine and could not produce a valid
+ * record. Deriving it means a field cannot be missing from the form without
+ * being missing from the schema.
+ */
+function issueInputs(prefill: Record<string, unknown> | null) {
+  const value = (name: string) => {
+    const v = prefill?.[name]
+    return v === null || v === undefined ? '' : String(v)
+  }
+  return FIELDS.map((spec) => {
+    const label = html`<label for="${spec.name}">
+      ${fieldLabel(spec.name)}${spec.public ? '' : html` <span class="hint">private</span>`}
+    </label>`
+    if (spec.kind === 'enum') {
+      return html`${label}
+        <select id="${spec.name}" name="${spec.name}">
+          ${(spec.values ?? []).map(
+            (v) => html`<option value="${v}" ${value(spec.name) === v ? 'selected' : ''}>${v}</option>`,
+          )}
+        </select>`
+    }
+    // Block 12 is the one field that is genuinely prose — findings, workscope
+    // and whatever else the shop wrote down — and it does not fit on a line.
+    if (spec.name === 'remarks') {
+      return html`${label}
+        <textarea id="${spec.name}" name="${spec.name}"
+          style="min-height:5rem">${value(spec.name)}</textarea>`
+    }
+    return html`${label}
+      <input type="${spec.kind === 'integer' ? 'number' : 'text'}"
+        id="${spec.name}" name="${spec.name}" value="${value(spec.name)}"
+        ${spec.kind === 'timestamp' ? 'placeholder="2026-04-01T12:00:00Z"' : ''}>`
+  })
+}
 
 function personaPicker(actors: Actor[], current?: string) {
   return html`<form method="post" action="/act-as" class="persona">
@@ -756,6 +777,8 @@ export function issuePage(params: {
   current?: string
   issued?: { uri: string; bundle: unknown }
   error?: string
+  /** A generated example, filled into the inputs. */
+  prefill?: Record<string, unknown> | null
 }) {
   const issued = params.issued
 
@@ -799,24 +822,24 @@ export function issuePage(params: {
       : ''}
 
     <h2>New release</h2>
+    <p class="sub" style="margin-bottom:.75rem">
+      Seventeen blocks is a lot to type. The generator fills them from the same
+      builder the seed job uses, so an example issued here is the same shape as
+      the demonstration data.
+    </p>
+    <form method="get" action="/issue" style="margin-bottom:1rem">
+      <button type="submit" name="example" value="1">Generate a synthetic example</button>
+    </form>
+
     <div class="card" style="padding:1.15rem">
       <form method="post" action="/issue">
-        ${RELEASE_FIELDS.map((f) =>
-          f.type === 'enum'
-            ? html`<label for="${f.name}">${f.label}</label>
-                <select id="${f.name}" name="${f.name}">
-                  ${STATUSES.map((s) => html`<option value="${s}">${s}</option>`)}
-                </select>`
-            : html`<label for="${f.name}">
-                  ${f.label}${f.hint ? html` <span class="hint">${f.hint}</span>` : ''}
-                </label>
-                <input type="${f.type === 'number' ? 'number' : 'text'}"
-                  id="${f.name}" name="${f.name}">`,
-        )}
+        ${issueInputs(params.prefill ?? null)}
         <label for="prevUri">Previous release URI (optional)</label>
-        <input type="text" id="prevUri" name="prevUri" placeholder="at://…">
+        <input type="text" id="prevUri" name="prevUri"
+          value="${String(params.prefill?.prevUri ?? '')}" placeholder="at://…">
         <label for="prevCid">Previous release CID (optional)</label>
-        <input type="text" id="prevCid" name="prevCid" placeholder="bafyrei…">
+        <input type="text" id="prevCid" name="prevCid"
+          value="${String(params.prefill?.prevCid ?? '')}" placeholder="bafyrei…">
         <button type="submit">Sign and publish</button>
       </form>
     </div>`,

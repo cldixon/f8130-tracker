@@ -1,7 +1,14 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { FIELD_ORDER, FIELDS } from '@f8130/core'
+import {
+  commitForm,
+  orgs,
+  syntheticForm,
+  validateApprovalBasis,
+  FIELD_ORDER,
+  FIELDS,
+} from '@f8130/core'
 import { fieldLabel } from '../src/views.js'
 
 import {
@@ -898,5 +905,163 @@ describe('the form view', () => {
   test('a missing uri is a 400, not a crash', async () => {
     const { app } = await appWithNetwork()
     assert.equal((await app.request('/form')).status, 400)
+  })
+})
+
+describe('issuing from a generated example', () => {
+  /**
+   * The regression this exists for.
+   *
+   * The issue form was a hand-written field list and the field set moved out
+   * from under it: for a while it asked for cost and customer, which are not
+   * blocks on an 8130-3, and never asked for Block 1, Block 4 or the certifying
+   * column, all of which a record requires. It rendered perfectly and could not
+   * produce a valid record. Only a test that goes through the rendered inputs
+   * catches that — one that POSTs field names directly does not.
+   */
+  test('the rendered form offers an input for every committed field', async () => {
+    const { app } = await appWithWriter()
+    const body = await (await app.request('/issue')).text()
+    for (const spec of FIELDS) {
+      assert.ok(
+        body.includes(`name="${spec.name}"`),
+        `no input for ${spec.name} (Block ${spec.block})`,
+      )
+    }
+  })
+
+  test('offers nothing that is not a committed field', async () => {
+    const { app } = await appWithWriter()
+    const body = await (await app.request('/issue')).text()
+    for (const gone of ['findings', 'workscope', 'costCents', 'customer']) {
+      assert.ok(!body.includes(`name="${gone}"`), `${gone} is not a field any more`)
+    }
+  })
+
+  test('generates an example filled into every input', async () => {
+    const { app } = await appWithWriter()
+    const body = await (await app.request('/issue?example=1')).text()
+    const empties = FIELDS.filter((f) =>
+      f.name === 'remarks'
+        ? /name="remarks"[^>]*><\/textarea>/.test(body)
+        : body.includes(`name="${f.name}" value=""`),
+    )
+    assert.deepEqual(empties.map((f) => f.name), [], 'a generated example left blanks')
+  })
+
+  /**
+   * End to end through the rendered markup: pull the generated values back out
+   * of the inputs and post exactly those. If the form and the field set ever
+   * disagree again, this fails at the commitment rather than looking fine.
+   */
+  test('a generated example issues without being edited', async () => {
+    const { app, calls } = await appWithWriter()
+    const page = await (await app.request('/issue?example=1')).text()
+
+    const submitted = new URLSearchParams()
+    for (const spec of FIELDS) {
+      if (spec.kind === 'enum') {
+        const m = new RegExp(`<option value="([^"]+)" selected>`).exec(
+          page.slice(page.indexOf(`name="${spec.name}"`)),
+        )
+        assert.ok(m, `${spec.name} had no selected option`)
+        submitted.set(spec.name, m![1]!)
+      } else if (spec.name === 'remarks') {
+        const m = /name="remarks"[^>]*>([^<]*)<\/textarea>/.exec(page)
+        assert.ok(m, 'remarks had no value')
+        submitted.set(spec.name, m![1]!)
+      } else {
+        const m = new RegExp(`name="${spec.name}" value="([^"]*)"`).exec(page)
+        assert.ok(m, `${spec.name} had no value`)
+        submitted.set(spec.name, m![1]!)
+      }
+    }
+
+    const res = await app.request('/issue', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: submitted,
+    })
+    assert.equal(res.status, 200)
+    assert.match(await res.text(), /Issued/)
+    assert.equal(calls.length, 1)
+
+    // Every block reached the writer, and the pair that has to agree does.
+    for (const spec of FIELDS) {
+      assert.ok(spec.name in calls[0].form, `${spec.name} never reached the writer`)
+    }
+    assert.ok(
+      validateApprovalBasis(
+        String(calls[0].form.certifyingBlock),
+        String(calls[0].form.approvalBasis),
+      ),
+      'the generated example paired an illegal approval basis',
+    )
+  })
+
+  test('the example is the acting organization issuing, so Block 4 is its own', async () => {
+    const { app } = await appWithWriter()
+    // With no cookie the persona defaults to the writer's first actor.
+    const body = await (await app.request('/issue?example=1')).text()
+    const org = orgs('f8130.cldixon.dev').find(
+      (o) => o.handle === 'cascadia-mro.f8130.cldixon.dev',
+    )!
+    assert.ok(
+      body.includes(`name="organizationName" value="${org.displayName}"`),
+      'Block 4 did not name the acting organization',
+    )
+    assert.ok(
+      body.includes(`name="organizationAddress" value="${org.address}"`),
+      'Block 4 did not carry that organization\'s address',
+    )
+  })
+})
+
+describe('the shared form builder', () => {
+  test('is deterministic in its seed', () => {
+    const org = orgs('f8130.example')[0]!
+    const now = new Date('2026-06-01T00:00:00Z')
+    assert.deepEqual(
+      syntheticForm({ org, seed: 42, now }),
+      syntheticForm({ org, seed: 42, now }),
+    )
+  })
+
+  test('different seeds give different parts', () => {
+    const org = orgs('f8130.example').find((o) => o.kind === 'mro')!
+    const now = new Date('2026-06-01T00:00:00Z')
+    const seen = new Set(
+      [...Array(40)].map((_, i) => String(syntheticForm({ org, seed: i, now }).partNumber)),
+    )
+    assert.ok(seen.size > 3, `only ${seen.size} distinct parts across 40 seeds`)
+  })
+
+  /** Every generated form must canonicalize and commit, whatever the seed. */
+  test('every seed produces a committable form with a legal basis', () => {
+    const now = new Date('2026-06-01T00:00:00Z')
+    for (const org of orgs('f8130.example')) {
+      for (let seed = 0; seed < 12; seed++) {
+        const form = syntheticForm({ org, seed, now })
+        assert.doesNotThrow(() => commitForm(form), `${org.key} seed ${seed}`)
+        assert.ok(
+          validateApprovalBasis(String(form.certifyingBlock), String(form.approvalBasis)),
+          `${org.key} seed ${seed}: ${form.certifyingBlock} with ${form.approvalBasis}`,
+        )
+      }
+    }
+  })
+
+  /** A manufacturer certifies conformity; everyone else returns to service. */
+  test('a manufacturer issues under Block 13 and a repair station under 14', () => {
+    const now = new Date('2026-06-01T00:00:00Z')
+    const oem = orgs('f8130.example').find((o) => o.kind === 'oem')!
+    const mro = orgs('f8130.example').find((o) => o.kind === 'mro')!
+    for (let seed = 0; seed < 8; seed++) {
+      assert.equal(syntheticForm({ org: oem, seed, now }).certifyingBlock, 'CONFORMITY')
+      assert.equal(
+        syntheticForm({ org: mro, seed, now }).certifyingBlock,
+        'RETURN_TO_SERVICE',
+      )
+    }
   })
 })

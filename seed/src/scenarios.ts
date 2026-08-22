@@ -1,4 +1,4 @@
-import type { RawForm } from '@f8130/core'
+import { buildForm, type RawForm } from '@f8130/core'
 
 /**
  * The demonstration scenarios.
@@ -11,7 +11,7 @@ import type { RawForm } from '@f8130/core'
  * The cast itself lives in orgs.ts.
  */
 
-export { orgs, orgsOfKind, SYNTHETIC_ORG_MARKER } from '@f8130/core'
+export { orgs, orgsOfKind, buildForm, syntheticForm, SYNTHETIC_ORG_MARKER } from '@f8130/core'
 export type { Org, OrgKind } from '@f8130/core'
 
 /** Scenario 1a — the part is manufactured. */
@@ -205,14 +205,16 @@ export type PartLineage = {
 }
 
 /**
- * Builds the full seventeen-field form for one visit.
+ * Adapts a scenario visit onto the shared form builder.
  *
- * `formNumber` and `workOrder` are derived from the sequence rather than
- * hand-assigned, so they cannot silently collide across scenarios.
+ * The builder lives in core because the app's issue page needs the same one.
+ * What stays here is the scenario vocabulary — an issuer and a customer named
+ * by roster key — which is about authoring the demonstration, not about the
+ * form.
  *
  * The receiving operator is NOT a field. Version 1 committed to a `customer`,
- * which is not a block on an 8130-3 — the form says who issued it, not who
- * it was issued to. Who received the part is expressed the way the protocol
+ * which is not a block on an 8130-3 — the form says who issued it, not who it
+ * was issued to. Who received the part is expressed the way the protocol
  * expresses it: by that operator publishing an acceptance from its own repo.
  */
 export function visitForm(params: {
@@ -225,34 +227,21 @@ export function visitForm(params: {
   signerCert: string
   signerName: string
 }): RawForm {
-  const { lineage, visit, formSeq } = params
-  const year = visit.completedAt.slice(0, 4)
-  const certifyingBlock = visit.status === 'NEW' ? 'CONFORMITY' : 'RETURN_TO_SERVICE'
-  const approvalBasis =
-    visit.approvalBasis ??
-    (certifyingBlock === 'CONFORMITY'
-      ? 'APPROVED_DESIGN_DATA'
-      : 'PART_43_RETURN_TO_SERVICE')
-
-  return {
-    approvingAuthority: 'FAA/United States',
-    formNumber: `SYNTHETIC-8130-${String(formSeq).padStart(4, '0')}`,
-    organizationName: params.organizationName,
-    organizationAddress: params.organizationAddress,
-    workOrder: `WO/${year}/${String(formSeq).padStart(4, '0')}`,
-    item: 1,
-    description: lineage.description,
+  const { lineage, visit } = params
+  return buildForm({
+    formSeq: params.formSeq,
     partNumber: lineage.partNumber,
-    quantity: 1,
     serialNumber: lineage.serialNumber,
+    description: lineage.description,
     status: visit.status,
     remarks: visit.remarks,
-    certifyingBlock,
-    approvalBasis,
+    completedAt: visit.completedAt,
+    organizationName: params.organizationName,
+    organizationAddress: params.organizationAddress,
     signerCert: params.signerCert,
     signerName: params.signerName,
-    completedAt: visit.completedAt,
-  }
+    ...(visit.approvalBasis ? { approvalBasis: visit.approvalBasis } : {}),
+  })
 }
 
 /**
