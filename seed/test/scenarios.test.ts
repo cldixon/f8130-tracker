@@ -70,7 +70,7 @@ function allForms(): { label: string; form: RawForm }[] {
 }
 
 describe('the roster', () => {
-  test('is about the size the map and the feed need', () => {
+  test('is about the size the feed needs', () => {
     assert.ok(cast.length >= 25, `only ${cast.length} organizations`)
   })
 
@@ -119,25 +119,6 @@ describe('the roster', () => {
       assert.match(org.slug, /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/, org.key)
       assert.ok(org.slug.length <= 63, org.key)
     }
-  })
-
-  /**
-   * DAG-CBOR under AT Protocol forbids floats outright, so a fractional
-   * latitude is not a style question — it is unencodable, and would fail at
-   * write time rather than here.
-   */
-  test('stores coordinates as integer microdegrees in range', () => {
-    for (const org of cast) {
-      assert.ok(Number.isInteger(org.latMicro), `${org.key}: lat not an integer`)
-      assert.ok(Number.isInteger(org.lonMicro), `${org.key}: lon not an integer`)
-      assert.ok(Math.abs(org.latMicro) <= 90_000_000, `${org.key}: lat out of range`)
-      assert.ok(Math.abs(org.lonMicro) <= 180_000_000, `${org.key}: lon out of range`)
-    }
-  })
-
-  test('is not all clustered in one place', () => {
-    const countries = new Set(cast.map((o) => o.country))
-    assert.ok(countries.size >= 3, `only ${countries.size} countries`)
   })
 
   test('covers every role the demonstration needs', () => {
@@ -354,11 +335,6 @@ describe('station records against the lexicon', () => {
       synthetic: SYNTHETIC_ORG_MARKER,
       cage: org.cage,
       ...(org.certificate ? { certificate: org.certificate } : {}),
-      city: org.city,
-      region: org.region,
-      country: org.country,
-      latMicro: org.latMicro,
-      lonMicro: org.lonMicro,
     }
   }
 

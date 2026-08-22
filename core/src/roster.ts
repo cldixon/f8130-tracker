@@ -13,13 +13,8 @@
  * is a hard constraint rather than a disclaimer: did:plc registrations are
  * permanent and public, so a careless name is a careless name forever.
  *
- * Two rules the roster follows deliberately:
- *
- *   - CAGE codes are seven characters (`SYN####`). A real CAGE code is exactly
- *     five, so these cannot collide with one no matter how unlucky we get.
- *   - Coordinates are integer microdegrees. DAG-CBOR under AT Protocol forbids
- *     floats outright, so a latitude of 47.979 is not merely discouraged — it
- *     is unencodable. Same reason money in this project is counted in cents.
+ * CAGE codes are seven characters (`SYN####`). A real CAGE code is exactly
+ * five, so these cannot collide with one no matter how unlucky we get.
  *
  * The first five entries keep the exact handles the original cast was
  * provisioned under. Their did:plc identities already exist and are permanent;
@@ -40,29 +35,9 @@ export type Org = {
   cage: string
   /** Repair stations and manufacturers carry one; buyers and lessors do not. */
   certificate?: string
-  city: string
-  region: string
-  /** ISO 3166-1 alpha-2. */
-  country: string
-  latMicro: number
-  lonMicro: number
 }
 
-type RosterEntry = Omit<Org, 'key' | 'handle' | 'email' | 'latMicro' | 'lonMicro'> & {
-  key: string
-  lat: number
-  lon: number
-}
-
-/**
- * Degrees to microdegrees, as an integer.
- *
- * Math.round rather than truncation so the sign behaves at negative
- * longitudes, which is most of this roster.
- */
-function micro(deg: number): number {
-  return Math.round(deg * 1_000_000)
-}
+type RosterEntry = Omit<Org, 'handle' | 'email'>
 
 const ROSTER: RosterEntry[] = [
   // ------------------------------------------------------------------ OEMs
@@ -73,11 +48,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'oem',
     cage: 'SYN0001',
     certificate: 'SYNTHETIC-PC-00081',
-    city: 'Wichita',
-    region: 'KS',
-    country: 'US',
-    lat: 37.6872,
-    lon: -97.3301,
   },
   {
     key: 'calder',
@@ -86,11 +56,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'oem',
     cage: 'SYN0002',
     certificate: 'SYNTHETIC-PC-00114',
-    city: 'Hartford',
-    region: 'CT',
-    country: 'US',
-    lat: 41.7658,
-    lon: -72.6734,
   },
   {
     key: 'vantage',
@@ -99,11 +64,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'oem',
     cage: 'SYN0003',
     certificate: 'SYNTHETIC-PC-00220',
-    city: 'Phoenix',
-    region: 'AZ',
-    country: 'US',
-    lat: 33.4484,
-    lon: -112.074,
   },
 
   // ------------------------------------------------------------------ MROs
@@ -114,11 +74,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0004',
     certificate: 'SYNTHETIC-CERT-12345',
-    city: 'Everett',
-    region: 'WA',
-    country: 'US',
-    lat: 47.979,
-    lon: -122.2021,
   },
   {
     key: 'ironwood',
@@ -127,11 +82,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0005',
     certificate: 'SYNTHETIC-CERT-20418',
-    city: 'Tulsa',
-    region: 'OK',
-    country: 'US',
-    lat: 36.154,
-    lon: -95.9928,
   },
   {
     key: 'saltmarsh',
@@ -140,11 +90,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0006',
     certificate: 'SYNTHETIC-CERT-20955',
-    city: 'Charleston',
-    region: 'SC',
-    country: 'US',
-    lat: 32.7765,
-    lon: -79.9311,
   },
   {
     key: 'flinthills',
@@ -153,11 +98,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0007',
     certificate: 'SYNTHETIC-CERT-21077',
-    city: 'Emporia',
-    region: 'KS',
-    country: 'US',
-    lat: 38.4039,
-    lon: -96.1817,
   },
   {
     key: 'harborpoint',
@@ -166,11 +106,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0008',
     certificate: 'SYNTHETIC-CERT-21340',
-    city: 'Oakland',
-    region: 'CA',
-    country: 'US',
-    lat: 37.8044,
-    lon: -122.2712,
   },
   {
     key: 'graniteridge',
@@ -179,11 +114,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0009',
     certificate: 'SYNTHETIC-CERT-21688',
-    city: 'Manchester',
-    region: 'NH',
-    country: 'US',
-    lat: 42.9956,
-    lon: -71.4548,
   },
   {
     key: 'clearwater',
@@ -192,11 +122,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0010',
     certificate: 'SYNTHETIC-CERT-22015',
-    city: 'Tampa',
-    region: 'FL',
-    country: 'US',
-    lat: 27.9506,
-    lon: -82.4572,
   },
   {
     key: 'copperline',
@@ -205,11 +130,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0011',
     certificate: 'SYNTHETIC-CERT-22394',
-    city: 'Tucson',
-    region: 'AZ',
-    country: 'US',
-    lat: 32.2226,
-    lon: -110.9747,
   },
   {
     key: 'sandhills',
@@ -218,11 +138,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0012',
     certificate: 'SYNTHETIC-CERT-22701',
-    city: 'Grand Island',
-    region: 'NE',
-    country: 'US',
-    lat: 40.9264,
-    lon: -98.342,
   },
   {
     key: 'basalt',
@@ -231,11 +146,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0013',
     certificate: 'SYNTHETIC-CERT-23044',
-    city: 'Bend',
-    region: 'OR',
-    country: 'US',
-    lat: 44.0582,
-    lon: -121.3153,
   },
   {
     key: 'fjordholm',
@@ -244,11 +154,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0014',
     certificate: 'SYNTHETIC-CERT-23319',
-    city: 'Stavanger',
-    region: 'Rogaland',
-    country: 'NO',
-    lat: 58.97,
-    lon: 5.7331,
   },
   {
     key: 'alpine',
@@ -257,11 +162,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0015',
     certificate: 'SYNTHETIC-CERT-23570',
-    city: 'Zurich',
-    region: 'ZH',
-    country: 'CH',
-    lat: 47.3769,
-    lon: 8.5417,
   },
   {
     key: 'wexford',
@@ -270,11 +170,6 @@ const ROSTER: RosterEntry[] = [
     kind: 'mro',
     cage: 'SYN0016',
     certificate: 'SYNTHETIC-CERT-23902',
-    city: 'Wexford',
-    region: 'Leinster',
-    country: 'IE',
-    lat: 52.3369,
-    lon: -6.4633,
   },
 
   // ------------------------------------------------------------- operators
@@ -284,11 +179,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Example Air',
     kind: 'operator',
     cage: 'SYN0017',
-    city: 'Denver',
-    region: 'CO',
-    country: 'US',
-    lat: 39.7392,
-    lon: -104.9903,
   },
   {
     key: 'southpoint',
@@ -296,11 +186,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Southpoint Air',
     kind: 'operator',
     cage: 'SYN0018',
-    city: 'Atlanta',
-    region: 'GA',
-    country: 'US',
-    lat: 33.749,
-    lon: -84.388,
   },
   {
     key: 'marisol',
@@ -308,11 +193,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Marisol Airways',
     kind: 'operator',
     cage: 'SYN0019',
-    city: 'San Juan',
-    region: 'PR',
-    country: 'US',
-    lat: 18.4655,
-    lon: -66.1057,
   },
   {
     key: 'highline',
@@ -320,11 +200,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Highline Regional',
     kind: 'operator',
     cage: 'SYN0020',
-    city: 'Missoula',
-    region: 'MT',
-    country: 'US',
-    lat: 46.8721,
-    lon: -113.994,
   },
   {
     key: 'cobaltcoast',
@@ -332,11 +207,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Cobalt Coast Airlines',
     kind: 'operator',
     cage: 'SYN0021',
-    city: 'Portland',
-    region: 'ME',
-    country: 'US',
-    lat: 43.6591,
-    lon: -70.2568,
   },
   {
     key: 'redcliff',
@@ -344,11 +214,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Redcliff Cargo',
     kind: 'operator',
     cage: 'SYN0022',
-    city: 'Albuquerque',
-    region: 'NM',
-    country: 'US',
-    lat: 35.0844,
-    lon: -106.6504,
   },
   {
     key: 'pinewood',
@@ -356,11 +221,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Pinewood Air Charter',
     kind: 'operator',
     cage: 'SYN0023',
-    city: 'Duluth',
-    region: 'MN',
-    country: 'US',
-    lat: 46.7867,
-    lon: -92.1005,
   },
   {
     key: 'kenai',
@@ -368,11 +228,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Kenai Freight Systems',
     kind: 'operator',
     cage: 'SYN0024',
-    city: 'Kenai',
-    region: 'AK',
-    country: 'US',
-    lat: 60.5544,
-    lon: -151.2583,
   },
 
   // --------------------------------------------------------------- brokers
@@ -382,11 +237,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Meridian Aeroparts',
     kind: 'broker',
     cage: 'SYN0025',
-    city: 'Miami',
-    region: 'FL',
-    country: 'US',
-    lat: 25.7617,
-    lon: -80.1918,
   },
   {
     key: 'fairlead',
@@ -394,11 +244,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Fairlead Parts Exchange',
     kind: 'broker',
     cage: 'SYN0026',
-    city: 'Norfolk',
-    region: 'VA',
-    country: 'US',
-    lat: 36.8508,
-    lon: -76.2859,
   },
   {
     key: 'rioseco',
@@ -406,11 +251,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Rio Seco Rotable Exchange',
     kind: 'broker',
     cage: 'SYN0027',
-    city: 'Laredo',
-    region: 'TX',
-    country: 'US',
-    lat: 27.5306,
-    lon: -99.4803,
   },
 
   // --------------------------------------------------------------- lessors
@@ -420,11 +260,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Halyard Aircraft Leasing',
     kind: 'lessor',
     cage: 'SYN0028',
-    city: 'Dublin',
-    region: 'Leinster',
-    country: 'IE',
-    lat: 53.3498,
-    lon: -6.2603,
   },
   {
     key: 'windward',
@@ -432,11 +267,6 @@ const ROSTER: RosterEntry[] = [
     displayName: 'Windward Asset Leasing',
     kind: 'lessor',
     cage: 'SYN0029',
-    city: 'Singapore',
-    region: 'SG',
-    country: 'SG',
-    lat: 1.3521,
-    lon: 103.8198,
   },
 ]
 
@@ -456,11 +286,6 @@ export function orgs(domain: string): Org[] {
     displayName: entry.displayName,
     cage: entry.cage,
     ...(entry.certificate ? { certificate: entry.certificate } : {}),
-    city: entry.city,
-    region: entry.region,
-    country: entry.country,
-    latMicro: micro(entry.lat),
-    lonMicro: micro(entry.lon),
   }))
 }
 
