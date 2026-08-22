@@ -224,9 +224,9 @@ Configuration that matters, recorded because it was not obvious:
 
 ## The demonstration data
 
-Twenty-nine fictional organizations across five countries — 3 manufacturers,
-13 repair stations, 8 operators, 3 brokers, 2 lessors — writing 27 releases and
-24 verdicts into their own repositories.
+Twenty-nine fictional organizations — 3 manufacturers, 13 repair stations,
+8 operators, 3 brokers, 2 lessors — writing 27 releases and 24 verdicts into
+their own repositories.
 
 The set pieces exist to make specific things visible:
 
@@ -246,10 +246,10 @@ them apart. The orphan says *this record is missing*; the vanished station says
 record key under a live identity, the other a well-formed `did:plc` that was
 never registered, so resolution is genuinely attempted and genuinely fails.
 
-Organizations publish their own `station` profile — role, city, coordinates —
-so an AppView drawing a map learns geography by reading the network rather than
-from a table it invented. Coordinates are integer microdegrees because DAG-CBOR
-forbids floats outright, the same reason money here is counted in cents.
+Organizations publish their own `station` profile — display name, role, CAGE
+code — so an AppView learns the cast by reading the network rather than from a
+table it hardcoded. None of it is committed to by any release: what a shop
+calls itself is not a property of the work it certified.
 
 Nothing in this roster is real. CAGE codes are seven characters, so they cannot
 collide with a real five-character code however the cast grows.

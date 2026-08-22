@@ -245,11 +245,11 @@ async function issueAcceptance(
 /**
  * Publishes the organization's self-description.
  *
- * Geography is not part of the committed 8130 field set and never will be — a
- * shop's address is not a property of the work it certified. It lives here, in
- * the organization's own repo, so an AppView that wants to draw a map learns
- * where everyone is by reading the network rather than by shipping a hardcoded
- * table it invented.
+ * Role and display name are not part of the committed 8130 field set and never
+ * will be — what a shop calls itself is not a property of the work it
+ * certified. They live here, in the organization's own repo, so an AppView
+ * learns the cast by reading the network rather than by shipping a table it
+ * hardcoded.
  *
  * Keyed `self`, so re-running replaces rather than accumulates.
  */
@@ -266,11 +266,6 @@ async function writeStation(session: Session): Promise<void> {
       synthetic: SYNTHETIC_ORG_MARKER,
       cage: org.cage,
       ...(org.certificate ? { certificate: org.certificate } : {}),
-      city: org.city,
-      region: org.region,
-      country: org.country,
-      latMicro: org.latMicro,
-      lonMicro: org.lonMicro,
     },
   })
 }
