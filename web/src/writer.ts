@@ -16,7 +16,9 @@ import { AtpAgent } from '@atproto/api'
 import {
   buildBundle,
   commitForm,
+  orgs,
   type Bundle,
+  type OrgKind,
   type RawForm,
 } from '@f8130/core'
 
@@ -29,7 +31,7 @@ export type StrongRef = { uri: string; cid: string }
 export type Actor = {
   handle: string
   displayName: string
-  kind: 'oem' | 'mro' | 'operator' | 'broker'
+  kind: OrgKind
 }
 
 export type Written = { uri: string; cid: string }
@@ -206,13 +208,16 @@ export class AtpRecordWriter implements RecordWriter {
   }
 }
 
-/** The seeded cast, for the persona picker. */
+/**
+ * The seeded cast, for the persona picker.
+ *
+ * Derived from the shared roster rather than restated here. The previous
+ * hand-copied list was correct exactly as long as the roster never changed.
+ */
 export function demoActors(domain: string): Actor[] {
-  return [
-    { handle: `northwind-turbine.${domain}`, displayName: 'Northwind Turbine', kind: 'oem' },
-    { handle: `cascadia-mro.${domain}`, displayName: 'Cascadia MRO', kind: 'mro' },
-    { handle: `example-air.${domain}`, displayName: 'Example Air', kind: 'operator' },
-    { handle: `southpoint-air.${domain}`, displayName: 'Southpoint Air', kind: 'operator' },
-    { handle: `meridian-aeroparts.${domain}`, displayName: 'Meridian Aeroparts', kind: 'broker' },
-  ]
+  return orgs(domain).map((org) => ({
+    handle: org.handle,
+    displayName: org.displayName,
+    kind: org.kind,
+  }))
 }

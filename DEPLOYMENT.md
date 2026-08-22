@@ -53,3 +53,19 @@ Two guards now: the seed refuses to write when an organization already holds
 records (`SEED_RESET=1` clears and rewrites, `SEED_FORCE=1` adds another set),
 and its watch patterns are limited to `seed/**` so unrelated commits do not
 redeploy it at all.
+
+Those guards mean **expanding the cast does not take effect on its own.** The
+seed sees that the original five organizations already hold records and stops,
+which is the correct behaviour for an unrelated push and the wrong one after a
+roster change. Set `SEED_RESET=1`, redeploy the seed, then unset it — the run
+clears every f8130 record from every organization in the roster and rewrites
+the whole demonstration.
+
+`SEED_RESET` deletes records, never accounts. Every `did:plc` already
+provisioned is reused, which matters because those registrations are permanent
+and public: a roster change that renamed an existing handle would strand its
+identity and orphan every record it ever signed. The roster tests assert the
+five original handles are still present for exactly that reason.
+
+Re-seeding rewrites the log, so both AppView indexes should be rebuilt
+afterwards rather than left holding records whose URIs no longer exist.

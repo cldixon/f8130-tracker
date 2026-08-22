@@ -1,6 +1,6 @@
 /**
- * Seeds the demonstration: provisions the five fictional organizations on the
- * PDS and writes the seven scenarios into their own repositories.
+ * Seeds the demonstration: provisions the fictional organizations on the PDS
+ * and writes the scenarios into their own repositories.
  *
  * Runs as a Railway service rather than from a developer's laptop, and reaches
  * the PDS over private networking. That is not just convenience — it means the
@@ -28,15 +28,24 @@ import {
 import {
   birthForm,
   brokerForms,
+  deepLineage,
   orphanForm,
   orgs,
   overhaulForm,
   rejectionNotes,
+  routineLineages,
+  vanishedLineage,
+  visitForm,
+  SYNTHETIC_ORG_MARKER,
+  VANISHED_STATION_DID,
+  VANISHED_STATION_RKEY,
   type Org,
+  type PartLineage,
 } from './scenarios.js'
 
 const RELEASE = 'dev.cldixon.f8130.release'
 const ACCEPTANCE = 'dev.cldixon.f8130.acceptance'
+const STATION = 'dev.cldixon.f8130.station'
 
 const PDS_URL = process.env.PDS_INTERNAL_URL ?? 'http://pds.railway.internal:3000'
 const PDS_HOSTNAME = process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev'
@@ -136,7 +145,7 @@ async function alreadySeeded(session: Session): Promise<boolean> {
 /** Removes every f8130 record from an organization's repository. */
 async function clearRecords(session: Session): Promise<number> {
   let removed = 0
-  for (const collection of [RELEASE, ACCEPTANCE]) {
+  for (const collection of [RELEASE, ACCEPTANCE, STATION]) {
     for (;;) {
       const res = await session.agent.com.atproto.repo.listRecords({
         repo: session.did,
@@ -233,6 +242,128 @@ async function issueAcceptance(
   )
 }
 
+/**
+ * Publishes the organization's self-description.
+ *
+ * Geography is not part of the committed 8130 field set and never will be — a
+ * shop's address is not a property of the work it certified. It lives here, in
+ * the organization's own repo, so an AppView that wants to draw a map learns
+ * where everyone is by reading the network rather than by shipping a hardcoded
+ * table it invented.
+ *
+ * Keyed `self`, so re-running replaces rather than accumulates.
+ */
+async function writeStation(session: Session): Promise<void> {
+  const { org } = session
+  await session.agent.com.atproto.repo.putRecord({
+    repo: session.did,
+    collection: STATION,
+    rkey: 'self',
+    record: {
+      $type: STATION,
+      displayName: org.displayName,
+      kind: org.kind,
+      synthetic: SYNTHETIC_ORG_MARKER,
+      cage: org.cage,
+      ...(org.certificate ? { certificate: org.certificate } : {}),
+      city: org.city,
+      region: org.region,
+      country: org.country,
+      latMicro: org.latMicro,
+      lonMicro: org.lonMicro,
+    },
+  })
+}
+
+/**
+ * A signer for a given shop visit.
+ *
+ * Deterministic in the form sequence so a re-seed produces the same names, and
+ * varied enough that every certificate in the demo is not signed by the same
+ * person. Falls back to a generic certificate for organizations that hold none
+ * — brokers issue releases in this demonstration, which is itself part of the
+ * story scenario 5 tells.
+ */
+function signerFor(org: Org, formSeq: number): { cert: string; name: string } {
+  const names = [
+    'A. Technician',
+    'R. Inspector',
+    'J. Mercado',
+    'K. Osei',
+    'L. Fontaine',
+    'D. Whitfield',
+    'S. Nakamura',
+    'P. Halloran',
+  ]
+  return {
+    cert: org.certificate ?? `SYNTHETIC-CERT-9${String(formSeq).padStart(4, '0')}`,
+    name: names[formSeq % names.length]!,
+  }
+}
+
+/**
+ * Publishes one part's whole life, oldest visit first.
+ *
+ * Each release links its predecessor, and each visit's customer publishes its
+ * own verdict from its own repository — which is what makes the verdict
+ * unsuppressable and, unavoidably, what makes the receiving operator identify
+ * itself. Anonymity ends at the moment of acceptance, by design: a verdict
+ * nobody can attribute is a verdict nobody can weigh.
+ *
+ * `startRef` seeds the chain with a predecessor that this run did not publish,
+ * which is how the vanished-station case is built.
+ */
+async function publishLineage(params: {
+  lineage: PartLineage
+  sessions: Record<string, Session>
+  formSeqStart: number
+  startRef?: StrongRef
+}): Promise<{ refs: StrongRef[]; bundles: Bundle[] }> {
+  const { lineage, sessions } = params
+  const refs: StrongRef[] = []
+  const bundles: Bundle[] = []
+  let prev: StrongRef | undefined = params.startRef
+
+  for (let i = 0; i < lineage.visits.length; i++) {
+    const visit = lineage.visits[i]!
+    const issuer = sessions[visit.issuer]
+    const customer = sessions[visit.customer]
+    if (!issuer) throw new Error(`unknown issuer key ${visit.issuer}`)
+    if (!customer) throw new Error(`unknown customer key ${visit.customer}`)
+
+    const formSeq = params.formSeqStart + i
+    const signer = signerFor(issuer.org, formSeq)
+    const form = visitForm({
+      lineage,
+      visit,
+      index: i,
+      formSeq,
+      signerCert: signer.cert,
+      signerName: signer.name,
+      customerName: customer.org.displayName,
+    })
+
+    const issued = await issueRelease(issuer, form, prev)
+    refs.push(issued.ref)
+    bundles.push(issued.bundle)
+    prev = issued.ref
+
+    if (visit.receivedAt) {
+      await issueAcceptance(customer, {
+        subject: issued.ref,
+        issuerDid: issuer.did,
+        partNumber: String(issued.bundle.values.partNumber),
+        serialNumber: String(issued.bundle.values.serialNumber),
+        outcome: visit.outcome ?? 'accepted',
+        ...(visit.note ? { note: visit.note } : {}),
+        receivedAt: visit.receivedAt,
+      })
+    }
+  }
+
+  return { refs, bundles }
+}
+
 async function main() {
   if (!ADMIN_PASSWORD) throw new Error('PDS_ADMIN_PASSWORD is required')
 
@@ -265,6 +396,12 @@ async function main() {
       return
     }
   }
+
+  console.log('\nPublishing station profiles:')
+  for (const org of cast) {
+    await writeStation(sessions[org.key]!)
+  }
+  console.log(`  ${cast.length} profiles written`)
 
   const northwind = sessions.northwind!
   const cascadia = sessions.cascadia!
@@ -327,6 +464,41 @@ async function main() {
       note: rejectionNotes[i],
       receivedAt: `2026-03-1${i + 2}T10:00:00Z`,
     })
+  }
+
+  // ------------------------------------------------- 6. the deep, clean chain
+  console.log('\nScenario 6 — seventeen years, seven visits, six organizations:')
+  const deep = await publishLineage({
+    lineage: deepLineage,
+    sessions,
+    formSeqStart: 200,
+  })
+  bundles.deepLatest = deep.bundles[deep.bundles.length - 1]
+  bundles.deepBirth = deep.bundles[0]
+
+  // ------------------------------------------------ 7. the vanished station
+  //
+  // The oldest published visit points at an issuer that never existed, so the
+  // trace fails at identity resolution rather than at record retrieval. That
+  // distinction is the whole point of seeding both this and scenario 4.
+  console.log('\nScenario 7 — a chain that runs into a station nobody can find:')
+  const vanished = await publishLineage({
+    lineage: vanishedLineage,
+    sessions,
+    formSeqStart: 300,
+    startRef: {
+      uri: `at://${VANISHED_STATION_DID}/${RELEASE}/${VANISHED_STATION_RKEY}`,
+      cid: birth.ref.cid,
+    },
+  })
+  bundles.vanished = vanished.bundles[vanished.bundles.length - 1]
+
+  // ------------------------------------------------------ 8. ordinary traffic
+  console.log('\nScenario 8 — unremarkable parts moving between unremarkable shops:')
+  let routineSeq = 400
+  for (const lineage of routineLineages) {
+    await publishLineage({ lineage, sessions, formSeqStart: routineSeq })
+    routineSeq += lineage.visits.length
   }
 
   // ------------------------------------------------------------------ output

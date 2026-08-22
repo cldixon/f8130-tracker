@@ -51,10 +51,10 @@ steps.
 flowchart LR
     subgraph pds["pds · f8130.cldixon.dev"]
         direction TB
-        R1["northwind-turbine<br/>repo (OEM)"]
-        R2["cascadia-mro<br/>repo (MRO)"]
-        R3["example-air<br/>southpoint-air<br/>repos (operators)"]
-        R4["meridian-aeroparts<br/>repo (broker)"]
+        R1["3 manufacturers<br/>13 repair stations"]
+        R2["8 operators"]
+        R3["3 brokers<br/>2 lessors"]
+        R4["29 repos, one per<br/>organization, each<br/>signing its own records"]
     end
 
     subgraph appview["AppView A — this project"]
@@ -63,7 +63,7 @@ flowchart LR
         WEB["f8130-tracker<br/>dashboard · timeline · verify"]
     end
 
-    WD["AppView B — watchdog<br/>(not built yet)<br/>own index, own scoring"]
+    WD["AppView B — watchdog<br/>own index, own scoring"]
 
     pds -. "firehose<br/>subscribeRepos" .-> ING
     ING --> PG
@@ -114,13 +114,13 @@ Early. Built so far:
 
 | | |
 |---|---|
-| `lexicons/` | `release`, `acceptance`, `dispute` record schemas |
+| `lexicons/` | `release`, `acceptance`, `dispute`, `station` record schemas |
 | `core/` | TypeScript commitment core and the seven-stage verification pipeline |
 | `commitment/` | Go implementation of the same commitment scheme |
 | `ingest/` | firehose consumer, signature verification, derived Postgres index |
 | `cmd/ingest/` | `run` and `reindex` commands |
 | `web/` | the AppView — verify page, part timeline, dashboard, JSON API |
-| `seed/` | one-shot job that provisions the accounts and writes the scenarios |
+| `seed/` | one-shot job: 29 fictional organizations, 27 releases, 24 verdicts |
 | `watchdog/` | AppView B — an independent reader with its own index and its own rule |
 | `testdata/vectors.json` | the cross-language contract both cores must satisfy |
 | `spike/` | validation that the atproto verification primitives hold up |
@@ -158,7 +158,7 @@ F8130_TEST_DSN='postgres://...' go test ./ingest/
 
 ## Deployment
 
-Five services in one Railway project:
+Eight services in one Railway project:
 
 | service | role | address |
 |---|---|---|
@@ -221,6 +221,38 @@ Configuration that matters, recorded because it was not obvious:
 - Autodeploy needs the Railway GitHub App to have access to this repository,
   granted at github.com/settings/installations. Changing any service variable
   also forces a rebuild from the branch head.
+
+## The demonstration data
+
+Twenty-nine fictional organizations across five countries — 3 manufacturers,
+13 repair stations, 8 operators, 3 brokers, 2 lessors — writing 27 releases and
+24 verdicts into their own repositories.
+
+The set pieces exist to make specific things visible:
+
+| | what it shows |
+|---|---|
+| **Complete history** | a fuel control unit from manufacture to overhaul, accepted by its operator |
+| **Tampered / forged** | fixtures, never published — a genuine signature over an altered document, and a document naming a record that does not exist |
+| **The orphan** | a correctly signed release whose predecessor was never published |
+| **The broker** | three impeccable releases refused by three unrelated operators — clean in AppView A, flagged in B |
+| **The deep chain** | 7 shop visits, 6 organizations, 4 successive owners, 2009 to 2026, reaching birth |
+| **The vanished station** | a trace that dies at an issuer whose identity does not resolve at all |
+| **Ordinary traffic** | 11 unremarkable parts, because a demonstration where every record is a scandal teaches the wrong prior |
+
+The last two failure modes are deliberately different and a buyer needs to tell
+them apart. The orphan says *this record is missing*; the vanished station says
+*the organization that would hold it cannot be found*. One is an unresolvable
+record key under a live identity, the other a well-formed `did:plc` that was
+never registered, so resolution is genuinely attempted and genuinely fails.
+
+Organizations publish their own `station` profile — role, city, coordinates —
+so an AppView drawing a map learns geography by reading the network rather than
+from a table it invented. Coordinates are integer microdegrees because DAG-CBOR
+forbids floats outright, the same reason money here is counted in cents.
+
+Nothing in this roster is real. CAGE codes are seven characters, so they cannot
+collide with a real five-character code however the cast grows.
 
 ## Two implementations on purpose
 
