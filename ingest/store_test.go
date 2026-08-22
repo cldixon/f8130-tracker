@@ -328,6 +328,53 @@ func TestResetMakesTheIndexRebuildable(t *testing.T) {
 	}
 }
 
+// Reset has to survive a schema change, not just stale rows.
+//
+// Truncating leaves yesterday's columns in place, so after a field set change
+// every insert fails on a column that no longer exists or a NOT NULL nobody
+// writes any more. This is that situation in miniature: mutate the table out
+// from under the code, reset, and check the index works again.
+func TestResetRecoversFromAStaleSchema(t *testing.T) {
+	s, ctx := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Make the live table disagree with schema.sql the way a field set change
+	// does: a column the code writes is gone, and one it never writes is
+	// mandatory.
+	if _, err := s.pool.Exec(ctx, `ALTER TABLE release DROP COLUMN description`); err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	if _, err := s.pool.Exec(ctx,
+		`ALTER TABLE release ADD COLUMN legacy_status TEXT NOT NULL DEFAULT ''`,
+	); err != nil {
+		t.Fatalf("add column: %v", err)
+	}
+
+	rec := releaseRec("bafystale", "at://"+northwind+"/r/1", northwind,
+		"NT882104", "SN000417", "NEW", now, nil)
+
+	// Sanity: the stale shape really does break writes. If this ever stops
+	// failing, the test below is proving nothing.
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{rec}); err == nil {
+		t.Fatal("expected the stale schema to reject the insert")
+	}
+
+	if err := s.Reset(ctx); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{rec}); err != nil {
+		t.Fatalf("insert after reset: %v", err)
+	}
+	chain, err := s.Chain(ctx, "bafystale", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chain) != 1 {
+		t.Errorf("expected the row back after reset, got %d", len(chain))
+	}
+}
+
 func TestDeleteRemovesARecord(t *testing.T) {
 	s, ctx := testStore(t)
 	now := time.Now().UTC().Truncate(time.Second)
