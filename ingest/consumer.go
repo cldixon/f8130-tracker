@@ -84,21 +84,28 @@ func (c *Consumer) Run(ctx context.Context) error {
 	}
 }
 
-func (c *Consumer) connectAndConsume(ctx context.Context) error {
-	cursor, err := c.Store.Cursor(ctx)
+// subscribeURL builds the firehose subscription URL for a stored cursor.
+//
+// The cursor parameter is *exclusive and already means "the last event I
+// have"* — the server replays everything with a greater sequence number. So
+// the value to send is the last seq durably applied, not the next one we hope
+// to see. Sending last+1 works right up until the index is fully caught up,
+// at which point it names an event the server has not sequenced yet and the
+// connection is closed with `1008 FutureCursor` on every attempt — a consumer
+// that reconnects forever and indexes nothing new.
+//
+// Re-sending the last applied seq is safe even if a server were to treat the
+// cursor as inclusive: ApplyCommit upserts, so replaying the final event is a
+// no-op.
+func subscribeURL(host string, cursor int64) (string, error) {
+	u, err := url.Parse(host)
 	if err != nil {
-		return fmt.Errorf("read cursor: %w", err)
-	}
-
-	u, err := url.Parse(c.Host)
-	if err != nil {
-		return fmt.Errorf("bad host %q: %w", c.Host, err)
+		return "", fmt.Errorf("bad host %q: %w", host, err)
 	}
 	u.Path = "/xrpc/com.atproto.sync.subscribeRepos"
 	q := u.Query()
 	if cursor >= 0 {
-		// Resume from the next event after the last one durably applied.
-		q.Set("cursor", fmt.Sprintf("%d", cursor+1))
+		q.Set("cursor", fmt.Sprintf("%d", cursor))
 	} else {
 		// A brand new index backfills from the start of the log rather than
 		// tailing live. Omitting the cursor entirely would silently skip
@@ -109,10 +116,23 @@ func (c *Consumer) connectAndConsume(ctx context.Context) error {
 		q.Set("cursor", "0")
 	}
 	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
 
-	c.logger().Info("connecting to firehose", "url", u.String(), "cursor", cursor)
+func (c *Consumer) connectAndConsume(ctx context.Context) error {
+	cursor, err := c.Store.Cursor(ctx)
+	if err != nil {
+		return fmt.Errorf("read cursor: %w", err)
+	}
 
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, u.String(), nil)
+	target, err := subscribeURL(c.Host, cursor)
+	if err != nil {
+		return err
+	}
+
+	c.logger().Info("connecting to firehose", "url", target, "cursor", cursor)
+
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, target, nil)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
