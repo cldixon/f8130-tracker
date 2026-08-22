@@ -10,10 +10,12 @@ import {
   FIELDS,
   leafHash,
   nodeHash,
+  orgs,
   padLeaf,
   parseBundle,
   parseDisclosure,
   proofForField,
+  syntheticForm,
   toHex,
   verifyBundle,
   verifyDisclosure,
@@ -507,9 +509,28 @@ export function createApp(deps: AppDeps) {
       return c.redirect(c.req.header('referer') ?? '/issue', 303)
     })
 
-    app.get('/issue', (c) =>
-      c.html(issuePage({ mode, actors: writer.actors(), current: actorOr(c) })),
-    )
+    app.get('/issue', (c) => {
+      const handle = actorOr(c)
+
+      // The generated example is issued BY the acting organization, so its
+      // Block 4 is that organization's own — the one thing on the form a shop
+      // could not plausibly get wrong about itself.
+      let prefill: Record<string, unknown> | null = null
+      if (c.req.query('example') !== undefined) {
+        const org = orgs(process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev').find(
+          (o) => o.handle === handle,
+        )
+        if (org) {
+          // A fresh seed per request, so clicking twice gives two parts. The
+          // generator is deterministic in it, which is what tests pin.
+          prefill = syntheticForm({ org, seed: Math.floor(Math.random() * 1e9) })
+        }
+      }
+
+      return c.html(
+        issuePage({ mode, actors: writer.actors(), current: handle, prefill }),
+      )
+    })
 
     app.post('/issue', async (c) => {
       const form = await c.req.parseBody()
