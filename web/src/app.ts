@@ -2,14 +2,22 @@ import { Hono } from 'hono'
 
 import {
   buildDisclosure,
+  buildLevels,
+  commitmentFromBundle,
   exposedHashes,
   fetchVerifiedRelease,
   FIELD_ORDER,
   FIELDS,
+  leafHash,
+  nodeHash,
+  padLeaf,
   parseBundle,
   parseDisclosure,
+  proofForField,
+  toHex,
   verifyBundle,
   verifyDisclosure,
+  type Bundle,
   type IdentityResolver,
   type RepoClient,
 } from '@f8130/core'
@@ -20,9 +28,11 @@ import {
   dashboardPage,
   disclosePage,
   errorPage,
+  formPage,
   issuePage,
   partPage,
   verifyPage,
+  type FormFold,
 } from './views.js'
 import type { RecordWriter } from './writer.js'
 
@@ -313,6 +323,134 @@ export function createApp(deps: AppDeps) {
 
     const result = verifyDisclosure(disclosure, fetched.commitment)
     return c.json(result, result.verified ? 200 : 422)
+  })
+
+  // ------------------------------------------------------------- form view
+  //
+  // One record rendered three ways: as the paper form a shop would recognise,
+  // as the atproto record actually published, and as the commitment tree. The
+  // point of putting them side by side is that a block on the left, a key in
+  // the middle, and a leaf on the right are the same fact in three notations.
+
+  /** Block 4 reaches the public record, so the issuer names itself. */
+  function issuerNameOf(record: Record<string, unknown> | null): string | undefined {
+    const n = record?.organizationName
+    return typeof n === 'string' ? n : undefined
+  }
+
+  /** The published root, plus whatever the bundle lets us compute. */
+  async function formData(uri: string, bundle: Bundle | null, field: string | null) {
+    const fetched = await fetchVerifiedRelease({
+      uri,
+      resolver: deps.resolver,
+      repo: deps.repo,
+    })
+
+    const record = fetched.ok ? fetched.record : null
+    const root = fetched.ok ? toHex(fetched.commitment) : null
+    const fetchError = fetched.ok ? null : fetched.reason
+
+    if (!bundle) {
+      return {
+        record, root, fetchError,
+        values: null, leaves: null, pad: null, matches: null,
+        selected: null, fold: null,
+      }
+    }
+
+    const commitment = commitmentFromBundle(bundle)
+    const leaves = commitment.leaves.map(toHex)
+    const computed = toHex(commitment.root)
+
+    // The fold, when a field is chosen: leaf, then each sibling, then the root.
+    // Exactly the walk a verifier does with a selective disclosure, shown
+    // whole because here the holder has every leaf anyway.
+    let fold: FormFold[] | null = null
+    if (field && FIELD_ORDER.includes(field)) {
+      const proof = proofForField(commitment, field)
+      let acc = leafHash(proof.field, proof.value, proof.nonce)
+      const running: FormFold[] = [{ label: `leaf(${field})`, hash: toHex(acc) }]
+      for (const step of proof.path) {
+        acc =
+          step.side === 'left' ? nodeHash(step.hash, acc) : nodeHash(acc, step.hash)
+        running.push({
+          label: toHex(step.hash).slice(0, 12) + '…',
+          hash: toHex(acc),
+          side: step.side,
+        })
+      }
+      fold = running
+    }
+
+    return {
+      record, root, fetchError,
+      values: commitment.values,
+      leaves,
+      pad: toHex(padLeaf()),
+      matches: root === null ? null : root === computed,
+      selected: field,
+      fold,
+    }
+  }
+
+  app.get('/form', async (c) => {
+    const uri = c.req.query('uri')
+    if (!uri) return c.html(errorPage(400, 'A record URI is required.'), 400)
+    const field = c.req.query('field') ?? null
+    const data = await formData(uri, null, field)
+    return c.html(formPage({ mode, uri, issuerHandle: issuerNameOf(data.record), ...data }))
+  })
+
+  app.post('/form', async (c) => {
+    const form = await c.req.parseBody()
+    const uriField = typeof form.uri === 'string' ? form.uri : ''
+    const field = typeof form.field === 'string' ? form.field : null
+    const raw = typeof form.bundle === 'string' ? form.bundle : ''
+    if (raw.length > MAX_BUNDLE_BYTES) {
+      return c.html(errorPage(413, 'That bundle is too large.'), 413)
+    }
+
+    // Clicking a block with nothing pasted is the ordinary case, not an error.
+    // The viewer gets the public form back with their choice remembered, and
+    // the tree still says it cannot be opened.
+    if (raw.trim() === '') {
+      const data = await formData(uriField, null, field)
+      return c.html(
+        formPage({ mode, uri: uriField, issuerHandle: issuerNameOf(data.record), ...data }),
+      )
+    }
+
+    let bundle: Bundle
+    try {
+      bundle = parseBundle(JSON.parse(raw))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      const data = await formData(uriField, null, null)
+      return c.html(
+        formPage({
+          mode,
+          uri: uriField,
+          issuerHandle: issuerNameOf(data.record),
+          ...data,
+          error: message,
+        }),
+        422,
+      )
+    }
+
+    // The bundle names the record it opens. Trust it over the form field, so a
+    // bundle pasted on the wrong page still lands on the right document.
+    const uri = bundle.uri || uriField
+    const data = await formData(uri, bundle, field)
+    return c.html(
+      formPage({
+        mode,
+        uri,
+        issuerHandle: bundle.issuerHandle,
+        ...data,
+        bundleEcho: raw,
+      }),
+    )
   })
 
   app.get('/api/chain/:cid', async (c) => {

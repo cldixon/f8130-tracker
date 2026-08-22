@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { FIELD_ORDER } from '@f8130/core'
+import { FIELD_ORDER, FIELDS } from '@f8130/core'
 import { fieldLabel } from '../src/views.js'
 
 import {
@@ -734,5 +734,169 @@ describe('field labels', () => {
       assert.notEqual(label, name, `${name} has no label`)
       assert.match(label, /^Block \S+ · /, `${name}: ${label}`)
     }
+  })
+})
+
+describe('the form view', () => {
+  const post = (app: any, body: Record<string, string>) =>
+    app.request('/form', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body),
+    })
+
+  test('renders the certificate from the public record alone', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const res = await app.request(`/form?uri=${encodeURIComponent(overhaul.bundle.uri)}`)
+    assert.equal(res.status, 200)
+    const body = await res.text()
+    assert.match(body, /AUTHORIZED RELEASE CERTIFICATE/)
+    assert.match(body, /FAA Form 8130-3/)
+  })
+
+  /**
+   * The load-bearing test. A passer-by holds no bundle, so the eight withheld
+   * blocks must not be recoverable from the page — not in a block, not in the
+   * record pane, not in an attribute. A form view that quietly rendered the
+   * whole document would undo the entire design.
+   */
+  test('never leaks a withheld block to a viewer with no bundle', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const res = await app.request(`/form?uri=${encodeURIComponent(overhaul.bundle.uri)}`)
+    const body = await res.text()
+
+    // Structural first: each non-public block that the sheet draws must say
+    // withheld inside its own markup. Checked per block rather than by
+    // searching the page, so a value appearing anywhere else still fails.
+    for (const field of FIELDS.filter((f) => !f.public)) {
+      const start = body.indexOf(`name="field" value="${field.name}"`)
+      if (start < 0) continue // rendered as the certifying statement, not a block
+      const end = body.indexOf('</button>', start)
+      const rendered = body.slice(start, end)
+      assert.match(
+        rendered,
+        />withheld</,
+        `${field.name} (Block ${field.block}) rendered a value`,
+      )
+    }
+
+    // Then a page-wide sweep, for values distinctive enough that a match means
+    // something. Short values like a quantity of 1 collide with hash digits and
+    // block numbers, so they are covered by the structural check alone.
+    for (const field of FIELDS.filter((f) => !f.public)) {
+      const value = overhaul.bundle.values[field.name]
+      if (typeof value !== 'string' || value.length < 6) continue
+      assert.ok(
+        !body.includes(value),
+        `${field.name} (Block ${field.block}) leaked its value: ${value}`,
+      )
+    }
+  })
+
+  test('no nonce ever reaches a page', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const raw = JSON.stringify(overhaul.bundle)
+    for (const res of [
+      await app.request(`/form?uri=${encodeURIComponent(overhaul.bundle.uri)}`),
+      await post(app, { uri: overhaul.bundle.uri, bundle: raw, field: 'remarks' }),
+    ]) {
+      const body = await res.text()
+      // The echoed hidden field legitimately carries the nonces back to the
+      // browser that just sent them; nothing before it may.
+      const beforeEcho = body.split('name="bundle"')[0]!
+      for (const nonce of overhaul.bundle.nonces) {
+        assert.ok(
+          !beforeEcho.includes(nonce),
+          'a nonce appeared on the page outside the echoed bundle',
+        )
+      }
+    }
+  })
+
+  test('says the commitment cannot be opened without a bundle', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const res = await app.request(`/form?uri=${encodeURIComponent(overhaul.bundle.uri)}`)
+    const body = await res.text()
+    assert.match(body, /cannot open a leaf from the commitment/)
+    assert.ok(!body.includes('Folding'), 'offered a fold with no leaves to fold')
+  })
+
+  test('a bundle fills every block and opens the commitment', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const res = await post(app, {
+      uri: overhaul.bundle.uri,
+      bundle: JSON.stringify(overhaul.bundle),
+    })
+    assert.equal(res.status, 200)
+    const body = await res.text()
+    assert.match(body, /opens the published commitment/)
+    assert.ok(!body.includes('>withheld<'), 'a block stayed withheld despite the bundle')
+    assert.match(body, /Metering valve wear/)
+  })
+
+  test('folds a chosen leaf all the way to the published root', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const res = await post(app, {
+      uri: overhaul.bundle.uri,
+      bundle: JSON.stringify(overhaul.bundle),
+      field: 'remarks',
+    })
+    const body = await res.text()
+    assert.match(body, /Folding/)
+    assert.match(body, /identical to the published root/)
+  })
+
+  /** The fold has to be arithmetic, not decoration. */
+  test('a tampered value stops reaching the root', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const res = await post(app, {
+      uri: overhaul.bundle.uri,
+      bundle: JSON.stringify({
+        ...overhaul.bundle,
+        values: { ...overhaul.bundle.values, remarks: 'No defects.' },
+      }),
+      field: 'remarks',
+    })
+    const body = await res.text()
+    assert.match(body, /does not open the published commitment/)
+    assert.match(body, /does not reach the published root/)
+  })
+
+  test('clicking a block with nothing pasted is not an error', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const res = await post(app, { uri: overhaul.bundle.uri, bundle: '', field: 'status' })
+    assert.equal(res.status, 200)
+    assert.match(await res.text(), /cannot open a leaf from the commitment/)
+  })
+
+  test('an unreadable bundle says so without losing the page', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    const res = await post(app, { uri: overhaul.bundle.uri, bundle: 'not json' })
+    assert.equal(res.status, 422)
+    const body = await res.text()
+    assert.match(body, /bundle could not be read/)
+    assert.match(body, /AUTHORIZED RELEASE CERTIFICATE/)
+  })
+
+  /**
+   * A convincing 8130-3 is the one artifact here that must never travel
+   * without saying what it is, and a screenshot crops corners.
+   */
+  test('carries the synthetic mark across the sheet itself', async () => {
+    const { app, overhaul } = await appWithNetwork()
+    for (const res of [
+      await app.request(`/form?uri=${encodeURIComponent(overhaul.bundle.uri)}`),
+      await post(app, {
+        uri: overhaul.bundle.uri,
+        bundle: JSON.stringify(overhaul.bundle),
+      }),
+    ]) {
+      assert.match(await res.text(), /NOT AN AIRWORTHINESS RECORD/)
+    }
+  })
+
+  test('a missing uri is a 400, not a crash', async () => {
+    const { app } = await appWithNetwork()
+    assert.equal((await app.request('/form')).status, 400)
   })
 })
