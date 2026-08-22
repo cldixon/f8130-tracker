@@ -1,7 +1,7 @@
 import { html, raw } from 'hono/html'
 import type { HtmlEscapedString } from 'hono/utils/html'
 
-import { FIELDS } from '@f8130/core'
+import { FIELDS, FIELD_ORDER, PUBLIC_FIELDS } from '@f8130/core'
 import type {
   Disclosure,
   DisclosureResult,
@@ -125,6 +125,109 @@ select { padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 6p
 .persona { display: flex; gap: .6rem; align-items: flex-end; flex-wrap: wrap; }
 .persona label { margin: 0 0 .3rem; }
 .persona button { margin-top: 0; }
+
+/* ---------------------------------------------------------------- form view */
+
+/* The rendered 8130-3.
+   The watermark is a pseudo-element over the whole sheet rather than a corner
+   badge, because a corner badge crops out of a screenshot and this is the one
+   artifact in the project that must never travel without saying what it is. */
+.sheet {
+  position: relative; background: var(--card); border: 1px solid var(--fg);
+  border-radius: 2px; overflow: hidden;
+}
+.sheet::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 2;
+  background-image: repeating-linear-gradient(
+    -30deg, transparent 0 38px,
+    color-mix(in srgb, var(--fail) 7%, transparent) 38px 76px);
+}
+.sheet .stamp {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; pointer-events: none; z-index: 3;
+}
+.sheet .stamp span {
+  transform: rotate(-24deg); font-weight: 800; letter-spacing: .18em;
+  font-size: clamp(1rem, 3.4vw, 2rem); text-align: center; line-height: 1.35;
+  color: color-mix(in srgb, var(--fail) 26%, transparent);
+  border: 3px solid color-mix(in srgb, var(--fail) 20%, transparent);
+  padding: .5rem 1.1rem; border-radius: 6px;
+}
+.sheet .head {
+  border-bottom: 1px solid var(--fg); padding: .55rem .7rem; text-align: center;
+}
+.sheet .head .t1 { font-size: .78rem; letter-spacing: .04em; }
+.sheet .head .t2 { font-weight: 700; font-size: .95rem; letter-spacing: .02em; }
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); }
+.blk {
+  border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  padding: .4rem .55rem .5rem; min-height: 3.5rem; position: relative;
+  cursor: pointer; background: transparent; text-align: left; width: 100%;
+  color: inherit; font: inherit; display: block;
+}
+.blk:last-child { border-right: 0; }
+.blk .n {
+  font-size: .6rem; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .07em; display: block; margin-bottom: .18rem;
+}
+.blk .v { font-size: .87rem; word-break: break-word; }
+.blk .v.wide { font-size: .8rem; }
+.blk.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.blk:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.blk.span2 { grid-column: span 2; }
+.blk.span4 { grid-column: span 4; }
+.blk.withheld .v { color: var(--muted); font-style: italic; }
+.blk .leafhash {
+  display: block; margin-top: .2rem; font-size: .64rem; color: var(--muted);
+  font-family: ui-monospace, monospace; word-break: break-all;
+}
+.cert { display: grid; grid-template-columns: 1fr 1fr; }
+.cert > div { border-right: 1px solid var(--line); }
+.cert > div:last-child { border-right: 0; }
+.cert .capt {
+  font-size: .66rem; padding: .35rem .55rem; border-bottom: 1px solid var(--line);
+  color: var(--muted); text-transform: uppercase; letter-spacing: .06em;
+}
+.cert .unused { opacity: .38; }
+.cert .stmt { padding: .45rem .55rem; font-size: .74rem; }
+.cert .stmt.on { font-weight: 600; }
+
+/* panes */
+.panes { display: grid; gap: 1rem; grid-template-columns: 1fr; }
+@media (min-width: 60rem) { .panes { grid-template-columns: 1fr 1fr; } }
+.pane { border: 1px solid var(--line); border-radius: 8px; background: var(--card); overflow: hidden; }
+.pane > h3 {
+  margin: 0; padding: .55rem .8rem; font-size: .74rem; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--muted); border-bottom: 1px solid var(--line);
+  font-weight: 600;
+}
+.pane .body { padding: .7rem .8rem; }
+pre.rec {
+  margin: 0; padding: .7rem .8rem; font-family: ui-monospace, monospace;
+  font-size: .74rem; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-all;
+}
+pre.rec .k { color: var(--accent); }
+pre.rec mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; border-radius: 2px; }
+
+/* the leaf strip */
+.leaves { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.leaf {
+  font-family: ui-monospace, monospace; font-size: .58rem; text-align: center;
+  padding: .28rem .1rem; border-radius: 2px; background: var(--skip-bg);
+  border: 1px solid transparent; overflow: hidden;
+}
+.leaf.pad { opacity: .4; }
+.leaf.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.leaf .bn { display: block; font-size: .55rem; color: var(--muted); }
+.fold { margin-top: .7rem; font-family: ui-monospace, monospace; font-size: .72rem; }
+.fold div { padding: .18rem 0; word-break: break-all; }
+.fold .op { color: var(--muted); }
+.fold .root { border-top: 1px solid var(--line); margin-top: .25rem; padding-top: .3rem; }
+.inert {
+  padding: .8rem; font-size: .85rem; color: var(--muted);
+  background: var(--skip-bg); border-radius: 6px;
+}
 `
 
 export type Mode = 'demo' | 'live'
@@ -335,7 +438,9 @@ export function partPage(params: {
         return html`<div class="link">
           <div class="rail"><div class="dot"></div>${i < chain.length - 1 ? html`<div class="line"></div>` : ''}</div>
           <div class="body" style="flex:1">
-            <div class="title">${r.organizationName}</div>
+            <div class="title">
+              <a href="/form?uri=${encodeURIComponent(r.uri)}">${r.organizationName}</a>
+            </div>
             <div class="detail">
               ${handles.get(r.issuerDid) ?? r.issuerDid}
               · form <span class="mono">${r.formNumber}</span>
@@ -418,7 +523,7 @@ export function dashboardPage(params: {
               (r) => html`<tr>
                 <td><a href="/part/${encodeURIComponent(r.partNumber)}/${encodeURIComponent(r.serialNumber)}">${r.partNumber}</a></td>
                 <td class="mono">${r.serialNumber}</td>
-                <td>${r.description}</td>
+                <td><a href="/form?uri=${encodeURIComponent(r.uri)}">${r.description}</a></td>
                 <td>${params.handles.get(r.issuerDid) ?? short(r.issuerDid)}</td>
                 <td>${fmt(r.observedAt)}</td>
               </tr>`,
@@ -784,4 +889,324 @@ export function acceptPage(params: {
     </div>`,
     params.mode,
   )
+}
+
+// ---------------------------------------------------------------- form view
+
+export type FormFold = { label: string; hash: string; side?: 'left' | 'right' }
+
+export type FormPageParams = {
+  mode?: Mode
+  /** at:// URI of the release. */
+  uri: string
+  issuerHandle?: string
+  /** The record as published, or null if it could not be fetched. */
+  record: Record<string, unknown> | null
+  /** Published commitment root, hex. */
+  root: string | null
+  /**
+   * Every committed value, which exists only when the viewer holds a bundle.
+   * Null is the ordinary case: a passer-by sees the nine public blocks.
+   */
+  values: Record<string, string | number | null> | null
+  /** Leaf hashes in FIELD_ORDER, hex. Needs the nonces, so bundle-only. */
+  leaves: string[] | null
+  /** Constant pad leaf, hex, for the leaves that are not fields. */
+  pad: string | null
+  /** Whether the bundle's recomputed root equals the published one. */
+  matches: boolean | null
+  /** Selected field name, if the viewer clicked a block. */
+  selected?: string | null
+  /** The fold from the selected leaf to the root. */
+  fold?: FormFold[] | null
+  /**
+   * Why the record could not be fetched, if it could not be.
+   *
+   * Kept apart from `error`: a record that will not load and a bundle that
+   * will not parse are different failures with different fixes, and folding
+   * them together loses whichever one is not being displayed.
+   */
+  fetchError?: string | null
+  /**
+   * The bundle JSON, echoed into a hidden field so clicking a block keeps it.
+   *
+   * Not a violation of the rule that no AppView stores a bundle: it is never
+   * written, logged or indexed, and it travels back only to the browser that
+   * just sent it. Losing it on every click would make the tree unopenable
+   * exactly when the viewer has what it takes to open it.
+   */
+  bundleEcho?: string | null
+  error?: string | null
+}
+
+/** Values that reached the public record, for the no-bundle case. */
+function publicOnly(record: Record<string, unknown> | null) {
+  const out: Record<string, string | number | null> = {}
+  if (!record) return out
+  for (const name of PUBLIC_FIELDS) {
+    const v = record[name]
+    if (typeof v === 'string' || typeof v === 'number') out[name] = v
+  }
+  return out
+}
+
+const CERT_STATEMENTS: Record<string, string> = {
+  APPROVED_DESIGN_DATA:
+    'and are in a condition for safe operation, in conformity to approved design data.',
+  NON_APPROVED_DESIGN_DATA:
+    'to non-approved design data specified in Block 12.',
+  PART_43_RETURN_TO_SERVICE:
+    'accomplished in accordance with 14 CFR part 43; the items are approved for return to service.',
+  OTHER_REGULATION: 'in accordance with other regulation specified in Block 12.',
+}
+
+/**
+ * One block of the form.
+ *
+ * A block with no value is not blank — it is withheld, and says so, with the
+ * leaf hash where the value would be if the viewer held the bundle. Silence
+ * and secrecy look identical on paper and must not here.
+ */
+function block(params: {
+  field: string
+  value: string | number | null | undefined
+  known: boolean
+  leaf?: string
+  span?: 2 | 4
+  selected: boolean
+}) {
+  const spec = FIELDS.find((f) => f.name === params.field)
+  const label = FIELD_LABELS[params.field] ?? params.field
+  const cls = [
+    'blk',
+    params.span === 2 ? 'span2' : params.span === 4 ? 'span4' : '',
+    params.known ? '' : 'withheld',
+    params.selected ? 'sel' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  const shown = params.known
+    ? params.value === '' || params.value === null || params.value === undefined
+      ? html`<span class="v" style="color:var(--muted)">— left blank —</span>`
+      : html`<span class="v">${String(params.value)}</span>`
+    : html`<span class="v">withheld</span>
+        ${params.leaf ? html`<span class="leafhash">${params.leaf}</span>` : ''}`
+
+  return html`<button type="submit" name="field" value="${params.field}" class="${cls}">
+    <span class="n">${spec ? `Block ${spec.block}` : ''} · ${label}</span>
+    ${shown}
+  </button>`
+}
+
+export function formPage(params: FormPageParams) {
+  const known = params.values ?? publicOnly(params.record)
+  const haveBundle = params.values !== null
+  const has = (f: string) => haveBundle || f in known
+  const val = (f: string) => known[f]
+  const leafOf = (f: string) => {
+    const i = FIELD_ORDER.indexOf(f)
+    return params.leaves && i >= 0 ? params.leaves[i] : undefined
+  }
+
+  const blk = (field: string, span?: 2 | 4) =>
+    block({
+      field,
+      value: val(field),
+      known: has(field),
+      leaf: leafOf(field),
+      span,
+      selected: params.selected === field,
+    })
+
+  const basis = has('approvalBasis') ? String(val('approvalBasis') ?? '') : ''
+  const column = has('certifyingBlock') ? String(val('certifyingBlock') ?? '') : ''
+  const conformity = column === 'CONFORMITY'
+  const rts = column === 'RETURN_TO_SERVICE'
+
+  // Which certifying column applies is itself withheld without a bundle, so
+  // neither side is dimmed — a passer-by cannot tell new manufacture from a
+  // return to service, which is most of what Block 11 would have told them.
+  //
+  // The signer's certificate number and name belong to whichever column is in
+  // use — 13c/13d under conformity, 14c/14d under return to service — not one
+  // to each. A form uses one column and leaves the other blank, so rendering
+  // them split across both would draw a document that could not exist.
+  const certSide = (isConformity: boolean) => {
+    const active = isConformity ? conformity : rts
+    const dim = column !== '' && !active
+    const unknown = column === ''
+    return html`<div class="${dim ? 'unused' : ''}">
+      <div class="capt">${isConformity ? 'Block 13a — Certifies conformity' : 'Block 14a — Approval for return to service'}</div>
+      <div class="stmt ${active ? 'on' : ''}">
+        ${unknown
+          ? html`<em style="color:var(--muted)">withheld — which column certifies is not on the public record</em>`
+          : active
+            ? CERT_STATEMENTS[basis] ?? basis
+            : html`<span style="color:var(--muted)">not used</span>`}
+      </div>
+      ${active || unknown
+        ? html`${blk('signerCert')}${blk('signerName')}`
+        : html`<div class="blk" style="cursor:default">
+            <span class="n">Blocks ${isConformity ? '13c / 13d' : '14c / 14d'}</span>
+            <span class="v" style="color:var(--muted)">—</span>
+          </div>`}
+    </div>`
+  }
+
+  const sheet = html`<div class="sheet">
+    <div class="stamp"><span>SYNTHETIC<br>NOT AN AIRWORTHINESS RECORD</span></div>
+    <div class="head">
+      <div class="t1">${has('approvingAuthority') ? String(val('approvingAuthority') ?? '') : 'Block 1 withheld'}</div>
+      <div class="t2">AUTHORIZED RELEASE CERTIFICATE</div>
+      <div class="t1">FAA Form 8130-3 · AIRWORTHINESS APPROVAL TAG</div>
+    </div>
+    <div class="grid">
+      ${blk('formNumber', 2)} ${blk('workOrder', 2)}
+      ${blk('organizationName', 2)} ${blk('organizationAddress', 2)}
+      ${blk('item')} ${blk('description')} ${blk('partNumber')} ${blk('quantity')}
+      ${blk('serialNumber', 2)} ${blk('status', 2)}
+      ${blk('remarks', 4)}
+    </div>
+    <div class="cert">${certSide(true)}${certSide(false)}</div>
+    <div class="grid">${blk('completedAt', 4)}</div>
+  </div>`
+
+  // The record pane, with the selected field's key highlighted.
+  const recordJson = params.record
+    ? JSON.stringify(params.record, (_k, v) => (v instanceof Uint8Array ? `<${v.length} bytes>` : v), 2)
+    : null
+
+  const recordPane = html`<div class="pane">
+    <h3>The record, as published</h3>
+    ${recordJson
+      ? html`<pre class="rec">${recordJson}</pre>`
+      : html`<div class="body" style="color:var(--muted);font-size:.88rem">
+          Could not be fetched: ${params.fetchError ?? 'unknown reason'}
+        </div>`}
+    <div class="body" style="border-top:1px solid var(--line);font-size:.8rem;color:var(--muted)">
+      Nine of the seventeen blocks travel here. The rest are committed to and
+      withheld — the commitment covers the whole form either way.
+    </div>
+  </div>`
+
+  const treePane = html`<div class="pane" id="tree">
+    <h3>The commitment</h3>
+    <div class="body">
+      ${params.root
+        ? html`<div class="mono" style="word-break:break-all;font-size:.72rem">
+            <span style="color:var(--muted)">root</span> ${params.root}
+          </div>`
+        : html`<span style="color:var(--muted)">no commitment available</span>`}
+
+      ${params.leaves && params.pad
+        ? html`
+            <div style="margin:.8rem 0 .35rem;font-size:.72rem;color:var(--muted)">
+              32 leaves — 17 fields, then the constant pad
+            </div>
+            <div class="leaves">
+              ${[...Array(32)].map((_, i) => {
+                const name = FIELD_ORDER[i]
+                const isPad = i >= FIELD_ORDER.length
+                const hash = isPad ? params.pad! : params.leaves![i]!
+                const spec = name ? FIELDS.find((f) => f.name === name) : undefined
+                return html`<div class="leaf ${isPad ? 'pad' : ''} ${name && name === params.selected ? 'sel' : ''}">
+                  <span class="bn">${isPad ? 'pad' : spec?.block ?? ''}</span>${hash.slice(0, 6)}
+                </div>`
+              })}
+            </div>
+            ${params.fold && params.fold.length > 0
+              ? html`<div class="fold">
+                  <div style="color:var(--muted);font-size:.72rem;margin-bottom:.3rem">
+                    Folding ${fieldLabel(params.selected ?? '')} to the root
+                  </div>
+                  ${params.fold.map(
+                    (f) => html`<div>
+                      <span class="op">${f.side ? `+ ${f.label} (${f.side})` : f.label}</span><br>${f.hash}
+                    </div>`,
+                  )}
+                  <div class="root">
+                    ${params.fold[params.fold.length - 1]!.hash === params.root
+                      ? html`<span style="color:var(--pass)">✓ identical to the published root</span>`
+                      : html`<span style="color:var(--fail)">✗ does not reach the published root</span>`}
+                  </div>
+                </div>`
+              : html`<div style="margin-top:.7rem;font-size:.8rem;color:var(--muted)">
+                  Choose a block above to fold its leaf up to the root.
+                </div>`}
+          `
+        : html`<div class="inert" style="margin-top:.8rem">
+            <strong>You cannot open a leaf from the commitment.</strong>
+            It is one-way and inert — not a container, an index, or something
+            you can expand. Its only ability is to answer yes or no to a claim
+            someone else brings you. Paste the bundle below and every leaf
+            becomes computable.
+          </div>`}
+    </div>
+  </div>`
+
+  const verdict =
+    params.matches === null
+      ? ''
+      : params.matches
+        ? html`<div class="verdict ok">
+            <h2>This document opens the published commitment</h2>
+            <p>Every one of the seventeen blocks recomputes to the root the
+            issuer published. The paper and the record are the same document.</p>
+          </div>`
+        : html`<div class="verdict no">
+            <h2>This document does not open the published commitment</h2>
+            <p>The issuer published a commitment for this record, and these
+            values are not what produces it.</p>
+          </div>`
+
+  const body = html`
+    <h1>Release certificate</h1>
+    <p class="sub">
+      ${params.issuerHandle ? html`Issued by <strong>${params.issuerHandle}</strong> · ` : ''}
+      <span class="mono" style="font-size:.8rem">${params.uri}</span>
+    </p>
+
+    ${params.fetchError
+      ? html`<div class="verdict no">
+          <h2>Could not load this release</h2>
+          <p>${params.fetchError}</p>
+        </div>`
+      : ''}
+    ${params.error
+      ? html`<div class="verdict no">
+          <h2>That bundle could not be read</h2>
+          <p>${params.error}</p>
+        </div>`
+      : ''}
+    ${verdict}
+
+    <form method="post" action="/form">
+    <input type="hidden" name="uri" value="${params.uri}">
+    <input type="hidden" name="bundle" value="${params.bundleEcho ?? ''}">
+    ${sheet}
+
+    <p class="sub" style="margin:.9rem 0 1.5rem;font-size:.85rem">
+      Click any block to fold its leaf up to the published root.
+      ${haveBundle
+        ? ''
+        : html`Without the bundle only the nine public blocks have values — the
+            rest are committed and withheld.`}
+    </p>
+
+    <div class="panes">${recordPane}${treePane}</div>
+    </form>
+
+    <h2>${haveBundle ? 'Open a different bundle' : 'Open it with a bundle'}</h2>
+    <p class="sub" style="margin-bottom:.75rem">
+      The bundle is what travels with the part: all seventeen values and all
+      seventeen nonces. It is recomputed and discarded — no AppView stores one.
+    </p>
+    <form method="post" action="/form">
+      <input type="hidden" name="uri" value="${params.uri}">
+      <textarea name="bundle" placeholder="Paste the bundle JSON"></textarea>
+      <button type="submit">Open the form</button>
+    </form>
+  `
+  return layout('Release certificate', body, params.mode ?? 'live')
 }

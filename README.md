@@ -36,6 +36,12 @@ Completeness stays public even when contents are not. Each release links its
 predecessor, so a seller can withhold a document but cannot hide that the
 chain fails to reach birth.
 
+The **form view** puts one record in three notations side by side: the
+8130-3 as a shop would recognise it, the AT Protocol record as published, and
+the commitment tree. Click a block and its leaf folds up to the published root.
+Without a bundle, nine blocks have values and eight say *withheld* — which is
+the design, drawn.
+
 [**docs/commitments.md**](docs/commitments.md) works the cryptography through
 from first principles — a four-field toy tree with reproducible hashes, why the
 nonces are not optional, how one field is opened against the published root
@@ -121,7 +127,7 @@ Early. Built so far:
 | `commitment/` | Go implementation of the same commitment scheme |
 | `ingest/` | firehose consumer, signature verification, derived Postgres index |
 | `cmd/ingest/` | `run` and `reindex` commands |
-| `web/` | the AppView — verify page, part timeline, dashboard, JSON API |
+| `web/` | the AppView — form view, verify page, part timeline, dashboard, JSON API |
 | `seed/` | one-shot job: 29 fictional organizations, 27 releases, 24 verdicts |
 | `watchdog/` | AppView B — an independent reader with its own index and its own rule |
 | `testdata/vectors.json` | the cross-language contract both cores must satisfy |
