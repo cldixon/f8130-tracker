@@ -41,7 +41,7 @@ async function main() {
       birth: birth.bundle,
       tampered: {
         ...overhaul.bundle,
-        values: { ...overhaul.bundle.values, findings: 'No defects found' },
+        values: { ...overhaul.bundle.values, remarks: 'No defects found.' },
       },
       forged: {
         ...overhaul.bundle,

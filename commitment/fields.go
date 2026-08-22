@@ -10,7 +10,7 @@ package commitment
 // FieldSetVersion identifies the committed field order and normalization
 // rules. Changing either invalidates every commitment ever published, so this
 // is versioned rather than edited.
-const FieldSetVersion = 1
+const FieldSetVersion = 2
 
 // FieldKind determines how a value is canonicalized before hashing.
 type FieldKind int
@@ -22,8 +22,8 @@ const (
 	KindIdentifier FieldKind = iota
 	// KindText is human prose: NFC, collapse internal whitespace, trim.
 	KindText
-	// KindInteger is exact integers only. Money is cents; floats are refused
-	// rather than rounded.
+	// KindInteger is exact integers only; floats are refused rather than
+	// rounded.
 	KindInteger
 	// KindTimestamp is RFC 3339 forced to UTC at second precision. A datetime
 	// without an offset is not a point in time and is rejected.
@@ -38,37 +38,61 @@ type FieldSpec struct {
 	Kind   FieldKind
 	Values []string // permitted values, for KindEnum
 	Public bool     // also appears in plaintext on the release record
+	Block  string   // the block on FAA Form 8130-3 this field carries
 }
 
-// ReleaseStatus is the closed set of release statuses.
-var ReleaseStatus = []string{"NEW", "OVERHAULED", "REPAIRED", "INSPECTED", "MODIFIED"}
+// ReleaseStatus is the closed set of Block 11 entries.
+//
+// TESTED is here because FAA guidance names it explicitly alongside INSPECTED
+// as an acceptable Block 11 entry for a return to service.
+var ReleaseStatus = []string{"NEW", "OVERHAULED", "REPAIRED", "INSPECTED", "TESTED", "MODIFIED"}
+
+// CertifyingBlock is which certifying column of the form is in use. Block 13
+// certifies conformity for new manufacture; Block 14 approves a return to
+// service. A form is one or the other and never both.
+var CertifyingBlock = []string{"CONFORMITY", "RETURN_TO_SERVICE"}
+
+// ApprovalBasis is the statement selected in Block 13a or Block 14a. The first
+// two belong to Block 13a, the second two to Block 14a; which pair is legal
+// depends on CertifyingBlock.
+var ApprovalBasis = []string{
+	"APPROVED_DESIGN_DATA",
+	"NON_APPROVED_DESIGN_DATA",
+	"PART_43_RETURN_TO_SERVICE",
+	"OTHER_REGULATION",
+}
 
 // Fields is the committed field set, in commitment order.
 //
 // FIELD ORDER IS SCHEMA. Never reorder, never add, never remove — bump
 // FieldSetVersion and add a new table.
 //
-// On formNumber: the specification names four identifier fields (partNumber,
-// serialNumber, workOrder, signerCert) and omits formNumber. That was an
-// oversight — a form number is an identifier by any reasonable reading, and
-// treating it as prose would let "SYNTHETIC-8130-0001" and
-// "synthetic 8130 0001" commit to different roots.
+// Version 2 is the whole form. Version 1 committed to fifteen fields chosen by
+// what seemed interesting, which left four blocks of the actual 8130-3
+// uncommitted — Block 1, Block 4, Block 6, and the 13a/14a approval basis.
+// That is a hole in the guarantee rather than a gap in coverage: a commitment
+// over part of a document commits to part of a document. Version 1 also
+// carried cost and customer, which are not 8130-3 fields at all.
+//
+// Ordered by block number, so the sequence is self-documenting.
 var Fields = []FieldSpec{
-	{Name: "formNumber", Kind: KindIdentifier, Public: true},
-	{Name: "partNumber", Kind: KindIdentifier, Public: true},
-	{Name: "serialNumber", Kind: KindIdentifier, Public: true},
-	{Name: "description", Kind: KindText},
-	{Name: "status", Kind: KindEnum, Values: ReleaseStatus, Public: true},
-	{Name: "quantity", Kind: KindInteger},
-	{Name: "workOrder", Kind: KindIdentifier},
-	{Name: "findings", Kind: KindText},
-	{Name: "workscope", Kind: KindText},
-	{Name: "costCents", Kind: KindInteger},
-	{Name: "customer", Kind: KindText},
-	{Name: "signerCert", Kind: KindIdentifier, Public: true},
-	{Name: "signerName", Kind: KindText},
-	{Name: "remarks", Kind: KindText},
-	{Name: "completedAt", Kind: KindTimestamp, Public: true},
+	{Name: "approvingAuthority", Kind: KindText, Public: true, Block: "1"},
+	{Name: "formNumber", Kind: KindIdentifier, Public: true, Block: "3"},
+	{Name: "organizationName", Kind: KindText, Public: true, Block: "4"},
+	{Name: "organizationAddress", Kind: KindText, Public: true, Block: "4"},
+	{Name: "workOrder", Kind: KindIdentifier, Block: "5"},
+	{Name: "item", Kind: KindInteger, Block: "6"},
+	{Name: "description", Kind: KindText, Public: true, Block: "7"},
+	{Name: "partNumber", Kind: KindIdentifier, Public: true, Block: "8"},
+	{Name: "quantity", Kind: KindInteger, Block: "9"},
+	{Name: "serialNumber", Kind: KindIdentifier, Public: true, Block: "10"},
+	{Name: "status", Kind: KindEnum, Values: ReleaseStatus, Block: "11"},
+	{Name: "remarks", Kind: KindText, Block: "12"},
+	{Name: "certifyingBlock", Kind: KindEnum, Values: CertifyingBlock, Block: "13/14"},
+	{Name: "approvalBasis", Kind: KindEnum, Values: ApprovalBasis, Block: "13a/14a"},
+	{Name: "signerCert", Kind: KindIdentifier, Public: true, Block: "13c/14c"},
+	{Name: "signerName", Kind: KindText, Block: "13d/14d"},
+	{Name: "completedAt", Kind: KindTimestamp, Public: true, Block: "13e/14e"},
 }
 
 // FieldOrder returns the committed field names in order.

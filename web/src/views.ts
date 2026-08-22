@@ -1,6 +1,7 @@
 import { html, raw } from 'hono/html'
 import type { HtmlEscapedString } from 'hono/utils/html'
 
+import { FIELDS } from '@f8130/core'
 import type {
   Disclosure,
   DisclosureResult,
@@ -334,10 +335,14 @@ export function partPage(params: {
         return html`<div class="link">
           <div class="rail"><div class="dot"></div>${i < chain.length - 1 ? html`<div class="line"></div>` : ''}</div>
           <div class="body" style="flex:1">
-            <div class="title">${r.status}</div>
+            <div class="title">${r.organizationName}</div>
             <div class="detail">
               ${handles.get(r.issuerDid) ?? r.issuerDid}
               · form <span class="mono">${r.formNumber}</span>
+            </div>
+            <div class="detail muted">
+              work performed is committed but not published —
+              <a href="/disclose">ask the holder for a disclosure</a>
             </div>
             <div class="times">
               <div><div class="label">Completed (claimed)</div>${fmt(r.completedAt)}</div>
@@ -413,7 +418,7 @@ export function dashboardPage(params: {
               (r) => html`<tr>
                 <td><a href="/part/${encodeURIComponent(r.partNumber)}/${encodeURIComponent(r.serialNumber)}">${r.partNumber}</a></td>
                 <td class="mono">${r.serialNumber}</td>
-                <td>${r.status}</td>
+                <td>${r.description}</td>
                 <td>${params.handles.get(r.issuerDid) ?? short(r.issuerDid)}</td>
                 <td>${fmt(r.observedAt)}</td>
               </tr>`,
@@ -452,22 +457,39 @@ export function errorPage(status: number, message: string) {
 
 /* ------------------------------------------------------- selective disclosure */
 
+/**
+ * Human names for the committed fields.
+ *
+ * Every entry corresponds to a numbered block on FAA Form 8130-3, and
+ * `fieldLabel` prefixes the block so the page and the paper form can be read
+ * side by side. A test asserts this table covers FIELD_ORDER, because a field
+ * with no label renders as a camelCase identifier and nobody notices.
+ */
 const FIELD_LABELS: Record<string, string> = {
-  formNumber: 'Form number',
-  partNumber: 'Part number',
-  serialNumber: 'Serial number',
+  approvingAuthority: 'Approving authority',
+  formNumber: 'Form tracking number',
+  organizationName: 'Organization name',
+  organizationAddress: 'Organization address',
+  workOrder: 'Work order / contract / invoice',
+  item: 'Item',
   description: 'Description',
-  status: 'Status',
+  partNumber: 'Part number',
   quantity: 'Quantity',
-  workOrder: 'Work order',
-  findings: 'Findings',
-  workscope: 'Workscope',
-  costCents: 'Cost (cents)',
-  customer: 'Customer',
-  signerCert: 'Signer certificate',
-  signerName: 'Signer name',
+  serialNumber: 'Serial number',
+  status: 'Status / work',
   remarks: 'Remarks',
-  completedAt: 'Completed at',
+  certifyingBlock: 'Certifying block',
+  approvalBasis: 'Approval basis',
+  signerCert: 'Approval / certificate no.',
+  signerName: 'Name',
+  completedAt: 'Date',
+}
+
+/** "Block 4 · Organization name", falling back to the raw name. */
+export function fieldLabel(name: string): string {
+  const label = FIELD_LABELS[name] ?? name
+  const spec = FIELDS.find((f) => f.name === name)
+  return spec ? `Block ${spec.block} · ${label}` : label
 }
 
 export function disclosePage(params: {
@@ -487,7 +509,7 @@ export function disclosePage(params: {
         (f) => html`<label class="check">
           <input type="checkbox" name="field" value="${f}"
             ${f === 'costCents' || f === 'completedAt' ? 'checked' : ''}>
-          ${FIELD_LABELS[f] ?? f}
+          ${fieldLabel(f)}
         </label>`,
       )}
     </div>
@@ -539,7 +561,7 @@ export function disclosePage(params: {
         (f) => html`<div class="stage">
           <span class="badge ${f.verified ? 'pass' : 'fail'}">${f.verified ? 'proven' : 'bad'}</span>
           <div class="body">
-            <div class="title">${FIELD_LABELS[f.field] ?? f.field}</div>
+            <div class="title">${fieldLabel(f.field)}</div>
             <div class="detail">${f.value === null ? '(empty)' : String(f.value)}</div>
           </div>
         </div>`,
@@ -549,7 +571,7 @@ export function disclosePage(params: {
     <h2>Withheld</h2>
     <div class="card">
       <div class="empty">
-        ${(r?.withheld ?? []).map((f) => FIELD_LABELS[f] ?? f).join(' · ')}
+        ${(r?.withheld ?? []).map(fieldLabel).join(' · ')}
         <p style="margin:.6rem 0 0">
           The verifier is told which fields exist and were not shown. A verifier
           who could not tell the difference could be handed a flattering subset

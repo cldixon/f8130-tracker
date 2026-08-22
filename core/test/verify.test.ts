@@ -68,7 +68,7 @@ describe('tampering — the instructive failure', () => {
       ...JSON.parse(JSON.stringify(overhaul.bundle)),
       values: {
         ...overhaul.bundle.values,
-        findings: 'No defects found',
+        remarks: 'No defects found.',
       },
     })
 
@@ -92,7 +92,7 @@ describe('tampering — the instructive failure', () => {
     const { net, overhaul } = await standardNetwork()
     const tampered = parseBundle({
       ...JSON.parse(JSON.stringify(overhaul.bundle)),
-      values: { ...overhaul.bundle.values, costCents: 1 },
+      values: { ...overhaul.bundle.values, workOrder: 'WO/2026/9999' },
     })
     const report = await verifyBundle({ bundle: tampered, resolver: net, repo: net })
     assert.equal(stage(report, 'recompute').status, 'fail')
@@ -341,11 +341,12 @@ describe('public fields', () => {
   test('a record whose plaintext disagrees with the document is caught', async () => {
     const { net, overhaul } = await standardNetwork()
 
-    // The bundle opens the commitment correctly, but claims a different
-    // status than the issuer published in plaintext.
+    // The bundle claims a different description than the issuer published in
+    // plaintext. Block 7 is on the public record; Block 11 is not, which is
+    // why status cannot carry this test any more.
     const mismatched = parseBundle({
       ...JSON.parse(JSON.stringify(overhaul.bundle)),
-      values: { ...overhaul.bundle.values, status: 'NEW' },
+      values: { ...overhaul.bundle.values, description: 'Bleed air valve' },
     })
 
     const report = await verifyBundle({
@@ -355,7 +356,7 @@ describe('public fields', () => {
     })
 
     assert.equal(stage(report, 'agree').status, 'fail')
-    assert.match(stage(report, 'agree').detail, /status/)
+    assert.match(stage(report, 'agree').detail, /description/)
   })
 })
 

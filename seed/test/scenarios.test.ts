@@ -2,7 +2,12 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-import { commitForm, type RawForm } from '@f8130/core'
+import {
+  commitForm,
+  validateApprovalBasis,
+  FIELD_ORDER,
+  type RawForm,
+} from '@f8130/core'
 
 import {
   brokerForms,
@@ -51,7 +56,6 @@ function allForms(): { label: string; form: RawForm }[] {
   for (const { label, lineage, seq } of lineages) {
     for (const [i, visit] of lineage.visits.entries()) {
       const issuer = byKey.get(visit.issuer)!
-      const customer = byKey.get(visit.customer)!
       out.push({
         label: `${label}[${i}]`,
         form: visitForm({
@@ -59,9 +63,10 @@ function allForms(): { label: string; form: RawForm }[] {
           visit,
           index: i,
           formSeq: seq + i,
+          organizationName: issuer.displayName,
+          organizationAddress: issuer.address,
           signerCert: issuer.certificate ?? 'SYNTHETIC-CERT-99999',
           signerName: 'A. Technician',
-          customerName: customer.displayName,
         }),
       })
     }
@@ -285,10 +290,33 @@ describe('every form in the demonstration', () => {
     }
   })
 
-  test('costs whole cents, never a fraction', () => {
+  test('fills every block of the form', () => {
     for (const { label, form } of forms) {
-      assert.ok(Number.isInteger(form.costCents), `${label}: ${form.costCents}`)
-      assert.ok(form.costCents > 0, `${label}: ${form.costCents}`)
+      for (const name of FIELD_ORDER) {
+        assert.ok(name in form, `${label}: no value for ${name}`)
+      }
+    }
+  })
+
+  /**
+   * Block 13 certifies conformity for new manufacture; Block 14 approves a
+   * return to service. The statement selected in 13a/14a has to belong to
+   * whichever column is in use — a return to service certified against
+   * approved design data is not a form anyone could file.
+   */
+  test('pairs the approval basis with the certifying column', () => {
+    for (const { label, form } of forms) {
+      assert.ok(
+        validateApprovalBasis(String(form.certifyingBlock), String(form.approvalBasis)),
+        `${label}: ${form.certifyingBlock} with ${form.approvalBasis}`,
+      )
+    }
+  })
+
+  test('certifies new manufacture under Block 13 and everything else under 14', () => {
+    for (const { label, form } of forms) {
+      const expected = form.status === 'NEW' ? 'CONFORMITY' : 'RETURN_TO_SERVICE'
+      assert.equal(form.certifyingBlock, expected, label)
     }
   })
 

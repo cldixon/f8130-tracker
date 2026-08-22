@@ -21,17 +21,26 @@ type StrongRef struct {
 }
 
 // Release is a decoded release record.
+//
+// These are the blocks of the form that appear in plaintext on the public
+// record. Block 11 (status) and Block 12 (remarks) are not among them: what was
+// done to a part, and what the shop found, are commercially sensitive to the
+// operator. They are committed like every other block and disclosed
+// selectively.
 type Release struct {
-	Commitment   []byte
-	IssuerDID    string
-	Prev         *StrongRef
-	FormNumber   string
-	PartNumber   string
-	SerialNumber string
-	Status       string
-	SignerCert   string
-	CompletedAt  time.Time
-	Raw          map[string]any
+	Commitment          []byte
+	IssuerDID           string
+	Prev                *StrongRef
+	ApprovingAuthority  string
+	FormNumber          string
+	OrganizationName    string
+	OrganizationAddress string
+	Description         string
+	PartNumber          string
+	SerialNumber        string
+	SignerCert          string
+	CompletedAt         time.Time
+	Raw                 map[string]any
 }
 
 // Acceptance is a decoded acceptance record.
@@ -86,16 +95,25 @@ func decodeRelease(obj map[string]any) (*Release, error) {
 	if r.IssuerDID, err = requireString(obj, "issuerDid"); err != nil {
 		return nil, err
 	}
+	if r.ApprovingAuthority, err = requireString(obj, "approvingAuthority"); err != nil {
+		return nil, err
+	}
 	if r.FormNumber, err = requireString(obj, "formNumber"); err != nil {
+		return nil, err
+	}
+	if r.OrganizationName, err = requireString(obj, "organizationName"); err != nil {
+		return nil, err
+	}
+	if r.OrganizationAddress, err = requireString(obj, "organizationAddress"); err != nil {
+		return nil, err
+	}
+	if r.Description, err = requireString(obj, "description"); err != nil {
 		return nil, err
 	}
 	if r.PartNumber, err = requireString(obj, "partNumber"); err != nil {
 		return nil, err
 	}
 	if r.SerialNumber, err = requireString(obj, "serialNumber"); err != nil {
-		return nil, err
-	}
-	if r.Status, err = requireString(obj, "status"); err != nil {
 		return nil, err
 	}
 	if r.SignerCert, err = requireString(obj, "signerCert"); err != nil {

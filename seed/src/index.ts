@@ -20,6 +20,7 @@ import {
   buildBundle,
   commitForm,
   commitmentFromBundle,
+  publicValues,
   toHex,
   type Bundle,
   type RawForm,
@@ -181,12 +182,7 @@ async function issueRelease(
     commitment: commitment.root,
     fieldSetVersion: commitment.version,
     issuerDid: session.did,
-    formNumber: commitment.values.formNumber,
-    partNumber: commitment.values.partNumber,
-    serialNumber: commitment.values.serialNumber,
-    status: commitment.values.status,
-    signerCert: commitment.values.signerCert,
-    completedAt: commitment.values.completedAt,
+    ...publicValues(commitment.values),
   }
   if (prev) record.prev = prev
 
@@ -333,9 +329,10 @@ async function publishLineage(params: {
       visit,
       index: i,
       formSeq,
+      organizationName: issuer.org.displayName,
+      organizationAddress: issuer.org.address,
       signerCert: signer.cert,
       signerName: signer.name,
-      customerName: customer.org.displayName,
     })
 
     const issued = await issueRelease(issuer, form, prev)

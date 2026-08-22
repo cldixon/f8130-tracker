@@ -35,6 +35,17 @@ export type Org = {
   cage: string
   /** Repair stations and manufacturers carry one; buyers and lessors do not. */
   certificate?: string
+  /**
+   * Block 4 of FAA Form 8130-3, the organization's physical address.
+   *
+   * This is form content, not map data. Block 4 is a required block, and the
+   * commitment covers every block — an address that is not committed is an
+   * address a forger can change without breaking a single check.
+   *
+   * Canonicalized onto one line, and PO boxes are not permitted on a real
+   * 8130-3, so none appear here.
+   */
+  address: string
 }
 
 type RosterEntry = Omit<Org, 'handle' | 'email'>
@@ -46,6 +57,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'northwind-turbine',
     displayName: 'Northwind Turbine',
     kind: 'oem',
+    address: '1200 Industrial Loop, Wichita, KS 67209',
     cage: 'SYN0001',
     certificate: 'SYNTHETIC-PC-00081',
   },
@@ -54,6 +66,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'calder-aerosystems',
     displayName: 'Calder Aerosystems',
     kind: 'oem',
+    address: '77 Founders Way, Hartford, CT 06120',
     cage: 'SYN0002',
     certificate: 'SYNTHETIC-PC-00114',
   },
@@ -62,6 +75,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'vantage-propulsion',
     displayName: 'Vantage Propulsion',
     kind: 'oem',
+    address: '3050 Skyharbor Circle, Phoenix, AZ 85034',
     cage: 'SYN0003',
     certificate: 'SYNTHETIC-PC-00220',
   },
@@ -72,6 +86,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'cascadia-mro',
     displayName: 'Cascadia MRO',
     kind: 'mro',
+    address: '4400 Airport Way, Everett, WA 98204',
     cage: 'SYN0004',
     certificate: 'SYNTHETIC-CERT-12345',
   },
@@ -80,6 +95,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'ironwood-aero',
     displayName: 'Ironwood Aero Services',
     kind: 'mro',
+    address: '9 Hangar Row, Tulsa, OK 74115',
     cage: 'SYN0005',
     certificate: 'SYNTHETIC-CERT-20418',
   },
@@ -88,6 +104,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'saltmarsh-technics',
     displayName: 'Saltmarsh Aviation Technics',
     kind: 'mro',
+    address: '215 Tidewater Drive, Charleston, SC 29405',
     cage: 'SYN0006',
     certificate: 'SYNTHETIC-CERT-20955',
   },
@@ -96,6 +113,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'flinthills-repair',
     displayName: 'Flinthills Component Repair',
     kind: 'mro',
+    address: '640 Prairie Belt Road, Emporia, KS 66801',
     cage: 'SYN0007',
     certificate: 'SYNTHETIC-CERT-21077',
   },
@@ -104,6 +122,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'harbor-point-aero',
     displayName: 'Harbor Point Aerospace',
     kind: 'mro',
+    address: '1180 Embarcadero West, Oakland, CA 94607',
     cage: 'SYN0008',
     certificate: 'SYNTHETIC-CERT-21340',
   },
@@ -112,6 +131,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'granite-ridge',
     displayName: 'Granite Ridge Overhaul',
     kind: 'mro',
+    address: '52 Ledge Street, Manchester, NH 03103',
     cage: 'SYN0009',
     certificate: 'SYNTHETIC-CERT-21688',
   },
@@ -120,6 +140,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'clearwater-turbine',
     displayName: 'Clearwater Turbine Works',
     kind: 'mro',
+    address: '8800 Bayline Parkway, Tampa, FL 33619',
     cage: 'SYN0010',
     certificate: 'SYNTHETIC-CERT-22015',
   },
@@ -128,6 +149,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'copperline-repair',
     displayName: 'Copperline Aviation Repair',
     kind: 'mro',
+    address: '4501 Ocotillo Boulevard, Tucson, AZ 85714',
     cage: 'SYN0011',
     certificate: 'SYNTHETIC-CERT-22394',
   },
@@ -136,6 +158,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'sandhills-overhaul',
     displayName: 'Sandhills Accessory Overhaul',
     kind: 'mro',
+    address: '77 Meridian Field Road, Grand Island, NE 68801',
     cage: 'SYN0012',
     certificate: 'SYNTHETIC-CERT-22701',
   },
@@ -144,6 +167,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'basalt-aero',
     displayName: 'Basalt Aero Repair',
     kind: 'mro',
+    address: '1900 Rimrock Drive, Bend, OR 97701',
     cage: 'SYN0013',
     certificate: 'SYNTHETIC-CERT-23044',
   },
@@ -152,6 +176,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'fjordholm-aerotek',
     displayName: 'Fjordholm Aerotek',
     kind: 'mro',
+    address: 'Havneveien 14, 4033 Stavanger, Norway',
     cage: 'SYN0014',
     certificate: 'SYNTHETIC-CERT-23319',
   },
@@ -160,6 +185,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'alpine-rotables',
     displayName: 'Alpine Rotables',
     kind: 'mro',
+    address: 'Flughafenstrasse 22, 8302 Kloten, Switzerland',
     cage: 'SYN0015',
     certificate: 'SYNTHETIC-CERT-23570',
   },
@@ -168,6 +194,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'wexford-components',
     displayName: 'Wexford Component Services',
     kind: 'mro',
+    address: 'Unit 6, Harbour Business Park, Wexford, Ireland',
     cage: 'SYN0016',
     certificate: 'SYNTHETIC-CERT-23902',
   },
@@ -178,6 +205,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'example-air',
     displayName: 'Example Air',
     kind: 'operator',
+    address: '7200 Concourse Drive, Denver, CO 80249',
     cage: 'SYN0017',
   },
   {
@@ -185,6 +213,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'southpoint-air',
     displayName: 'Southpoint Air',
     kind: 'operator',
+    address: '3400 Southfield Road, Atlanta, GA 30354',
     cage: 'SYN0018',
   },
   {
@@ -192,6 +221,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'marisol-airways',
     displayName: 'Marisol Airways',
     kind: 'operator',
+    address: 'Avenida Aeropuerto 55, San Juan, PR 00979',
     cage: 'SYN0019',
   },
   {
@@ -199,6 +229,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'highline-regional',
     displayName: 'Highline Regional',
     kind: 'operator',
+    address: '410 Bitterroot Way, Missoula, MT 59808',
     cage: 'SYN0020',
   },
   {
@@ -206,6 +237,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'cobalt-coast',
     displayName: 'Cobalt Coast Airlines',
     kind: 'operator',
+    address: '88 Jetport Road, Portland, ME 04102',
     cage: 'SYN0021',
   },
   {
@@ -213,6 +245,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'redcliff-cargo',
     displayName: 'Redcliff Cargo',
     kind: 'operator',
+    address: '2600 Mesa Cargo Loop, Albuquerque, NM 87106',
     cage: 'SYN0022',
   },
   {
@@ -220,6 +253,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'pinewood-charter',
     displayName: 'Pinewood Air Charter',
     kind: 'operator',
+    address: '145 Lakeshore Airfield Road, Duluth, MN 55811',
     cage: 'SYN0023',
   },
   {
@@ -227,6 +261,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'kenai-freight',
     displayName: 'Kenai Freight Systems',
     kind: 'operator',
+    address: '301 Float Plane Road, Kenai, AK 99611',
     cage: 'SYN0024',
   },
 
@@ -236,6 +271,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'meridian-aeroparts',
     displayName: 'Meridian Aeroparts',
     kind: 'broker',
+    address: '90 Cargo Road, Miami, FL 33122',
     cage: 'SYN0025',
   },
   {
@@ -243,6 +279,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'fairlead-exchange',
     displayName: 'Fairlead Parts Exchange',
     kind: 'broker',
+    address: '1220 Seaboard Avenue, Norfolk, VA 23502',
     cage: 'SYN0026',
   },
   {
@@ -250,6 +287,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'rio-seco-rotables',
     displayName: 'Rio Seco Rotable Exchange',
     kind: 'broker',
+    address: '505 Bridgeport Trade Way, Laredo, TX 78045',
     cage: 'SYN0027',
   },
 
@@ -259,6 +297,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'halyard-leasing',
     displayName: 'Halyard Aircraft Leasing',
     kind: 'lessor',
+    address: '18 Docklands Quay, Dublin 2, Ireland',
     cage: 'SYN0028',
   },
   {
@@ -266,6 +305,7 @@ const ROSTER: RosterEntry[] = [
     slug: 'windward-leasing',
     displayName: 'Windward Asset Leasing',
     kind: 'lessor',
+    address: '3 Changi Business Park Crescent, Singapore 486026',
     cage: 'SYN0029',
   },
 ]
@@ -286,6 +326,7 @@ export function orgs(domain: string): Org[] {
     displayName: entry.displayName,
     cage: entry.cage,
     ...(entry.certificate ? { certificate: entry.certificate } : {}),
+    address: entry.address,
   }))
 }
 

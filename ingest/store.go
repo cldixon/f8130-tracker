@@ -144,17 +144,19 @@ func upsertRelease(
 	// would become forgeable by flooding.
 	_, err = tx.Exec(ctx, `
 		INSERT INTO release (
-			cid, uri, issuer_did, prev_uri, prev_cid, part_number, serial_number,
-			status, signer_cert, form_number, commitment, completed_at, observed_at,
-			seq, raw_record
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+			cid, uri, issuer_did, prev_uri, prev_cid,
+			approving_authority, form_number, organization_name,
+			organization_address, description, part_number, serial_number,
+			signer_cert, commitment, completed_at, observed_at, seq, raw_record
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		ON CONFLICT (cid) DO UPDATE SET
 			uri = EXCLUDED.uri,
 			seq = EXCLUDED.seq
 	`,
-		rec.CID, rec.URI, r.IssuerDID, prevURI, prevCID, r.PartNumber, r.SerialNumber,
-		r.Status, r.SignerCert, r.FormNumber, r.Commitment, r.CompletedAt, observedAt,
-		seq, raw,
+		rec.CID, rec.URI, r.IssuerDID, prevURI, prevCID,
+		r.ApprovingAuthority, r.FormNumber, r.OrganizationName,
+		r.OrganizationAddress, r.Description, r.PartNumber, r.SerialNumber,
+		r.SignerCert, r.Commitment, r.CompletedAt, observedAt, seq, raw,
 	)
 	return err
 }
@@ -210,18 +212,23 @@ func deleteRecord(ctx context.Context, tx pgx.Tx, uri string) error {
 }
 
 // ChainLink is one shop visit as recorded by this observer.
+//
+// No status: Block 11 is committed but not published, so an index built from
+// the firehose cannot say what was done at each visit. A buyer tracing a part
+// learns who touched it and when, and must be shown the rest.
 type ChainLink struct {
-	Depth        int
-	CID          string
-	URI          string
-	IssuerDID    string
-	PartNumber   string
-	SerialNumber string
-	Status       string
-	PrevURI      *string
-	PrevCID      *string
-	CompletedAt  time.Time
-	ObservedAt   time.Time
+	Depth            int
+	CID              string
+	URI              string
+	IssuerDID        string
+	OrganizationName string
+	PartNumber       string
+	SerialNumber     string
+	Description      string
+	PrevURI          *string
+	PrevCID          *string
+	CompletedAt      time.Time
+	ObservedAt       time.Time
 }
 
 // Chain walks a release back toward birth.
@@ -240,8 +247,9 @@ func (s *Store) Chain(ctx context.Context, cid string, maxDepth int) ([]ChainLin
 			JOIN chain c ON r.cid = c.prev_cid
 			WHERE c.depth < $2
 		)
-		SELECT depth, cid, uri, issuer_did, part_number, serial_number, status,
-		       prev_uri, prev_cid, completed_at, observed_at
+		SELECT depth, cid, uri, issuer_did, organization_name, part_number,
+		       serial_number, description, prev_uri, prev_cid, completed_at,
+		       observed_at
 		FROM chain
 		ORDER BY depth
 	`, cid, maxDepth)
@@ -254,8 +262,9 @@ func (s *Store) Chain(ctx context.Context, cid string, maxDepth int) ([]ChainLin
 	for rows.Next() {
 		var l ChainLink
 		if err := rows.Scan(
-			&l.Depth, &l.CID, &l.URI, &l.IssuerDID, &l.PartNumber, &l.SerialNumber,
-			&l.Status, &l.PrevURI, &l.PrevCID, &l.CompletedAt, &l.ObservedAt,
+			&l.Depth, &l.CID, &l.URI, &l.IssuerDID, &l.OrganizationName,
+			&l.PartNumber, &l.SerialNumber, &l.Description, &l.PrevURI,
+			&l.PrevCID, &l.CompletedAt, &l.ObservedAt,
 		); err != nil {
 			return nil, err
 		}

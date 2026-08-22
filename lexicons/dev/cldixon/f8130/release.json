@@ -4,17 +4,20 @@
   "defs": {
     "main": {
       "type": "record",
-      "description": "Public commitment to a synthetic FAA 8130-3 Authorized Release Certificate. Contains only identifiers needed for discovery plus a Merkle root over the full form; the form itself never appears here. SYNTHETIC DEMONSTRATION DATA — not an airworthiness record.",
+      "description": "Public commitment to a synthetic FAA 8130-3 Authorized Release Certificate. Carries a Merkle root over all seventeen committed blocks of the form, plus the subset of those blocks needed to discover and identify the record. The form itself never appears here. SYNTHETIC DEMONSTRATION DATA — not an airworthiness record.",
       "key": "tid",
       "record": {
         "type": "object",
         "required": [
           "commitment",
           "issuerDid",
+          "approvingAuthority",
           "formNumber",
+          "organizationName",
+          "organizationAddress",
+          "description",
           "partNumber",
           "serialNumber",
-          "status",
           "signerCert",
           "completedAt"
         ],
@@ -23,7 +26,7 @@
             "type": "bytes",
             "minLength": 32,
             "maxLength": 32,
-            "description": "Merkle root over the canonical 15-field set, schema version fieldSetVersion."
+            "description": "Merkle root over the canonical 17-field set, schema version fieldSetVersion. Covers every block of the form, not a subset: a commitment over part of a document commits to part of a document."
           },
           "fieldSetVersion": {
             "type": "integer",
@@ -38,29 +41,57 @@
           "prev": {
             "type": "ref",
             "ref": "com.atproto.repo.strongRef",
-            "description": "Previous shop-visit release for this serial, as a strong reference so the predecessor can be both located and pinned. Absent means birth."
+            "description": "Previous shop-visit release for this serial, as a strong reference so the predecessor can be both located and pinned. Absent means birth — which is why whether a record is a birth record is publicly inferable however the rest of the split is drawn."
           },
           "subject": {
             "type": "string",
             "maxLength": 512,
             "description": "Generic asset reference (partNumber:serialNumber for now). Kept generic so aircraft and logbook extensions need no schema change."
           },
-          "formNumber": { "type": "string", "maxLength": 128 },
-          "partNumber": { "type": "string", "maxLength": 128 },
-          "serialNumber": { "type": "string", "maxLength": 128 },
-          "status": {
+          "approvingAuthority": {
             "type": "string",
-            "knownValues": ["NEW", "OVERHAULED", "REPAIRED", "INSPECTED", "MODIFIED"]
+            "maxLength": 128,
+            "description": "Block 1. The approving civil aviation authority and country."
+          },
+          "formNumber": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Block 3. Form tracking number."
+          },
+          "organizationName": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Block 4. Name of the organization the form is issued for. Public because the record already sits in that organization's repo, signed by its key — withholding the name would conceal nothing."
+          },
+          "organizationAddress": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "Block 4. Physical address of that organization, canonicalized onto a single line."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Block 7. What the item is."
+          },
+          "partNumber": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Block 8."
+          },
+          "serialNumber": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Block 10."
           },
           "signerCert": {
             "type": "string",
             "maxLength": 128,
-            "description": "Certificate ID of the authorized individual. Deliberately a string, not a DID reference, in this demonstration."
+            "description": "Block 13c/14c. The approval or certificate number the release was issued under — the organization's, for a repair station."
           },
           "completedAt": {
             "type": "string",
             "format": "datetime",
-            "description": "Claimed completion time. Attacker-controlled; compare against an observer's independently recorded time."
+            "description": "Block 13e/14e. Claimed completion time. Attacker-controlled; compare against an observer's independently recorded time."
           }
         }
       }

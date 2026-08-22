@@ -11,20 +11,22 @@ import {
 import { FIELDS, FIELD_ORDER } from '../src/fields.js'
 
 const validForm = {
+  approvingAuthority: 'FAA/United States',
   formNumber: 'SYNTHETIC-8130-0001',
-  partNumber: 'NT-8821-04',
-  serialNumber: 'SN-000417',
-  description: 'Fuel control unit',
-  status: 'OVERHAULED',
-  quantity: 1,
+  organizationName: 'Cascadia MRO',
+  organizationAddress: '4400 Airport Way, Everett, WA 98204',
   workOrder: 'WO/2026/0042',
-  findings: 'Metering valve wear beyond limits',
-  workscope: 'Full overhaul per CMM 73-21-05',
-  costCents: 1_284_500,
-  customer: 'Example Air',
+  item: 1,
+  description: 'Fuel control unit',
+  partNumber: 'NT-8821-04',
+  quantity: 1,
+  serialNumber: 'SN-000417',
+  status: 'OVERHAULED',
+  remarks: 'Metering valve wear beyond limits.',
+  certifyingBlock: 'RETURN_TO_SERVICE',
+  approvalBasis: 'PART_43_RETURN_TO_SERVICE',
   signerCert: 'SYNTHETIC-CERT-12345',
   signerName: 'A. Technician',
-  remarks: '',
   completedAt: '2026-01-22T09:30:00Z',
 }
 
@@ -119,8 +121,8 @@ describe('form canonicalization', () => {
   })
 
   test('null and absent are the same thing', () => {
-    const withNull = canonicalizeForm({ ...validForm, findings: null })
-    const { findings, ...withoutKey } = validForm
+    const withNull = canonicalizeForm({ ...validForm, remarks: null })
+    const { remarks, ...withoutKey } = validForm
     const withAbsent = canonicalizeForm(withoutKey)
     assert.deepEqual(withNull, withAbsent)
   })
@@ -142,7 +144,7 @@ describe('form canonicalization', () => {
 
   test('rejects floats in integer fields', () => {
     assert.throws(
-      () => canonicalizeForm({ ...validForm, costCents: 1284.5 }),
+      () => canonicalizeForm({ ...validForm, quantity: 1.5 }),
       CanonicalizationError,
     )
   })
@@ -172,8 +174,8 @@ describe('form canonicalization', () => {
   })
 
   test('every declared field has a spec', () => {
-    assert.equal(FIELDS.length, 15)
-    assert.equal(new Set(FIELD_ORDER).size, 15)
+    assert.equal(FIELDS.length, 17)
+    assert.equal(new Set(FIELD_ORDER).size, 17)
   })
 })
 

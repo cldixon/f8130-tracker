@@ -34,12 +34,12 @@ const fixedNonces = () =>
   FIELD_ORDER.map((_, i) => new Uint8Array(NONCE_LENGTH).fill(i + 1))
 
 describe('tree shape', () => {
-  test('15 fields pad to 16 leaves and 5 levels', () => {
+  test('17 fields pad to 32 leaves and 6 levels', () => {
     const c = commitForm(validForm, fixedNonces())
     const levels = buildLevels(c.leaves)
-    assert.equal(c.leaves.length, 15)
-    assert.equal(levels[0]!.length, 16)
-    assert.equal(levels.length, 5)
+    assert.equal(c.leaves.length, 17)
+    assert.equal(levels[0]!.length, 32)
+    assert.equal(levels.length, 6)
     assert.equal(levels[levels.length - 1]!.length, 1)
   })
 
@@ -81,7 +81,7 @@ describe('domain separation', () => {
 
   test('field name is bound into the leaf', () => {
     const nonce = new Uint8Array(NONCE_LENGTH).fill(3)
-    const a = leafHash('findings', 'x', nonce)
+    const a = leafHash('description', 'x', nonce)
     const b = leafHash('remarks', 'x', nonce)
     assert.ok(!bytesEqual(a, b))
   })
@@ -102,28 +102,30 @@ describe('commitment', () => {
 
   test('generated nonces are 32 CSPRNG bytes and not repeated', () => {
     const nonces = generateNonces()
-    assert.equal(nonces.length, 15)
+    assert.equal(nonces.length, 17)
     for (const n of nonces) assert.equal(n.length, NONCE_LENGTH)
-    assert.equal(new Set(nonces.map(toHex)).size, 15)
+    assert.equal(new Set(nonces.map(toHex)).size, 17)
   })
 
   test('changing any single field changes the root', () => {
     const base = commitForm(validForm, fixedNonces())
     const mutations: Record<string, unknown> = {
+      approvingAuthority: 'EASA/European Union',
       formNumber: 'SYNTHETIC-8130-0002',
-      partNumber: 'NT-8821-05',
-      serialNumber: 'SN-000418',
-      description: 'Fuel control unit, reworked',
-      status: 'REPAIRED',
-      quantity: 2,
+      organizationName: 'Ironwood Aero Services',
+      organizationAddress: '9 Hangar Row, Tulsa, OK 74115',
       workOrder: 'WO/2026/0043',
-      findings: 'No defects found',
-      workscope: 'Inspection only',
-      costCents: 1_284_501,
-      customer: 'Southpoint Air',
+      item: 2,
+      description: 'Fuel control unit, reworked',
+      partNumber: 'NT-8821-05',
+      quantity: 2,
+      serialNumber: 'SN-000418',
+      status: 'REPAIRED',
+      remarks: 'No defects found.',
+      certifyingBlock: 'CONFORMITY',
+      approvalBasis: 'OTHER_REGULATION',
       signerCert: 'SYNTHETIC-CERT-12346',
       signerName: 'B. Technician',
-      remarks: 'note added',
       completedAt: '2026-01-22T09:30:01Z',
     }
     for (const field of FIELD_ORDER) {
@@ -144,7 +146,7 @@ describe('commitment', () => {
       {
         ...validForm,
         partNumber: 'nt 8821 04',
-        findings: '  Metering valve   wear beyond limits  ',
+        remarks: '  Metering valve   wear beyond limits.  ',
         completedAt: '2026-01-22T04:30:00-05:00',
       },
       fixedNonces(),
@@ -165,33 +167,33 @@ describe('selective disclosure', () => {
     }
   })
 
-  test('a proof path is log2(16) = 4 steps', () => {
+  test('a proof path is log2(32) = 5 steps', () => {
     const c = commitForm(validForm)
-    assert.equal(proofForField(c, 'costCents').path.length, 4)
+    assert.equal(proofForField(c, 'remarks').path.length, 5)
   })
 
   test('a proof reveals only its own field', () => {
     const c = commitForm(validForm)
-    const proof = proofForField(c, 'costCents')
-    assert.equal(proof.value, validForm.costCents)
+    const proof = proofForField(c, 'remarks')
+    assert.equal(proof.value, validForm.remarks)
     const serialized = JSON.stringify({
       ...proof,
       nonce: toHex(proof.nonce),
       path: proof.path.map((s) => ({ ...s, hash: toHex(s.hash) })),
     })
-    assert.ok(!serialized.includes('Example Air'))
-    assert.ok(!serialized.includes('Metering valve'))
+    assert.ok(!serialized.includes('A. Technician'), 'signerName leaked')
+    assert.ok(!serialized.includes('WO20260042'), 'workOrder leaked')
   })
 
   test('altering the disclosed value breaks the proof', () => {
     const c = commitForm(validForm)
-    const proof = proofForField(c, 'costCents')
+    const proof = proofForField(c, 'remarks')
     assert.ok(!verifyFieldProof({ ...proof, value: 1 }, c.root))
   })
 
   test('substituting another nonce breaks the proof', () => {
     const c = commitForm(validForm)
-    const proof = proofForField(c, 'costCents')
+    const proof = proofForField(c, 'remarks')
     assert.ok(
       !verifyFieldProof({ ...proof, nonce: new Uint8Array(NONCE_LENGTH) }, c.root),
     )
@@ -199,7 +201,7 @@ describe('selective disclosure', () => {
 
   test('tampering with the sibling path breaks the proof', () => {
     const c = commitForm(validForm)
-    const proof = proofForField(c, 'costCents')
+    const proof = proofForField(c, 'remarks')
     const tampered = {
       ...proof,
       path: proof.path.map((s, i) =>
@@ -211,7 +213,7 @@ describe('selective disclosure', () => {
 
   test('flipping a sibling side breaks the proof', () => {
     const c = commitForm(validForm)
-    const proof = proofForField(c, 'findings')
+    const proof = proofForField(c, 'status')
     const flipped = {
       ...proof,
       path: proof.path.map((s, i) =>
@@ -248,14 +250,14 @@ describe('bundle', () => {
     const root = commitmentFromBundle(bundle).root
     const tampered = parseBundle({
       ...JSON.parse(JSON.stringify(bundle)),
-      values: { ...bundle.values, findings: 'No defects found' },
+      values: { ...bundle.values, remarks: 'No defects found.' },
     })
     assert.ok(!bundleMatchesCommitment(tampered, root))
   })
 
   test('rejects a wrong nonce count', () => {
     const bundle = JSON.parse(JSON.stringify(bundleFor()))
-    bundle.nonces = bundle.nonces.slice(0, 14)
+    bundle.nonces = bundle.nonces.slice(0, 16)
     assert.throws(() => parseBundle(bundle), BundleError)
   })
 

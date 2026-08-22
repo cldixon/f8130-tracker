@@ -159,18 +159,25 @@ func TestVectors(t *testing.T) {
 			}
 
 			// the record CID pins the DAG-CBOR encoding of the record itself,
-			// not merely the tree
+			// not merely the tree.
+			//
+			// Assembled by walking Fields rather than naming them, because a
+			// restated list is how a record drifts away from its field set:
+			// this one went on naming `status` after status stopped being
+			// public, and only the CID caught it.
 			record := map[string]any{
 				"$type":           doc.Lexicon,
 				"commitment":      c.Root,
 				"fieldSetVersion": int64(FieldSetVersion),
 				"issuerDid":       v.IssuerDid,
-				"formNumber":      c.Values["formNumber"],
-				"partNumber":      c.Values["partNumber"],
-				"serialNumber":    c.Values["serialNumber"],
-				"status":          c.Values["status"],
-				"signerCert":      c.Values["signerCert"],
-				"completedAt":     c.Values["completedAt"],
+			}
+			for _, f := range Fields {
+				if !f.Public {
+					continue
+				}
+				if val := c.Values[f.Name]; val != nil {
+					record[f.Name] = val
+				}
 			}
 			cid, err := CidForValue(record)
 			if err != nil {
