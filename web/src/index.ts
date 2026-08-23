@@ -154,11 +154,6 @@ async function main() {
           domain,
           dock,
           narrator,
-          // Enough of a check to stop a redeploy re-seeding: if this observer
-          // can already see a backlog's worth of releases, one exists.
-          ...(index
-            ? { history: async () => (await index.recentReleases(64)).length }
-            : {}),
           onError: (err) => console.warn('activity generator:', describe(err)),
         })
       : null

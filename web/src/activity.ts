@@ -127,16 +127,6 @@ export type ActivityOptions = {
   /** How many days back that backlog reaches. */
   backlogDays?: number
   /**
-   * How much history this observer already has.
-   *
-   * Consulted before seeding, because every seeded record is a permanent write
-   * to a real repository. A deployment that restarts should inherit the
-   * history it already published rather than laying down another twenty-six
-   * releases on top of it, which over a few deploys is how a demonstration
-   * ends up with a thousand parts nobody issued.
-   */
-  history?: () => Promise<number>
-  /**
    * How long the first viewer waits before anything happens.
    *
    * Short on purpose. Arriving at a feed and watching nothing for a minute
@@ -530,6 +520,31 @@ export class ActivityGenerator {
    * real money on every cold start, for prose that is scrolled past on the way
    * to the live events. Narration is spent where it is read.
    */
+  /**
+   * Why this runs on every process start rather than checking for history
+   * first.
+   *
+   * The instinct is to skip seeding when the index already holds releases,
+   * because every seeded record is a permanent write to a real repository.
+   * That guard was here and it was wrong, in the way that matters: it asks
+   * whether *records* exist when the thing that has to exist is *inspectable*
+   * stock, and inspectable is in-memory.
+   *
+   * A verdict needs to know which operator received the part, and that is not
+   * on the certificate — an 8130-3 names the issuer and never the recipient.
+   * So the generator can only inspect parts it handed over itself, in this
+   * process, and that queue is empty at boot however much history the database
+   * holds. Consulting the index meant that in the one deployment with real
+   * history — production — seeding was skipped, the queue stayed empty, and
+   * every verdict landed on a release from minutes earlier. Which is the
+   * complaint this whole mechanism exists to answer.
+   *
+   * The cost it was guarding against is not real at this scale. A watched feed
+   * writes a record every twelve to forty-five seconds, so a session produces
+   * a few hundred an hour; thirty-four at the start of one is noise. And
+   * seeding is behind `viewerJoined`, so a container that restarts with nobody
+   * watching writes nothing at all.
+   */
   private async seedBacklog(): Promise<void> {
     if (this.seeded) return
     this.seeded = true
@@ -537,15 +552,6 @@ export class ActivityGenerator {
     const size = this.opts.backlogSize ?? BACKLOG_SIZE
     const span = this.opts.backlogDays ?? BACKLOG_DAYS
     if (size <= 0) return
-
-    // Already stocked, from an earlier run of this same process family.
-    try {
-      if (this.opts.history && (await this.opts.history()) >= size) return
-    } catch (err) {
-      // A history check that fails is not a reason to skip the seeding, but
-      // it is also not a reason to fail the tick that triggered it.
-      this.opts.onError?.(err)
-    }
 
     // The schedule first, then the writes in date order.
     //

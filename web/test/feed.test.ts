@@ -1253,26 +1253,40 @@ describe('the synthetic generator', () => {
     }
   })
 
-  test('a deployment that already has history does not lay down another one', async () => {
+  test('a verdict never has to fall back to a part released moments ago', async () => {
+    const NOW = 1_700_000_000_000
     const { writer, calls } = recorder()
     const g = new ActivityGenerator({
       writer,
       domain: DOMAIN,
-      now: () => 1_700_000_000_000,
-      random: ALWAYS_ISSUE,
+      now: () => NOW,
+      random: WALK_THE_THREAD,
       backlogSize: 6,
-      // Every seeded record is a permanent write to a real repository, so a
-      // restart has to inherit what it published rather than stack a second
-      // backlog on top — which over a few deploys is how a demonstration ends
-      // up with a thousand parts nobody issued.
-      history: async () => 6,
+      backlogDays: 20,
     })
 
     g.viewerJoined()
     await new Promise((r) => setTimeout(r, 50))
+    // Several live ticks on top of the seeded stock.
+    for (let i = 0; i < 6; i++) await g.tick()
     g.viewerLeft()
 
-    assert.equal(calls.filter((c) => c.kind === 'release').length, 0)
+    // The queue is a queue: the oldest waiting part is inspected first, so as
+    // long as aged stock is there, a verdict is never about the release from
+    // the tick before. This is the property the seeding exists for, and it
+    // held only because the seeding actually runs — an earlier version skipped
+    // it whenever the index already held records, which is exactly the case in
+    // the one deployment that has any.
+    const byUri = new Map(calls.filter((c) => c.kind === 'release').map((c) => [c.uri, c]))
+    const verdicts = calls.filter((c) => c.kind === 'acceptance')
+    assert.ok(verdicts.length >= 2, 'nothing was inspected')
+
+    for (const v of verdicts) {
+      const subject = byUri.get(v.subject.uri)!
+      const signed = new Date(String(subject.form.completedAt)).getTime()
+      const ageDays = (NOW - signed) / 86_400_000
+      assert.ok(ageDays >= 2, `inspected a part signed ${ageDays.toFixed(2)}d ago`)
+    }
   })
 
   test('writes nothing until somebody is watching', () => {
