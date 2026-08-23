@@ -263,7 +263,7 @@ describe('the verify page', () => {
 })
 
 describe('browsing with an index', () => {
-  test('the dashboard lists observed releases', async () => {
+  test('the issuers page names who is publishing, not what they published', async () => {
     const { app } = await appWithNetwork(
       emptyIndex({
         recentReleases: async () => [releaseRow()],
@@ -274,8 +274,14 @@ describe('browsing with an index', () => {
       }),
     )
     const body = await (await app.request('/parts')).text()
-    assert.match(body, /NT882104/)
     assert.match(body, /cascadia-mro/)
+
+    // It used to open with a table of recent releases, which is the feed with
+    // fewer columns. Two destinations answering one question is one too many,
+    // so the release list went and the accountability column stayed — that
+    // number has no other home in the application.
+    assert.ok(!body.includes('NT882104'), 'the release table came back')
+    assert.match(body, /Independent rejections/)
   })
 
   test('an issuer with two independent rejections is flagged', async () => {

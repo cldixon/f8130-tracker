@@ -29,6 +29,7 @@ import { Dock, type Arrival } from '../src/dock.js'
 import { MemoryIndex, releaseRow } from '../src/memory-index.js'
 import { MemoryRecordWriter, demoActors, type RecordWriter } from '../src/writer.js'
 import type { AcceptanceRow, DisputeRow, ReleaseRow } from '../src/index-port.js'
+import { postPath } from '../src/views.js'
 
 const DOMAIN = 'f8130.cldixon.dev'
 
@@ -239,12 +240,20 @@ describe('the feed page', () => {
     assert.match(body, /NT882104/)
   })
 
-  test('says how many blocks are committed but withheld', async () => {
-    const { app } = await feedApp((i) => i.addRelease(release()))
-    const body = await (await app.request('/')).text()
-    // Eight of seventeen, and the page has to say so: the interesting claim is
-    // that the index never held them, not that it chose not to render them.
-    assert.match(body, /8 of 17 blocks committed and withheld/)
+  test('the withheld count is stated on the record, not on every card', async () => {
+    const r = release()
+    const { app } = await feedApp((i) => i.addRelease(r))
+
+    // The claim still has to be made — the interesting thing is that the index
+    // never held those blocks, not that it declined to render them. But it is
+    // one fact about the design, not news about this particular part, and
+    // repeating it under every card in an infinite feed turned it into
+    // wallpaper. It belongs on the record it describes.
+    const feed = await (await app.request('/')).text()
+    assert.ok(!/blocks committed and withheld/.test(feed), 'boilerplate is back on the cards')
+
+    const post = await (await app.request(postPath(r.uri))).text()
+    assert.match(post, /8 of 17 blocks are committed but not published/)
   })
 
   test('a private block never reaches the page', async () => {
@@ -939,15 +948,46 @@ describe('the shape on a phone', () => {
     const { app } = await feedApp((i) => i.addRelease(release()))
     const body = await (await app.request('/')).text()
 
-    // A rail says "Check a document"; a tab bar under a thumb says "Verify".
-    assert.match(body, /<span class="full">Check a document<\/span><span class="tab">Verify<\/span>/)
-    assert.match(body, /<span class="full">Your documents<\/span><span class="tab">Docs<\/span>/)
+    // A rail has room for a word a tab bar under a thumb does not.
+    assert.match(body, /<span class="full">Documents<\/span><span class="tab">Docs<\/span>/)
+    assert.match(body, /<span class="full">Issuers<\/span><span class="tab">Issuers<\/span>/)
 
     // Both are in the markup rather than one being derived, so a screen
     // reader gets a real label at either breakpoint.
     const full = (body.match(/class="full"/g) ?? []).length
     const tab = (body.match(/class="tab"/g) ?? []).length
     assert.equal(full, tab, 'every long label needs a short one')
+  })
+
+  test('a part is written the way the trade writes it', async () => {
+    const { app } = await feedApp((i) => i.addRelease(release()))
+    const body = await (await app.request('/')).text()
+
+    // P/N and S/N, labelled. It used to be name · number · s/n number, which
+    // is three strings and a punctuation mark rather than the plate every
+    // form, purchase order and receiving inspection in the industry repeats.
+    assert.match(body, /<dt>P\/N<\/dt>/)
+    assert.match(body, /<dt>S\/N<\/dt>/)
+    assert.ok(!/· s\/n <span class="mono">/.test(body), 'the run-on line is back')
+  })
+
+  test('the account switcher can be dismissed without choosing anything', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const app = createApp({
+      resolver: net,
+      repo: net,
+      index,
+      writer: new MemoryRecordWriter(net, index, demoActors(DOMAIN)),
+    })
+    const body = await (await app.request('/')).text()
+
+    // `details` is the right markup and does not close on an outside click,
+    // because nothing in its contract says it should. Every menu a visitor has
+    // used does, so the gap reads as a bug rather than as a difference.
+    assert.match(body, /details class="me"/)
+    assert.match(body, /!me\.contains\(e\.target\)/)
+    assert.match(body, /e\.key === 'Escape'/)
   })
 
   test('the compose button degrades to a symbol without losing its name', async () => {

@@ -184,11 +184,11 @@ export function partPage(params: {
     params.names?.get(did) ?? handles.get(did) ?? short(did, 12)
 
   const head = html`<div class="topic">
-    <div class="tname"><span class="hash">#</span>${params.partNumber}</div>
-    <div class="tsub">
-      serial <span class="mono">${params.serialNumber}</span>
-      ${chain[0] ? html` · ${chain[0].description}` : ''}
-    </div>
+    <div class="tname">${chain[0]?.description ?? 'Unknown component'}</div>
+    <dl class="ids big">
+      <div><dt>P/N</dt><dd class="mono">${params.partNumber}</dd></div>
+      <div><dt>S/N</dt><dd class="mono">${params.serialNumber}</dd></div>
+    </dl>
     <p class="tnote">
       Not an account — a part holds no repository and signs nothing. This page
       is assembled by this observer out of records published independently by
@@ -314,7 +314,6 @@ export function partPage(params: {
 
 export function dashboardPage(params: {
   chrome?: Chrome
-  recent: ReleaseRow[]
   issuers: IssuerStat[]
   handles: Map<string, string>
   indexAvailable: boolean
@@ -322,8 +321,8 @@ export function dashboardPage(params: {
 }) {
   if (!params.indexAvailable) {
     return layout(
-      'Dashboard',
-      html`<h1>Dashboard</h1>
+      'Issuers',
+      html`<h1>Issuers</h1>
       <p class="sub">Browsing is unavailable; verification is not.</p>
       <div class="card"><div class="empty">
         No index is configured, so there is nothing to browse. Note that
@@ -337,32 +336,15 @@ export function dashboardPage(params: {
   }
 
   return layout(
-    'Dashboard',
-    html`<h1>Release certificates observed</h1>
+    'Issuers',
+    html`<h1>Issuers</h1>
     <p class="sub">
-      Everything below was read from independent repositories over the
-      firehose and verified against its issuer's signing key.
+      Every organization this observer has seen publish, read from independent
+      repositories over the firehose and verified against the issuer's own
+      signing key.
     </p>
 
-    <h2>Recent releases</h2>
-    <div class="card scroll">
-      ${params.recent.length === 0
-        ? html`<div class="empty">Nothing observed yet.</div>`
-        : html`<table>
-            <tr><th>Part</th><th>Serial</th><th>Status</th><th>Issuer</th><th>Observed</th></tr>
-            ${params.recent.map(
-              (r) => html`<tr>
-                <td><a href="/part/${encodeURIComponent(r.partNumber)}/${encodeURIComponent(r.serialNumber)}">${r.partNumber}</a></td>
-                <td class="mono">${r.serialNumber}</td>
-                <td><a href="/form?uri=${encodeURIComponent(r.uri)}">${r.description}</a></td>
-                <td>${params.handles.get(r.issuerDid) ?? short(r.issuerDid)}</td>
-                <td>${fmt(r.observedAt)}</td>
-              </tr>`,
-            )}
-          </table>`}
-    </div>
-
-    <h2>Issuers</h2>
+    <h2>Who is publishing</h2>
     <div class="card scroll">
       ${params.issuers.length === 0
         ? html`<div class="empty">No issuers observed yet.</div>`
@@ -530,19 +512,61 @@ const ago = (at: Date, now: Date) => {
   return `${Math.round(s / 86400)}d ago`
 }
 
-/**
- * One event, as a card.
- *
- * Exported because the live stream sends the same markup rather than a second
- * client-side template: one renderer means a streamed card and a reloaded card
- * cannot drift apart.
- */
 /** at://did/collection/rkey → the permalink this app serves it at. */
 export function postPath(uri: string): string {
   const parts = uri.split('/')
   const did = parts[2] ?? ''
   const rkey = parts[4] ?? ''
   return `/post/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`
+}
+
+/**
+ * A part's identity, the way the industry writes it.
+ *
+ * It used to be a run-on line — name · number · s/n number — which read as
+ * three unrelated strings separated by punctuation and tied to nothing. A part
+ * is not identified that way anywhere in the trade. It is identified by its
+ * nomenclature and then by two labelled numbers, P/N and S/N, which is what is
+ * stamped on the component's own dataplate and what every form, every purchase
+ * order and every receiving inspection repeats.
+ *
+ * So the labels come back. They are two characters each, they cost almost no
+ * room, and they are the difference between a reader parsing a sentence and a
+ * reader recognising a plate they have seen ten thousand times.
+ *
+ * The part number links to the part's history and the nomenclature to the
+ * record, because those are two different questions — "what else happened to
+ * this part" and "what does this document say" — and a reader arrives with one
+ * or the other.
+ */
+export function dataplate(params: {
+  description: string
+  partNumber: string
+  serialNumber: string
+  /** Where the nomenclature points. Omitted on a card that is itself a link. */
+  href?: string
+  /** Suppresses the part-history link, for use inside another anchor. */
+  flat?: boolean
+  small?: boolean
+}) {
+  const { description, partNumber, serialNumber } = params
+  const partHref = `/part/${encodeURIComponent(partNumber)}/${encodeURIComponent(serialNumber)}`
+
+  return html`<div class="plate ${params.small ? 'sm' : ''}">
+    <div class="nomen">
+      ${params.href && !params.flat
+        ? html`<a href="${params.href}">${description}</a>`
+        : description}
+    </div>
+    <dl class="ids">
+      <div><dt>P/N</dt><dd class="mono">
+        ${params.flat
+          ? partNumber
+          : html`<a href="${partHref}">${partNumber}</a>`}
+      </dd></div>
+      <div><dt>S/N</dt><dd class="mono">${serialNumber}</dd></div>
+    </dl>
+  </div>`
 }
 
 /**
@@ -588,7 +612,6 @@ export function feedCard(
 
   if (event.kind === 'release') {
     const r = event.release
-    const withheld = FIELDS.filter((f) => !f.public).length
     const n = replies?.get(r.cid) ?? 0
     return html`<article class="event" data-cid="${r.cid}">
       <div class="who">
@@ -597,19 +620,16 @@ export function feedCard(
         issued a release certificate
         <span class="when"><a href="${postPath(r.uri)}">${ago(event.at, now)}</a></span>
       </div>
-      <div class="what">
-        <a href="${postPath(r.uri)}">${r.description}</a>
-        · <a class="mono tag" href="/part/${encodeURIComponent(r.partNumber)}/${encodeURIComponent(r.serialNumber)}"
-          >${r.partNumber}</a>
-        · s/n <span class="mono">${r.serialNumber}</span>
-      </div>
-      <div class="meta">
-        ${withheld} of ${FIELDS.length} blocks committed and withheld ·
-        form <span class="mono">${r.formNumber}</span>
-        ${n > 0
-          ? html` · <a href="${postPath(r.uri)}">${n} ${n === 1 ? 'verdict' : 'verdicts'}</a>`
-          : ''}
-      </div>
+      ${dataplate({
+        description: r.description,
+        partNumber: r.partNumber,
+        serialNumber: r.serialNumber,
+        href: postPath(r.uri),
+      })}
+      ${n > 0
+        ? html`<div class="meta"><a href="${postPath(r.uri)}"
+            >${n} ${n === 1 ? 'verdict' : 'verdicts'}</a></div>`
+        : ''}
     </article>`
   }
 
@@ -638,23 +658,27 @@ export function feedCard(
       <div class="qwho">
         ${avatar(subject?.organizationName ?? nameOf(v.issuerDid), true)}
         <strong>${subject?.organizationName ?? nameOf(v.issuerDid)}</strong>
-        <span class="when">${subject ? ago(subject.observedAt, now) : 'released'}</span>
+        <span class="when">
+          ${subject ? html`released ${ago(subject.completedAt, now)}` : 'released'}
+        </span>
       </div>
-      <div class="qwhat">
-        ${subject
-          ? html`${subject.description} ·
-              <span class="mono">${subject.partNumber}</span> ·
-              s/n <span class="mono">${subject.serialNumber}</span>`
-          : html`<span class="mono">${v.partNumber}</span> ·
-              s/n <span class="mono">${v.serialNumber}</span>
-              <span class="unseen">— this observer has not seen the release itself</span>`}
-      </div>
+      ${subject
+        ? dataplate({
+            description: subject.description,
+            partNumber: subject.partNumber,
+            serialNumber: subject.serialNumber,
+            flat: true,
+            small: true,
+          })
+        : html`${dataplate({
+              description: 'Not seen by this observer',
+              partNumber: v.partNumber,
+              serialNumber: v.serialNumber,
+              flat: true,
+              small: true,
+            })}
+            <div class="unseen">this observer has not seen the release itself</div>`}
     </a>
-
-    <div class="meta">
-      published in ${nameOf(v.verifierDid)}&rsquo;s own repository — the issuer
-      cannot remove it
-    </div>
   </article>`
 }
 
@@ -702,13 +726,12 @@ export function threadPage(params: {
           <span class="hnd mono" title="${r.issuerDid}">${short(r.issuerDid, 14)}</span>
         </span>
       </div>
-      <h1 class="pt">${r.description}</h1>
-      <div class="pmeta">
-        <a class="mono tag" href="/part/${encodeURIComponent(r.partNumber)}/${encodeURIComponent(r.serialNumber)}"
-          >${r.partNumber}</a>
-        · s/n <span class="mono">${r.serialNumber}</span>
-        · form <span class="mono">${r.formNumber}</span>
-      </div>
+      ${dataplate({
+        description: r.description,
+        partNumber: r.partNumber,
+        serialNumber: r.serialNumber,
+      })}
+      <div class="pmeta">form <span class="mono">${r.formNumber}</span></div>
       <div class="ptimes">
         <div><span class="label">Completed (claimed)</span> ${fmt(r.completedAt)}</div>
         <div><span class="label">First observed here</span> ${fmt(r.observedAt)}</div>
@@ -891,7 +914,19 @@ export function cabinetPage(params: { chrome?: Chrome; mode?: Mode }) {
 
     <div class="card" id="cabinet">
       <div class="empty">Reading this browser&rsquo;s storage&hellip;</div>
-    </div>`,
+    </div>
+
+    <h2>What you can do with one</h2>
+    <div class="pactions">
+      <a class="act" href="/verify">Check a document</a>
+      <a class="act" href="/disclose">Prove one field</a>
+    </div>
+    <p class="sub">
+      Checking works on any bundle, including one somebody else handed you —
+      it reads the signed records from the issuer&rsquo;s own repository and
+      never consults this service&rsquo;s database. Proving one field builds a
+      redacted document that opens a single block and keeps the rest shut.
+    </p>`,
     params.mode,
     params.chrome,
   )
