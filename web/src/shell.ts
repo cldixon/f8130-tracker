@@ -857,9 +857,11 @@ export function layout(
 <div class="marker">
   <strong>SYNTHETIC DATA</strong> — fictional organizations, invented part
   numbers, nothing here is airworthiness evidence.${mode === 'demo'
-    ? html` <strong>Demo instance</strong> — an in-memory network: real keys
-        and real proofs, simulated hosting.
-        <a href="/demo/bundles.json">Sample documents</a>.`
+    ? html` <strong>Demo instance</strong> — there are no servers behind this
+        page. Every organization, its signing key and its repository live
+        inside this one process. The signatures and inclusion proofs are real
+        cryptography; what is simulated is the independence between the
+        parties. <a href="/demo/bundles.json">Sample documents</a>.`
     : ''}
 </div>
 <div class="app">

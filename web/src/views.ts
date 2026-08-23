@@ -740,12 +740,20 @@ export function threadPage(params: {
       </div>
       <div class="pactions">
         <a class="act" href="/form?uri=${encodeURIComponent(r.uri)}">View as an 8130-3</a>
-        <a class="act" href="/verify">Check a document against it</a>
+        <a class="act" href="/verify">Check a document you hold</a>
       </div>
       <div class="meta">
         ${withheld} of ${FIELDS.length} blocks are committed but not published, so
         this observer cannot say what was done to the part. Holding the bundle
         opens them; this page never will.
+      </div>
+      <div class="meta">
+        A verdict below is somebody&rsquo;s account of the part they received,
+        and each party who receives it publishes their own. Checking a document
+        asks something else, and it is never settled: whether a copy in
+        <em>your</em> hands still matches what was signed here. A part can be
+        accepted by one operator and travel on with a forged certificate, so
+        anyone holding a copy can ask, as often as they like.
       </div>
     </article>
 

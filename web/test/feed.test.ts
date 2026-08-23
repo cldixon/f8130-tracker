@@ -336,7 +336,7 @@ describe('threads', () => {
   test('offers to run the checks rather than stamping a mark', async () => {
     const { app } = await threaded()
     const body = await (await app.request(PERMALINK)).text()
-    assert.match(body, /Check a document against it/)
+    assert.match(body, /Check a document you hold/)
     assert.ok(!/verified.{0,20}✓|✓.{0,20}verified/i.test(body), 'a badge crept in')
   })
 
@@ -957,6 +957,25 @@ describe('the shape on a phone', () => {
     const full = (body.match(/class="full"/g) ?? []).length
     const tab = (body.match(/class="tab"/g) ?? []).length
     assert.equal(full, tab, 'every long label needs a short one')
+  })
+
+  test('checking a document is not offered as a thing that gets used up', async () => {
+    const r = release()
+    const { app } = await feedApp((i) => {
+      i.addRelease(r)
+      i.addVerdict(verdict({ subjectUri: r.uri, subjectCid: r.cid, outcome: 'accepted' }))
+    })
+    const body = await (await app.request(postPath(r.uri))).text()
+
+    // A release with a verdict on it still offers the check, and has to. The
+    // two answer different questions: a verdict is a party's account of the
+    // part they received, while checking asks whether a copy in someone's
+    // hands still matches what was signed. A part accepted by one operator can
+    // travel on with a forged certificate, so the check is never spent — and
+    // the page says which is which, because sitting next to a list of verdicts
+    // it reads as "add another one".
+    assert.match(body, /Check a document you hold/)
+    assert.match(body, /never settled/)
   })
 
   test('a part is written the way the trade writes it', async () => {
