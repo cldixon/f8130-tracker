@@ -15,7 +15,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { demoNetwork, orgs, FIELDS } from '@f8130/core'
+import { demoNetwork, orgs, FIELDS, type Narrator } from '@f8130/core'
 
 import { ActivityGenerator } from '../src/activity.js'
 import { createApp } from '../src/app.js'
@@ -702,6 +702,113 @@ describe('goods in', () => {
     const holders = orgs(DOMAIN).filter((o) => dock.count(o.handle) > 0)
     assert.equal(holders.length, 1)
     assert.ok(['operator', 'lessor'].includes(holders[0]!.kind))
+  })
+})
+
+describe('narrated forms reaching the wire', () => {
+  const NARRATION = {
+    description: 'Hydraulic reservoir assembly',
+    remarks: 'Bladder degradation beyond limits. Bladder replaced per CMM 29-11-08.',
+    signerName: 'T. Almeida',
+  }
+  const stub: Narrator = { narrate: async () => NARRATION }
+
+  async function narratedApp(narrator: Narrator | null) {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const app = createApp({ resolver: net, repo: net, index, writer, narrator, mode: 'live' })
+    return { app, index, writer, net }
+  }
+
+  test('the composer offers a narrated example', async () => {
+    const { app } = await narratedApp(stub)
+    const form = (await (await app.request('/api/example')).json()) as Record<string, unknown>
+
+    assert.equal(form.description, NARRATION.description)
+    assert.equal(form.remarks, NARRATION.remarks)
+    // Every block is still present — narration replaces prose, not structure.
+    for (const spec of FIELDS) {
+      assert.ok(spec.name in form, `no ${spec.name} (Block ${spec.block})`)
+    }
+  })
+
+  /**
+   * The identifiers a model is never allowed to author. Block 4 is the acting
+   * organization's own and the part number is composed, so a narrator that
+   * tried to supply either could not.
+   */
+  test('the identifiers still come from code, not from the narration', async () => {
+    const { app } = await narratedApp(stub)
+    const form = (await (await app.request('/api/example')).json()) as Record<string, unknown>
+    const org = orgs(DOMAIN).find((o) => o.kind === 'mro')!
+
+    assert.equal(form.organizationName, org.displayName)
+    assert.equal(form.organizationAddress, org.address)
+    assert.match(String(form.partNumber), /^[A-Z]{2}-\d{4}-\d{2}$/)
+    assert.match(String(form.formNumber), /^SYNTHETIC-8130-/)
+  })
+
+  test('a narrated form commits and publishes like any other', async () => {
+    const { app, index } = await narratedApp(stub)
+    const form = (await (await app.request('/api/example')).json()) as Record<string, string>
+
+    const body = new URLSearchParams()
+    for (const spec of FIELDS) body.set(spec.name, String(form[spec.name]))
+
+    const res = await app.request('/issue', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        cookie: `f8130_actor=cascadia-mro.${DOMAIN}`,
+      },
+      body,
+    })
+    assert.equal(res.status, 200)
+    assert.match(await res.text(), /Issued/)
+    assert.equal(index.size.releases, 1)
+  })
+
+  /**
+   * Block 12 is private, so narrated prose is committed and withheld exactly
+   * like catalogue prose. A richer generator must not widen what the public
+   * record discloses.
+   */
+  test('narrated remarks stay off the public record', async () => {
+    const { app, index } = await narratedApp(stub)
+    const form = (await (await app.request('/api/example')).json()) as Record<string, string>
+    const body = new URLSearchParams()
+    for (const spec of FIELDS) body.set(spec.name, String(form[spec.name]))
+    await app.request('/issue', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        cookie: `f8130_actor=cascadia-mro.${DOMAIN}`,
+      },
+      body,
+    })
+
+    const feed = await (await app.request('/')).text()
+    assert.ok(!feed.includes(NARRATION.remarks), 'narrated Block 12 leaked')
+    assert.ok(!feed.includes(NARRATION.signerName), 'narrated Block 13d leaked')
+    // Block 7 is public, so it does show.
+    assert.match(feed, /Hydraulic reservoir assembly/)
+  })
+
+  test('no narrator means the catalogue, and the endpoint still answers', async () => {
+    const { app } = await narratedApp(null)
+    const res = await app.request('/api/example')
+    assert.equal(res.status, 200)
+    const form = (await res.json()) as Record<string, unknown>
+    for (const spec of FIELDS) assert.ok(spec.name in form)
+  })
+
+  test('a narrator that fails is invisible to the caller', async () => {
+    const { app } = await narratedApp({ narrate: async () => null })
+    const res = await app.request('/api/example')
+    assert.equal(res.status, 200)
+    const form = (await res.json()) as Record<string, unknown>
+    for (const spec of FIELDS) assert.ok(spec.name in form)
   })
 })
 

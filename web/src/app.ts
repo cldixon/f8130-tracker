@@ -16,12 +16,14 @@ import {
   parseDisclosure,
   proofForField,
   syntheticForm,
+  narratedForm,
   toHex,
   traceChain,
   verifyBundle,
   verifyDisclosure,
   type Bundle,
   type ChainTrace,
+  type Narrator,
   type IdentityResolver,
   type RepoClient,
 } from '@f8130/core'
@@ -103,6 +105,14 @@ export type AppDeps = {
    * public record can say what is waiting for anybody. See dock.ts.
    */
   dock?: Dock | null
+  /**
+   * A source of prose for generated forms.
+   *
+   * Optional in the strongest sense: with none configured every generated form
+   * comes from the hand-written catalogue, which is what a fresh clone with no
+   * API key gets and has always got.
+   */
+  narrator?: Narrator | null
 }
 
 export function createApp(deps: AppDeps) {
@@ -862,14 +872,23 @@ export function createApp(deps: AppDeps) {
      * the full page use — a second one would drift the way the roster and the
      * record shape both did, quietly, and only visibly once something failed.
      */
-    app.get('/api/example', (c) => {
+    app.get('/api/example', async (c) => {
       const handle = currentActor(c)
       if (!handle) return c.json({ error: 'the public cannot sign' }, 403)
       const org = orgs(process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev').find(
         (o) => o.handle === handle,
       )
       if (!org) return c.json({ error: 'unknown organization' }, 404)
-      return c.json(syntheticForm({ org, seed: Math.floor(Math.random() * 1e9) }))
+      // Narrated when a narrator is configured, drawn from the catalogue when
+      // it is not or when the call fails. The caller cannot tell, and both are
+      // a valid seventeen-block form.
+      return c.json(
+        await narratedForm({
+          org,
+          seed: Math.floor(Math.random() * 1e9),
+          narrator: deps.narrator ?? null,
+        }),
+      )
     })
 
     app.get('/issue', (c) => {
