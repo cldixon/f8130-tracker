@@ -2,7 +2,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { parseBundle } from '../src/bundle.js'
-import { verifyBundle } from '../src/verify/pipeline.js'
+import { traceChain, verifyBundle } from '../src/verify/pipeline.js'
 import {
   birthForm,
   CASCADIA,
@@ -406,5 +406,94 @@ describe('signature is load-bearing', () => {
     assert.equal(stage(report, 'fetch').status, 'fail')
     assert.equal(stage(report, 'recompute').status, 'skipped')
     assert.equal(report.verified, false)
+  })
+})
+
+/**
+ * The same walk, with nothing in hand but a URI.
+ *
+ * A buyer looking at a part on the secondary market holds no bundle and no
+ * account. What they can still do is follow the public strong references back
+ * and see whether the history reaches birth — which is a different question
+ * from whether any particular document is genuine, and answerable without
+ * consulting any index.
+ */
+describe('tracing a chain without a bundle', () => {
+  test('follows a genuine chain back to birth', async () => {
+    const { net, overhaul } = await standardNetwork()
+    const trace = await traceChain({ uri: overhaul.uri, resolver: net, repo: net })
+
+    assert.equal(trace.headError, undefined)
+    assert.equal(trace.reachedBirth, true)
+    assert.equal(trace.links.length, 2)
+    // Newest first, and every hop verified against its own issuer's key.
+    assert.ok(trace.links.every((l) => l.verified))
+  })
+
+  test('a birth record traces to itself', async () => {
+    const { net, birth } = await standardNetwork()
+    const trace = await traceChain({ uri: birth.uri, resolver: net, repo: net })
+    assert.equal(trace.reachedBirth, true)
+    assert.equal(trace.links.length, 1)
+  })
+
+  test('reports a hole rather than claiming birth', async () => {
+    const net = new FakeNetwork()
+    await net.createOrg(CASCADIA)
+    const orphan = await net.issue({
+      handle: CASCADIA.handle,
+      form: overhaulForm,
+      prev: {
+        uri: `at://${CASCADIA.did}/dev.cldixon.f8130.release/3mmissing0000`,
+        cid: (await net.issue({ handle: CASCADIA.handle, form: birthForm })).cid,
+      },
+    })
+
+    const trace = await traceChain({ uri: orphan.uri, resolver: net, repo: net })
+    assert.equal(trace.reachedBirth, false)
+    assert.match(trace.reason ?? '', /hole in it/)
+    // The visit it does know about still stands.
+    assert.equal(trace.links.length, 1)
+  })
+
+  test('a history stitched from an unrelated part does not reach birth', async () => {
+    const net = new FakeNetwork()
+    await net.createOrg(NORTHWIND)
+    await net.createOrg(CASCADIA)
+
+    const otherPart = await net.issue({
+      handle: NORTHWIND.handle,
+      form: { ...birthForm, partNumber: 'NT-9999-01', serialNumber: 'SN-888888' },
+    })
+    const stitched = await net.issue({
+      handle: CASCADIA.handle,
+      form: overhaulForm,
+      prev: { uri: otherPart.uri, cid: otherPart.cid },
+    })
+
+    const trace = await traceChain({ uri: stitched.uri, resolver: net, repo: net })
+    assert.equal(trace.reachedBirth, false)
+    assert.match(trace.reason ?? '', /different part/)
+  })
+
+  /**
+   * Proof of absence, which is the strongest answer available: the issuer's
+   * own repository attests that it never published the record.
+   */
+  test('a record that was never published says so', async () => {
+    const { net } = await standardNetwork()
+    const trace = await traceChain({
+      uri: `at://${CASCADIA.did}/dev.cldixon.f8130.release/3mzzzzzzzzz2z`,
+      resolver: net,
+      repo: net,
+    })
+    assert.equal(trace.links.length, 0)
+    assert.match(trace.headError ?? '', /never published/)
+  })
+
+  test('a malformed URI is refused rather than thrown', async () => {
+    const { net } = await standardNetwork()
+    const trace = await traceChain({ uri: 'not-a-uri', resolver: net, repo: net })
+    assert.match(trace.headError ?? '', /not a record URI/)
   })
 })

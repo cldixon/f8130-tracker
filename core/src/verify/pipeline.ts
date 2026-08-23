@@ -528,6 +528,125 @@ async function verifyWithAnyKey(
  * reported rather than treated as an error: a missing predecessor is a fact
  * about the part's history, and it is the fact a buyer most needs.
  */
+/**
+ * What a chain walk found, with no bundle in play.
+ *
+ * `links` is what verified, oldest visit last. `reachedBirth` is only true
+ * when the walk arrived at a record with no predecessor — a gap, a rewritten
+ * predecessor and a stitched-together history all leave it false, with the
+ * reason saying which.
+ */
+export type ChainTrace = {
+  links: ChainLink[]
+  reachedBirth: boolean
+  reason?: string
+  /** The link that could not be followed, if the walk stopped early. */
+  missing?: string
+  /** Set when the starting record itself could not be verified. */
+  headError?: string
+}
+
+/**
+ * Walks a part's history from a record URI, over the network, with no bundle.
+ *
+ * Verification of a *document* needs the bundle, because that is what the
+ * commitment is recomputed from. Verification of a *history* does not: the
+ * chain is strong references between public records, and following it needs
+ * only the issuers' own servers. Separating the two is what lets a buyer who
+ * holds nothing at all still ask whether a part traces to birth — and get an
+ * answer that owes nothing to this AppView's database.
+ *
+ * Every hop re-resolves the issuer and re-verifies against that issuer's own
+ * published key, so a chain crossing four organizations on four hosts is
+ * checked exactly as rigorously as one that never leaves home.
+ */
+export async function traceChain(params: {
+  uri: string
+  resolver: IdentityResolver
+  repo: RepoClient
+  /** Key-validity anchor. Defaults to now. */
+  anchor?: Date
+}): Promise<ChainTrace> {
+  const anchor = params.anchor ?? new Date()
+
+  let parts: ReturnType<typeof parseAtUri>
+  try {
+    parts = parseAtUri(params.uri)
+  } catch {
+    return { links: [], reachedBirth: false, headError: 'That is not a record URI.' }
+  }
+  if (parts.collection !== RELEASE_NSID) {
+    return {
+      links: [],
+      reachedBirth: false,
+      headError: 'That URI does not name a release certificate.',
+    }
+  }
+
+  const identity = await params.resolver.resolveDid(parts.did)
+  if (!identity) {
+    return {
+      links: [],
+      reachedBirth: false,
+      headError: `${parts.did} has no resolvable identity, so nothing can be checked.`,
+    }
+  }
+
+  let proof: Uint8Array
+  try {
+    proof = await params.repo.getRecordProof({
+      pds: identity.pds,
+      did: parts.did,
+      collection: parts.collection,
+      rkey: parts.rkey,
+    })
+  } catch (err) {
+    return {
+      links: [],
+      reachedBirth: false,
+      headError: `The issuer's server could not be reached: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    }
+  }
+
+  const keys = (await params.resolver.signingKeysAt(parts.did, anchor)) ?? [
+    identity.signingKey,
+  ]
+  const verified = await verifyWithAnyKey(proof, parts.did, keys)
+  if (!verified.ok) {
+    return {
+      links: [],
+      reachedBirth: false,
+      headError: `The issuer's server returned data that does not verify against its own key.`,
+    }
+  }
+
+  const claim = verified.records.find(
+    (r: any) => r.collection === parts.collection && r.rkey === parts.rkey,
+  )
+  if (!claim || claim.record === null || claim.record === undefined) {
+    // Signed proof of absence: the issuer's own repository attests it never
+    // published this. Stronger than a 404 from their server.
+    return {
+      links: [],
+      reachedBirth: false,
+      headError: `${parts.did} has never published this record — their own repository proves its absence.`,
+    }
+  }
+
+  const record = claim.record as ReleaseRecord
+  const cid = await recordCid(record)
+  return walkChain({
+    record,
+    uri: params.uri,
+    cid,
+    resolver: params.resolver,
+    repo: params.repo,
+    anchor,
+  })
+}
+
 async function walkChain(params: {
   record: ReleaseRecord
   uri: string
