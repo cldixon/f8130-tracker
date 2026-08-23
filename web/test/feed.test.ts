@@ -15,7 +15,13 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { demoNetwork, orgs, FIELDS, type Narrator } from '@f8130/core'
+import {
+  demoNetwork,
+  orgs,
+  FIELDS,
+  REJECTION_ANGLES,
+  type Narrator,
+} from '@f8130/core'
 
 import { ActivityGenerator } from '../src/activity.js'
 import { createApp } from '../src/app.js'
@@ -133,24 +139,61 @@ describe('the feed page', () => {
     const { app } = await feedApp((i) => {
       i.addRelease(release())
       i.addVerdict(verdict({ outcome: 'rejected', note: 'Serial number does not match.' }))
-      i.setHandle('did:plc:operator', 'example-air.f8130.cldixon.dev')
-      i.setHandle('did:plc:issuer', 'cascadia-mro.f8130.cldixon.dev')
+      // Profiles, the way a station record would have supplied them.
+      i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
+      i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
     })
     const body = await (await app.request('/')).text()
     assert.match(body, /issued a release certificate/)
     assert.match(body, /rejected/)
     assert.match(body, /Serial number does not match\./)
-    // The verdict names the operator by display name. A verdict record carries
-    // no name — the recipient is not a block on an 8130-3 — so this only reads
-    // properly if the handle the index resolved was matched to the roster.
+    // A verdict record carries no name for either party, so this reads
+    // properly only if the observer indexed the station profile they
+    // published.
     assert.match(body, /Example Air/)
+  })
+
+  /**
+   * Names are what people read; the DID is what is cryptographically
+   * meaningful. Both are shown, in that order of prominence, and the same way
+   * on a release as on a verdict — they used to disagree, because a release
+   * carries Block 4 and a verdict carries no name at all.
+   */
+  test('a name leads and the DID follows it, on both kinds of event', async () => {
+    const { app } = await feedApp((i) => {
+      i.addRelease(release())
+      i.addVerdict(verdict())
+      i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
+      i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
+    })
+    const body = await (await app.request('/')).text()
+
+    // Two events, and every byline carries a quiet DID beside the name.
+    assert.ok((body.match(/class="did"/g) ?? []).length >= 3, 'DIDs are missing')
+    assert.match(body, /<strong>Example Air<\/strong><span class="did"/)
+    assert.match(body, /<strong>Cascadia MRO<\/strong><span class="did"/)
+  })
+
+  /**
+   * An organization that has never published a profile has no name to show,
+   * and inventing one would be worse than the identifier. This is the operator
+   * that has only ever judged things.
+   */
+  test('an organization with no published profile renders as its DID', async () => {
+    const { app } = await feedApp((i) => {
+      i.addVerdict(verdict())
+      i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
+    })
+    const body = await (await app.request('/')).text()
+    assert.match(body, /Cascadia MRO/)
+    assert.match(body, /did%3Aplc%3Aissuer|did:plc:operator/)
   })
 
   test('a verdict card says which release it answers', async () => {
     const { app } = await feedApp((i) => {
       i.addVerdict(verdict())
-      i.setHandle('did:plc:operator', `example-air.${DOMAIN}`)
-      i.setHandle('did:plc:issuer', `cascadia-mro.${DOMAIN}`)
+      i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
+      i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
     })
     const body = await (await app.request('/')).text()
     assert.match(body, /replying to/)
@@ -201,8 +244,8 @@ describe('threads', () => {
       i.addRelease(release())
       i.addVerdict(verdict({ outcome: 'rejected', note: 'Serial does not match.' }))
       i.addDispute(dispute())
-      i.setHandle('did:plc:issuer', `cascadia-mro.${DOMAIN}`)
-      i.setHandle('did:plc:operator', `example-air.${DOMAIN}`)
+      i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
+      i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
     })
 
   const PERMALINK = '/post/did:plc:issuer/3a'
@@ -985,6 +1028,22 @@ describe('the synthetic generator', () => {
     return { writer, calls }
   }
 
+  /**
+   * A constant die, which is position-independent.
+   *
+   * Scripted roll arrays pinned the exact order the generator consumes
+   * randomness in, so adding one roll anywhere broke six tests that cared
+   * about none of it. A constant picks the same branch however many times it
+   * is asked:
+   *
+   *   0.9   never below any band  -> every tick issues
+   *   0.05  below every band      -> issue, then verdict (rejected), then
+   *                                 dispute, because each branch only opens
+   *                                 once its queue is non-empty
+   */
+  const ALWAYS_ISSUE = () => 0.9
+  const WALK_THE_THREAD = () => 0.05
+
   const gen = (rolls: number[], over: Partial<ConstructorParameters<typeof ActivityGenerator>[0]> = {}) => {
     const { writer, calls } = recorder()
     let i = 0
@@ -1001,7 +1060,7 @@ describe('the synthetic generator', () => {
   }
 
   test('writes nothing until somebody is watching', () => {
-    const { g } = gen([0.9])
+    const { g } = gen([], { random: ALWAYS_ISSUE })
     assert.equal(g.running, false)
     g.viewerJoined()
     assert.equal(g.running, true)
@@ -1010,7 +1069,7 @@ describe('the synthetic generator', () => {
   })
 
   test('keeps running while any viewer remains', () => {
-    const { g } = gen([0.9])
+    const { g } = gen([], { random: ALWAYS_ISSUE })
     g.viewerJoined()
     g.viewerJoined()
     g.viewerLeft()
@@ -1020,7 +1079,7 @@ describe('the synthetic generator', () => {
   })
 
   test('the first event is a release from a shop to an operator', async () => {
-    const { g, calls } = gen([0.9])
+    const { g, calls } = gen([], { random: ALWAYS_ISSUE })
     await g.tick()
     assert.equal(calls.length, 1)
     assert.equal(calls[0].kind, 'release')
@@ -1034,9 +1093,7 @@ describe('the synthetic generator', () => {
   })
 
   test('a release is later answered by the operator who received it', async () => {
-    // Tick one: 0.9 issues, and the three rolls after it pick the parties and
-    // the part. Tick two: 0.3 falls in the close-out band and 0.9 accepts.
-    const { g, calls } = gen([0.9, 0.5, 0.5, 0.5, 0.3, 0.9])
+    const { g, calls } = gen([], { random: WALK_THE_THREAD })
     await g.tick()
     await g.tick()
 
@@ -1054,10 +1111,7 @@ describe('the synthetic generator', () => {
   })
 
   test('a rejection carries a stated reason and can be answered', async () => {
-    // Same shape as above, but 0.05 is under the rejection rate. The roll
-    // after it picks the stated reason, and tick three then opens with 0.1 —
-    // inside the band where an issuer may answer.
-    const { g, calls } = gen([0.9, 0.5, 0.5, 0.5, 0.3, 0.05, 0.5, 0.1])
+    const { g, calls } = gen([], { random: WALK_THE_THREAD })
     await g.tick()
     await g.tick()
     const rejection = calls[1]
@@ -1071,9 +1125,159 @@ describe('the synthetic generator', () => {
     assert.equal(reply.handle, calls[0].handle, 'only the issuer may answer')
   })
 
+  /**
+   * Every generated release used to be a birth, so a part page built from
+   * live activity always showed one shop visit and the back-to-birth view had
+   * nothing to trace.
+   */
+  /**
+   * Driven by a seeded generator over many ticks rather than a scripted roll
+   * array, because what matters is the property and not the arithmetic. A
+   * scripted array pins the exact order randomness is consumed in, which is
+   * implementation detail and broke every time a roll was added.
+   */
+  const mulberry = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) >>> 0
+    let t = seed
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+
+  test('a part comes back in for more work, and the chain says so', async () => {
+    const { writer, calls } = recorder()
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => 1_700_000_000_000,
+      random: mulberry(7),
+    })
+    for (let n = 0; n < 40; n++) await g.tick()
+
+    const releases = calls.filter((c: any) => c.kind === 'release')
+    const continued = releases.filter((c: any) => c.prev)
+    assert.ok(continued.length > 0, 'no release ever continued a part')
+
+    // A component does not change its name or its number between visits.
+    for (const c of continued) {
+      const parent = releases.find((r: any) => r.uri === c.prev.uri)
+      assert.ok(parent, 'a continuation points at a release that was never made')
+      assert.equal(c.form.partNumber, parent.form.partNumber)
+      assert.equal(c.form.serialNumber, parent.form.serialNumber)
+      assert.equal(c.form.description, parent.form.description)
+      // But the work is new.
+      assert.notEqual(c.form.formNumber, parent.form.formNumber)
+    }
+  })
+
+  test('a manufacturer never continues somebody else\'s part', async () => {
+    const { writer, calls } = recorder()
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => 1_700_000_000_000,
+      // Always continue, if the issuer is eligible.
+      random: () => 0.01,
+    })
+    for (let n = 0; n < 6; n++) await g.tick()
+
+    // New manufacture is certified under Block 13, and a part already
+    // released is not new. So no OEM release may carry a prev.
+    for (const c of calls.filter((x) => x.kind === 'release')) {
+      const org = orgs(DOMAIN).find((o) => o.handle === c.handle)!
+      if (org.kind === 'oem') assert.ok(!c.prev, 'an OEM continued a part')
+    }
+  })
+
+  test('a narrated verdict is briefed on the part but never on Block 12', async () => {
+    const seen: unknown[] = []
+    const { writer, calls } = recorder()
+    const narrator: Narrator = {
+      narrate: async () => ({
+        description: 'Bleed air valve',
+        remarks: 'PRIVATE-BLOCK-12-CONTENT that must not travel.',
+      }),
+      narrateVerdict: async (b) => {
+        seen.push(b)
+        return 'Valve seat leakage found on receiving test.'
+      },
+    }
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      narrator,
+      now: () => 1_700_000_000_000,
+      random: () => 0.05,
+    })
+    await g.tick()
+    await g.tick()
+
+    assert.equal(seen.length, 1)
+    const brief = seen[0] as Record<string, unknown>
+    assert.equal(brief.description, 'Bleed air valve')
+    assert.equal(brief.outcome, 'rejected')
+    // An angle, chosen here rather than by the model. Asked for a rejection
+    // reason with nothing else to go on it returned the same sentence four
+    // times out of four — the one the system prompt used as its example.
+    assert.ok(
+      REJECTION_ANGLES.includes(brief.angle as never),
+      'no angle was supplied',
+    )
+    // The operator holds the paper form, but the note they publish does not.
+    // Briefing a model on the withheld block is how it ends up quoted in the
+    // reply to it.
+    assert.ok(!('remarks' in brief), 'Block 12 reached the verdict brief')
+    assert.equal(calls[1].note, 'Valve seat leakage found on receiving test.')
+  })
+
+  test('a narrated reply answers the objection that was actually raised', async () => {
+    const seen: any[] = []
+    const { writer, calls } = recorder()
+    const narrator: Narrator = {
+      narrate: async () => ({ description: 'Oil cooler', remarks: 'Overhauled per CMM.' }),
+      narrateVerdict: async () => 'Back-to-birth documentation was not supplied.',
+      narrateDispute: async (b) => {
+        seen.push(b)
+        return 'Back-to-birth records were provided to the purchaser at sale.'
+      },
+    }
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      narrator,
+      now: () => 1_700_000_000_000,
+      random: () => 0.05,
+    })
+    await g.tick()
+    await g.tick()
+    await g.tick()
+
+    assert.equal(seen.length, 1)
+    assert.equal(seen[0].verdictNote, 'Back-to-birth documentation was not supplied.')
+    assert.equal(calls[2].kind, 'dispute')
+    assert.match(calls[2].response, /Back-to-birth records were provided/)
+  })
+
+  test('a narrator with no verdict method falls back to the canned list', async () => {
+    const { writer, calls } = recorder()
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      // Releases only — a valid narrator, and the rest degrades.
+      narrator: { narrate: async () => ({ description: 'Oil cooler', remarks: 'Per CMM.' }) },
+      now: () => 1_700_000_000_000,
+      random: () => 0.05,
+    })
+    await g.tick()
+    await g.tick()
+    assert.equal(calls[1].kind, 'acceptance')
+    assert.ok(calls[1].note, 'a rejection with no stated reason is an accusation')
+  })
+
   test('a write that fails is counted rather than thrown', async () => {
     const errors: unknown[] = []
-    const { g } = gen([0.9], {
+    const { g } = gen([], {
+      random: ALWAYS_ISSUE,
       writer: {
         actors: () => demoActors(DOMAIN),
         createRelease: async () => {

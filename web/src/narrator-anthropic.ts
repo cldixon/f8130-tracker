@@ -17,13 +17,22 @@
 import Anthropic from '@anthropic-ai/sdk'
 
 import {
+  DISPUTE_SYSTEM,
+  DISPUTE_TOOL,
+  disputePrompt,
   NARRATION_SYSTEM,
   NARRATION_TOOL,
   narrationPrompt,
   validateNarration,
+  validateNote,
+  VERDICT_SYSTEM,
+  VERDICT_TOOL,
+  verdictPrompt,
+  type DisputeBrief,
   type Narration,
   type NarrationBrief,
   type Narrator,
+  type VerdictBrief,
 } from '@f8130/core'
 
 /**
@@ -43,14 +52,17 @@ const MODEL = 'claude-sonnet-5'
 
 export type AnthropicNarratorOptions = {
   apiKey?: string
-  /** Milliseconds before a call is abandoned and the catalogue takes over. */
+  /** For a call something is waiting on. */
   timeoutMs?: number
+  /** For a call nothing is waiting on. */
+  backgroundTimeoutMs?: number
   onError?: (err: unknown) => void
 }
 
 export class AnthropicNarrator implements Narrator {
   private readonly client: Anthropic
   private readonly timeoutMs: number
+  private readonly backgroundTimeoutMs: number
   private readonly onError?: (err: unknown) => void
 
   /** Counts, for the health endpoint and for knowing whether this is working. */
@@ -70,11 +82,17 @@ export class AnthropicNarrator implements Narrator {
     this.client = opts.apiKey
       ? new Anthropic({ ...config, apiKey: opts.apiKey })
       : new Anthropic(config)
-    // Measured rather than guessed. Four seconds was too tight for Sonnet on
-    // this prompt and nearly everything fell back; twelve leaves room without
-    // holding a feed event open long enough to notice. With retries off this
-    // is the true worst case, not a third of it.
-    this.timeoutMs = opts.timeoutMs ?? 12_000
+    // Measured, not guessed. Across fourteen live calls: p50 4.1s, p90 6.9s,
+    // max 7.2s, none over twelve. Fifteen is a little over twice the observed
+    // tail and still under the shortest gap between two feed events, so a
+    // worst-case stall is invisible. With retries off this is the true worst
+    // case rather than a third of it.
+    this.timeoutMs = opts.timeoutMs ?? 15_000
+    // A call nothing is waiting on can afford to be patient. Being generous
+    // here is what turns a transient slow patch into a slower reply rather
+    // than a canned one — the tail that used to fall back now lands in time,
+    // because it has a whole feed interval to arrive in.
+    this.backgroundTimeoutMs = opts.backgroundTimeoutMs ?? 40_000
     this.onError = opts.onError
   }
 
@@ -122,6 +140,65 @@ export class AnthropicNarrator implements Narrator {
 
       this.stats.narrated++
       return checked.narration
+    } catch (err) {
+      this.stats.failed++
+      this.onError?.(describe(err))
+      return null
+    }
+  }
+
+  /**
+   * Both note kinds are started well before anything needs them — see the
+   * generator — so they get the patient timeout rather than the tight one.
+   */
+  async narrateVerdict(brief: VerdictBrief): Promise<string | null> {
+    return this.note(VERDICT_SYSTEM, VERDICT_TOOL, verdictPrompt(brief), 'note')
+  }
+
+  async narrateDispute(brief: DisputeBrief): Promise<string | null> {
+    return this.note(DISPUTE_SYSTEM, DISPUTE_TOOL, disputePrompt(brief), 'response')
+  }
+
+  /** One constrained sentence or two, for the two reply kinds. */
+  private async note(
+    system: string,
+    tool: typeof VERDICT_TOOL,
+    prompt: string,
+    key: string,
+  ): Promise<string | null> {
+    this.stats.asked++
+    try {
+      const response = await this.client.messages.create(
+        {
+          model: MODEL,
+          max_tokens: 512,
+          system,
+          tools: [tool],
+          tool_choice: { type: 'tool', name: tool.name },
+          messages: [{ role: 'user', content: prompt }],
+        },
+        { timeout: this.backgroundTimeoutMs },
+      )
+
+      if (response.stop_reason === 'refusal') {
+        this.stats.refused++
+        return null
+      }
+      const call = response.content.find((b) => b.type === 'tool_use')
+      if (!call || call.type !== 'tool_use') {
+        this.stats.rejected++
+        return null
+      }
+
+      const checked = validateNote(call.input, key)
+      if (!checked.ok) {
+        this.stats.rejected++
+        this.onError?.(new Error(`${key} rejected: ${checked.reason}`))
+        return null
+      }
+
+      this.stats.narrated++
+      return checked.note
     } catch (err) {
       this.stats.failed++
       this.onError?.(describe(err))

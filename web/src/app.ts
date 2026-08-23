@@ -136,27 +136,27 @@ export function createApp(deps: AppDeps) {
   /**
    * Display names for the DIDs on screen.
    *
-   * Kept separate from handles: the handle is the identity the viewpoint
-   * check compares against, the display name is only for reading. A verdict
-   * carries neither — the recipient's name is not a block on an 8130-3 — so
-   * it comes from the roster by way of the handle the index resolved.
+   * Read from station records this observer indexed off the firehose, not from
+   * the roster compiled into this binary. The roster version worked only
+   * because the demonstration cast happens to ship with the code, which is
+   * precisely the shortcut the station lexicon exists to avoid — an AppView
+   * should learn who anybody is from what they published.
+   *
+   * Kept separate from handles: the handle is the identity the viewpoint check
+   * compares against, the display name is only for reading.
    */
-  function namesFor(handles: Map<string, string>): Map<string, string> {
-    const roster = new Map(
-      orgs(process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev').map(
-        (o) => [o.handle, o.displayName] as const,
-      ),
-    )
+  async function namesFor(dids: Iterable<string>): Promise<Map<string, string>> {
     const out = new Map<string, string>()
-    for (const [did, handle] of handles) {
-      const display = roster.get(handle)
-      if (display) out.set(did, display)
+    if (!deps.index) return out
+    const rows = await deps.index.actorsFor([...new Set(dids)])
+    for (const [did, row] of rows) {
+      if (row.displayName) out.set(did, row.displayName)
     }
     return out
   }
 
-  /** Handles for the DIDs on screen, so a feed does not read as raw DIDs. */
-  async function handlesFor(events: FeedEvent[]): Promise<Map<string, string>> {
+  /** Every party named by anything on screen. */
+  function didsIn(events: FeedEvent[]): Set<string> {
     const dids = new Set<string>()
     for (const e of events) {
       if (e.kind === 'release') dids.add(e.release.issuerDid)
@@ -165,6 +165,12 @@ export function createApp(deps: AppDeps) {
         dids.add(e.verdict.issuerDid)
       }
     }
+    return dids
+  }
+
+  /** Handles for the DIDs on screen, so a feed does not read as raw DIDs. */
+  async function handlesFor(events: FeedEvent[]): Promise<Map<string, string>> {
+    const dids = didsIn(events)
     const out = new Map<string, string>()
     if (!deps.index) return out
     await Promise.all(
@@ -197,7 +203,7 @@ export function createApp(deps: AppDeps) {
         chrome: chrome(c, 'home'),
         events,
         handles,
-        names: namesFor(handles),
+        names: await namesFor(didsIn(events)),
         replies: await replyCounts(events),
         current: currentActor(c),
         hasIndex: Boolean(deps.index),
@@ -254,7 +260,7 @@ export function createApp(deps: AppDeps) {
         verdicts: [...verdicts].reverse(),
         replies,
         handles,
-        names: namesFor(handles),
+        names: await namesFor(dids),
       }),
     )
   })
@@ -307,8 +313,9 @@ export function createApp(deps: AppDeps) {
               // Oldest first, so prepending each one leaves the newest on top.
               const handles = await handlesFor(events)
               for (const e of [...events].reverse()) {
+                const names = await namesFor(didsIn(events))
                 const markup = String(
-                  await feedCard(e, handles, new Date(), viewer, undefined, namesFor(handles)),
+                  await feedCard(e, handles, new Date(), viewer, undefined, names),
                 )
                   .replace(/\s*\n\s*/g, ' ')
                 send(`event: event\ndata: ${markup}\n\n`)
@@ -456,7 +463,11 @@ export function createApp(deps: AppDeps) {
         chain,
         acceptances,
         handles,
-        names: namesFor(handles),
+        names: await namesFor([
+          ...chain.map((r) => r.issuerDid),
+          ...verdicts.map((v) => v.verifierDid),
+          ...verdicts.map((v) => v.issuerDid),
+        ]),
         reachedBirth,
         trace,
         mode,

@@ -56,6 +56,7 @@ const emptyIndex = (over: Partial<ReadIndex> = {}): ReadIndex => ({
   releaseByUri: async () => null,
   issuerStats: async () => [],
   handleFor: async () => null,
+  actorsFor: async () => new Map(),
   ...over,
 })
 

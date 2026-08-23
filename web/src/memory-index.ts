@@ -16,6 +16,7 @@
 import { PUBLIC_FIELDS, type Bundle } from '@f8130/core'
 
 import type {
+  ActorRow,
   AcceptanceRow,
   DisputeRow,
   FeedEvent,
@@ -59,6 +60,7 @@ export class MemoryIndex implements ReadIndex {
   private readonly verdicts: AcceptanceRow[] = []
   private readonly disputes: DisputeRow[] = []
   private readonly handles = new Map<string, string>()
+  private readonly actors = new Map<string, ActorRow>()
 
   addRelease(row: ReleaseRow): void {
     if (this.releases.some((r) => r.cid === row.cid)) return
@@ -77,6 +79,11 @@ export class MemoryIndex implements ReadIndex {
 
   setHandle(did: string, handle: string): void {
     this.handles.set(did, handle)
+  }
+
+  /** What a station record would have told an observer on the live path. */
+  setActor(row: ActorRow): void {
+    this.actors.set(row.did, row)
   }
 
   /** Every release, newest observation first. Used by tests and the dashboard. */
@@ -162,6 +169,15 @@ export class MemoryIndex implements ReadIndex {
         ).size,
       }))
       .sort((a, b) => b.distinctRejectors - a.distinctRejectors)
+  }
+
+  async actorsFor(dids: string[]): Promise<Map<string, ActorRow>> {
+    const out = new Map<string, ActorRow>()
+    for (const did of dids) {
+      const a = this.actors.get(did)
+      if (a) out.set(did, a)
+    }
+    return out
   }
 
   async handleFor(did: string): Promise<string | null> {

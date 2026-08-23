@@ -566,8 +566,17 @@ export function feedCard(
    */
   names?: Map<string, string>,
 ): HtmlEscapedString | Promise<HtmlEscapedString> {
-  const nameOf = (did: string) =>
-    names?.get(did) ?? handles.get(did) ?? short(did, 12)
+  // Name first, always. A DID is an identifier, not a name, and a feed that
+  // shows one where a social client would show a person reads as a database
+  // dump. The DID is still there, rendered small beside the name, because it
+  // is the thing that is actually cryptographically meaningful — and because
+  // an organization with no published profile has nothing else to show.
+  const nameOf = (did: string) => names?.get(did) ?? short(did, 10)
+  const who = (did: string) =>
+    names?.get(did)
+      ? html`<strong>${names.get(did)}</strong><span class="did"
+          title="${did}">${short(did, 10)}</span>`
+      : html`<strong class="mono">${short(did, 10)}</strong>`
   // What the viewpoint control changes, and all it changes: which events are
   // marked as involving you. It grants no extra visibility — the withheld
   // blocks stay withheld whoever is looking, because the index never held
@@ -584,7 +593,9 @@ export function feedCard(
     return html`<article class="event" data-cid="${r.cid}">
       <div class="who">
         ${avatar(r.organizationName, true)}
-        <strong>${r.organizationName}</strong>${yours(r.issuerDid)} issued a release certificate
+        <strong>${r.organizationName}</strong><span class="did"
+          title="${r.issuerDid}">${short(r.issuerDid, 10)}</span>${yours(r.issuerDid)}
+        issued a release certificate
         <span class="when"><a href="${postPath(r.uri)}">${ago(event.at, now)}</a></span>
       </div>
       <div class="what">
@@ -612,9 +623,9 @@ export function feedCard(
     </div>
     <div class="who">
       ${avatar(verifier, true)}
-      <strong>${verifier}</strong>${yours(v.verifierDid)}
+      ${who(v.verifierDid)}${yours(v.verifierDid)}
       ${OUTCOME_WORD[v.outcome] ?? v.outcome}
-      a part from <strong>${issuer}</strong>${yours(v.issuerDid)}
+      a part from ${who(v.issuerDid)}${yours(v.issuerDid)}
       <span class="when"><a href="${postPath(v.subjectUri)}">${ago(event.at, now)}</a></span>
     </div>
     <div class="what">
@@ -658,9 +669,10 @@ export function threadPage(params: {
   const r = params.release
   const now = params.now ?? new Date()
   const withheld = FIELDS.filter((f) => !f.public).length
-  const nameOf = (did: string) =>
-    params.names?.get(did) ?? params.handles.get(did) ?? short(did, 12)
-  const handleOf = (did: string) => params.handles.get(did) ?? short(did, 12)
+  const nameOf = (did: string) => params.names?.get(did) ?? short(did, 10)
+  // Whose repository a record lives in is a claim about a DID, not about a
+  // name, so this stays the identifier even where the byline is a name.
+  const handleOf = (did: string) => short(did, 10)
 
   return layout(
     `${r.organizationName} · ${r.partNumber}`,
@@ -669,7 +681,7 @@ export function threadPage(params: {
         ${avatar(r.organizationName)}
         <span class="ident">
           <strong>${r.organizationName}</strong>
-          <span class="hnd">${handleOf(r.issuerDid)}</span>
+          <span class="hnd mono" title="${r.issuerDid}">${short(r.issuerDid, 14)}</span>
         </span>
       </div>
       <h1 class="pt">${r.description}</h1>

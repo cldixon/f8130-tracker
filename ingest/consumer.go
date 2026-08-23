@@ -202,7 +202,8 @@ func (c *Consumer) extractRecords(
 		collection := nsid.String()
 		if collection != ReleaseNSID &&
 			collection != AcceptanceNSID &&
-			collection != DisputeNSID {
+			collection != DisputeNSID &&
+			collection != StationNSID {
 			continue
 		}
 		uri := fmt.Sprintf("at://%s/%s/%s", evt.Repo, collection, rkey.String())
@@ -252,6 +253,11 @@ func (c *Consumer) extractRecords(
 			// Nothing to cross-check: a dispute names no author, so the
 			// repository it was found in is the author by construction.
 			rec.Dispute = v
+		case *Station:
+			// Self-asserted, and the repository it was found in is the subject
+			// by construction — a profile claiming to describe somebody else
+			// would just be describing itself under a different name.
+			rec.Station = v
 		default:
 			continue
 		}

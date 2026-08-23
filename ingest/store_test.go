@@ -166,6 +166,110 @@ func TestDeleteRemovesDispute(t *testing.T) {
 	}
 }
 
+func stationRec(uri, name, kind string) IndexedRecord {
+	return IndexedRecord{
+		URI:        uri,
+		CID:        "bafystation" + kind,
+		Collection: StationNSID,
+		Station: &Station{
+			DisplayName: name,
+			Kind:        kind,
+			Synthetic:   "SYNTHETIC DEMONSTRATION DATA",
+			CAGE:        "SYN0005",
+			Certificate: "SYNTHETIC-CERT-12345",
+			Raw:         map[string]any{"$type": StationNSID},
+		},
+	}
+}
+
+// Without this the actor row holds the DID twice over and every verdict in the
+// feed renders as a bare identifier: a release carries Block 4 and can name
+// its issuer, but an acceptance carries no name for either party.
+func TestStationRecordNamesAnActor(t *testing.T) {
+	s, ctx := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{
+		stationRec("at://"+cascadia+"/dev.cldixon.f8130.station/self", "Cascadia MRO", "mro"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var name, kind string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT org_name, kind FROM actor WHERE did = $1`, cascadia,
+	).Scan(&name, &kind); err != nil {
+		t.Fatal(err)
+	}
+	if name != "Cascadia MRO" || kind != "mro" {
+		t.Errorf("actor = %q/%q", name, kind)
+	}
+}
+
+// A lessor would have failed the kind check before station records were
+// indexed, because nothing had ever written the column.
+func TestLessorProfileStores(t *testing.T) {
+	s, ctx := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{
+		stationRec("at://"+meridian+"/dev.cldixon.f8130.station/self", "Halyard Leasing", "lessor"),
+	}); err != nil {
+		t.Fatalf("a lessor profile should store: %v", err)
+	}
+}
+
+// The profile is the organization's current statement about itself, so a
+// later one supersedes an earlier one rather than being ignored.
+func TestStationProfileIsSuperseded(t *testing.T) {
+	s, ctx := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	uri := "at://" + cascadia + "/dev.cldixon.f8130.station/self"
+
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{
+		stationRec(uri, "Old Name", "mro"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyCommit(ctx, 2, now, []IndexedRecord{
+		stationRec(uri, "Cascadia MRO", "mro"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var name string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT org_name FROM actor WHERE did = $1`, cascadia).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != "Cascadia MRO" {
+		t.Errorf("org_name = %q, want the newer profile", name)
+	}
+}
+
+// A profile arriving after the organization has already published a release
+// must fill in the row ensureActor created, not collide with it.
+func TestStationFillsInAnExistingActor(t *testing.T) {
+	s, ctx := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{
+		releaseRec("bafyfirst", "at://"+cascadia+"/r/1", cascadia,
+			"NT882104", "SN000417", "NEW", now, nil),
+		stationRec("at://"+cascadia+"/dev.cldixon.f8130.station/self", "Cascadia MRO", "mro"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var name string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT org_name FROM actor WHERE did = $1`, cascadia).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != "Cascadia MRO" {
+		t.Errorf("org_name = %q", name)
+	}
+}
+
 func TestCursorStartsUnset(t *testing.T) {
 	s, ctx := testStore(t)
 	seq, err := s.Cursor(ctx)

@@ -259,12 +259,26 @@ export class MemoryRecordWriter implements RecordWriter {
       addVerdict(row: any): void
       addDispute(row: any): void
       setHandle(did: string, handle: string): void
+      setActor(row: { did: string; displayName: string | null; kind: string | null }): void
     },
     private readonly cast: Actor[],
   ) {}
 
   actors(): Actor[] {
     return this.cast
+  }
+
+  /**
+   * Records who a DID is, standing in for the station record the live path
+   * indexes off the firehose.
+   *
+   * The same short-circuit demo mode already makes about observation: the
+   * signatures are real, the independence of the observer is not.
+   */
+  private profile(did: string, handle: string): void {
+    const actor = this.cast.find((a) => a.handle === handle)
+    if (!actor) return
+    this.index.setActor({ did, displayName: actor.displayName, kind: actor.kind })
   }
 
   async createRelease(params: {
@@ -275,6 +289,7 @@ export class MemoryRecordWriter implements RecordWriter {
     const issued = await this.net.issue(params)
     const cid = String(issued.cid)
     this.index.setHandle(issued.uri.split('/')[2]!, params.handle)
+    this.profile(issued.uri.split('/')[2]!, params.handle)
     this.index.addRelease(
       releaseRow({
         uri: issued.uri,
@@ -300,6 +315,7 @@ export class MemoryRecordWriter implements RecordWriter {
     const did = written.uri.split('/')[2]!
     const now = new Date()
     this.index.setHandle(did, params.handle)
+    this.profile(did, params.handle)
     this.index.addVerdict({
       cid: String(written.cid),
       uri: written.uri,
@@ -326,6 +342,7 @@ export class MemoryRecordWriter implements RecordWriter {
     const did = written.uri.split('/')[2]!
     const now = new Date()
     this.index.setHandle(did, params.handle)
+    this.profile(did, params.handle)
     this.index.addDispute({
       cid: String(written.cid),
       uri: written.uri,

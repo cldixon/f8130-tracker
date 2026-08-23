@@ -25,8 +25,10 @@
  */
 
 import {
+  DISCREPANCY_ANGLES,
   narratedForm,
   orgs,
+  REJECTION_ANGLES,
   type Narrator,
   type Org,
   type RawForm,
@@ -41,6 +43,29 @@ type Pending = {
   issuerHandle: string
   partNumber: string
   serialNumber: string
+  /** Block 7, which is public — see VerdictBrief on why Block 12 is not. */
+  description: string
+  /**
+   * How this will go, decided when the part ships rather than when it is
+   * looked at.
+   *
+   * Nothing about the outcome depends on the moment of inspection — a part
+   * either arrives damaged or it does not — so rolling it early costs nothing
+   * and is arguably the more honest model. What it buys is a whole feed
+   * interval of warning, which is what the note below needs.
+   */
+  outcome: 'accepted' | 'rejected' | 'discrepancy'
+  /**
+   * The stated reason, started at ship time and awaited at inspection time.
+   *
+   * This is the fix for notes falling back to the canned list. The narration
+   * is not slow — p50 four seconds — but it used to run on the publishing
+   * path, where a bad minute on the API meant a canned string. Started here,
+   * it has twelve to forty-five seconds to arrive and by then has almost
+   * always resolved, so awaiting it costs nothing and a slow call is a slower
+   * reply rather than a worse one.
+   */
+  note: Promise<string | null> | null
   /** The operator the part went to. Not a field on the form — see below. */
   operatorHandle: string
   at: number
@@ -50,7 +75,27 @@ type Pending = {
 type Answerable = {
   subject: StrongRef
   issuerHandle: string
+  description: string
+  note: string
+  /** Started the moment the verdict is published, for the same reason. */
+  reply: Promise<string | null> | null
   at: number
+}
+
+/**
+ * A part that exists and could come back in for more work.
+ *
+ * Every generated release used to be a birth, so a part page built from live
+ * activity always showed exactly one shop visit and the back-to-birth view had
+ * nothing to trace. A component's life is several visits at several shops, and
+ * this is what makes the next one able to point at the last.
+ */
+type InService = {
+  subject: StrongRef
+  partNumber: string
+  serialNumber: string
+  description: string
+  visits: number
 }
 
 export type ActivityOptions = {
@@ -112,6 +157,18 @@ const DEFAULT_FIRST_GAP = 4_000
 /** How often a verdict goes against the issuer. Most paperwork is fine. */
 const REJECTION_RATE = 0.18
 
+/**
+ * How often a release continues a part already in service rather than
+ * beginning a new one.
+ *
+ * Under a half, so the population of distinct parts keeps growing and chains
+ * stay plausible lengths rather than every record piling onto one component.
+ */
+const CONTINUATION_RATE = 0.35
+
+/** A part's history stops growing here, as a real one eventually would. */
+const MAX_VISITS = 5
+
 const REJECTION_NOTES = [
   'Back-to-birth documentation could not be produced on request.',
   'Serial number on the part does not match the accompanying paperwork.',
@@ -143,6 +200,7 @@ export class ActivityGenerator {
   private timer: ReturnType<typeof setTimeout> | null = null
   private pending: Pending[] = []
   private answerable: Answerable[] = []
+  private inService: InService[] = []
   private seq = 0
 
   /** Counts, for the health endpoint and for tests. */
@@ -201,7 +259,27 @@ export class ActivityGenerator {
     return this.opts.writer.actors().some((a) => a.handle === handle)
   }
 
-  private pickOne<T>(items: T[]): T | undefined {
+  /**
+   * Starts work now to be read later, and never lets it reject.
+   *
+   * A floating promise that throws is an unhandled rejection, and an
+   * unhandled rejection in a generator nobody is watching takes the process
+   * with it on some Node versions. Everything that can go wrong becomes null,
+   * which is what the caller already handles.
+   */
+  private start(fn: () => Promise<string | null> | undefined): Promise<string | null> {
+    try {
+      return Promise.resolve(fn() ?? null).catch((err) => {
+        this.opts.onError?.(err)
+        return null
+      })
+    } catch (err) {
+      this.opts.onError?.(err)
+      return Promise.resolve(null)
+    }
+  }
+
+  private pickOne<T>(items: readonly T[]): T | undefined {
     if (items.length === 0) return undefined
     return items[Math.floor(this.rand() * items.length)]
   }
@@ -222,10 +300,15 @@ export class ActivityGenerator {
       if (this.answerable.length > 0 && r < 0.15) {
         const target = this.answerable.shift()!
         if (this.known(target.issuerHandle)) {
+          // The reply answers the objection that was actually raised, which
+          // is the whole interest of a right of reply. The canned list cannot
+          // do that — it answers whatever it always answers.
+          const response = (await target.reply) ?? this.pickOne(DISPUTE_REPLIES)!
+
           await this.opts.writer.createDispute({
             handle: target.issuerHandle,
             subject: target.subject,
-            response: this.pickOne(DISPUTE_REPLIES)!,
+            response,
           })
           this.stats.disputes++
           return
@@ -236,19 +319,17 @@ export class ActivityGenerator {
       if (this.pending.length > 0 && r < 0.55) {
         const item = this.pending.shift()!
         if (this.known(item.operatorHandle)) {
-          const roll = this.rand()
-          const outcome =
-            roll < REJECTION_RATE
-              ? 'rejected'
-              : roll < REJECTION_RATE + 0.08
-                ? 'discrepancy'
-                : 'accepted'
+          const outcome = item.outcome
+          // Started a whole feed interval ago, so this has almost always
+          // resolved and awaiting it costs nothing. The canned list is still
+          // behind it for the case where it has not.
           const note =
-            outcome === 'rejected'
-              ? this.pickOne(REJECTION_NOTES)
-              : outcome === 'discrepancy'
-                ? this.pickOne(DISCREPANCY_NOTES)
-                : undefined
+            outcome === 'accepted'
+              ? undefined
+              : ((await item.note) ??
+                this.pickOne(
+                  outcome === 'rejected' ? REJECTION_NOTES : DISCREPANCY_NOTES,
+                ))
 
           const written = await this.opts.writer.createAcceptance({
             handle: item.operatorHandle,
@@ -266,6 +347,18 @@ export class ActivityGenerator {
             this.answerable.push({
               subject: { uri: written.uri, cid: written.cid },
               issuerHandle: item.issuerHandle,
+              description: item.description,
+              note: note ?? '',
+              // Same trick: the reply starts now and is read a tick or more
+              // later, so the issuer's answer is off the publishing path too.
+              reply: note
+                ? this.start(() =>
+                    this.opts.narrator?.narrateDispute?.({
+                      verdictNote: note,
+                      description: item.description,
+                    }),
+                  )
+                : null,
               at: this.now(),
             })
           }
@@ -293,20 +386,58 @@ export class ActivityGenerator {
     const operator = this.pickOne(operators)
     if (!issuer || !operator) return
 
-    // A form the buffer had ready, or the catalogue. Never a network call on
-    // the publishing path: a tick that waits on an API is a tick somebody
-    // else's rate limit can delay.
+    // Sometimes a part already in service comes back in for more work. An
+    // OEM is not a candidate — a manufacturer certifies new manufacture under
+    // Block 13, and a part it has already released is not new any more.
+    const returning =
+      issuer.kind !== 'oem' &&
+      this.inService.length > 0 &&
+      this.rand() < CONTINUATION_RATE
+        ? this.pickOne(this.inService)
+        : undefined
+
     const form: RawForm = await narratedForm({
       org: issuer,
       seed: Math.floor(this.rand() * 1e9) ^ this.seq++,
       narrator: this.opts.narrator ?? null,
+      ...(returning
+        ? {
+            continues: {
+              partNumber: returning.partNumber,
+              serialNumber: returning.serialNumber,
+              description: returning.description,
+            },
+          }
+        : {}),
     })
 
     const written = await this.opts.writer.createRelease({
       handle: issuer.handle,
       form,
+      // The strong reference is what makes this a history rather than two
+      // records that happen to share a serial number.
+      ...(returning ? { prev: returning.subject } : {}),
     })
     this.stats.released++
+
+    // The part's newest release is what a further visit would point at.
+    const subject = { uri: written.uri, cid: written.cid }
+    if (returning) {
+      returning.subject = subject
+      returning.visits++
+      if (returning.visits >= MAX_VISITS) {
+        this.inService = this.inService.filter((p) => p !== returning)
+      }
+    } else {
+      this.inService.push({
+        subject,
+        partNumber: String(form.partNumber),
+        serialNumber: String(form.serialNumber),
+        description: String(form.description ?? ''),
+        visits: 1,
+      })
+      if (this.inService.length > 30) this.inService.shift()
+    }
 
     this.opts.dock?.handOver(operator.handle, {
       subject: { uri: written.uri, cid: written.cid },
@@ -318,7 +449,28 @@ export class ActivityGenerator {
       at: new Date(this.now()),
     })
 
+    const roll = this.rand()
+    const outcome =
+      roll < REJECTION_RATE
+        ? ('rejected' as const)
+        : roll < REJECTION_RATE + 0.08
+          ? ('discrepancy' as const)
+          : ('accepted' as const)
+
     this.pending.push({
+      outcome,
+      note:
+        outcome === 'accepted'
+          ? null
+          : this.start(() =>
+              this.opts.narrator?.narrateVerdict?.({
+                outcome,
+                description: String(form.description ?? ''),
+                angle: this.pickOne(
+                  outcome === 'rejected' ? REJECTION_ANGLES : DISCREPANCY_ANGLES,
+                )!,
+              }),
+            ),
       subject: { uri: written.uri, cid: written.cid },
       // at://<did>/<collection>/<rkey> — the only place the write hands back
       // the issuer's DID, which the verdict has to name.
@@ -326,6 +478,7 @@ export class ActivityGenerator {
       issuerHandle: issuer.handle,
       partNumber: String(form.partNumber),
       serialNumber: String(form.serialNumber),
+      description: String(form.description ?? ''),
       // Who received the part is NOT on the form — an 8130-3 says who issued
       // it, not who it went to. The generator remembers so it can have the
       // right operator publish the verdict, which is how the protocol

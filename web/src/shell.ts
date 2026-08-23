@@ -396,6 +396,13 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
 }
 .event .replying { font-size: .76rem; color: var(--muted); margin-bottom: .25rem; }
 .event .who .ico, .event .av { align-self: center; }
+/* The DID beside a name. Present because it is the thing that is actually
+   cryptographically meaningful, quiet because it is not what anyone reads. */
+.did {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .68rem; color: var(--muted); margin-left: .3rem;
+  cursor: help; white-space: nowrap;
+}
 a.tag { text-decoration: none; border-bottom: 1px dotted var(--line); }
 a.tag:hover { border-bottom-color: var(--accent); }
 .event .when a { color: inherit; text-decoration: none; }

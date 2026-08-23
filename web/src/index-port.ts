@@ -82,6 +82,25 @@ export type DisputeRow = {
   observedAt: Date
 }
 
+/**
+ * Who a DID is, as this observer learned it from the network.
+ *
+ * `displayName` comes from a station record the organization published in its
+ * own repository. It is self-asserted and committed to by nothing, which is
+ * the right strength for a name — but it is still a signed statement from the
+ * party it describes rather than a table this service shipped, which is the
+ * distinction the station lexicon exists to make.
+ *
+ * Null when the organization has never published a profile. A verdict from an
+ * operator this observer has only ever seen judge things is exactly that case,
+ * and the honest rendering is the DID.
+ */
+export type ActorRow = {
+  did: string
+  displayName: string | null
+  kind: string | null
+}
+
 export type IssuerStat = {
   did: string
   releases: number
@@ -108,4 +127,6 @@ export interface ReadIndex {
   releaseByUri(uri: string): Promise<ReleaseRow | null>
   issuerStats(): Promise<IssuerStat[]>
   handleFor(did: string): Promise<string | null>
+  /** Profiles for the DIDs on screen. Missing DIDs are simply absent. */
+  actorsFor(dids: string[]): Promise<Map<string, ActorRow>>
 }
