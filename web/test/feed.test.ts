@@ -133,24 +133,61 @@ describe('the feed page', () => {
     const { app } = await feedApp((i) => {
       i.addRelease(release())
       i.addVerdict(verdict({ outcome: 'rejected', note: 'Serial number does not match.' }))
-      i.setHandle('did:plc:operator', 'example-air.f8130.cldixon.dev')
-      i.setHandle('did:plc:issuer', 'cascadia-mro.f8130.cldixon.dev')
+      // Profiles, the way a station record would have supplied them.
+      i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
+      i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
     })
     const body = await (await app.request('/')).text()
     assert.match(body, /issued a release certificate/)
     assert.match(body, /rejected/)
     assert.match(body, /Serial number does not match\./)
-    // The verdict names the operator by display name. A verdict record carries
-    // no name — the recipient is not a block on an 8130-3 — so this only reads
-    // properly if the handle the index resolved was matched to the roster.
+    // A verdict record carries no name for either party, so this reads
+    // properly only if the observer indexed the station profile they
+    // published.
     assert.match(body, /Example Air/)
+  })
+
+  /**
+   * Names are what people read; the DID is what is cryptographically
+   * meaningful. Both are shown, in that order of prominence, and the same way
+   * on a release as on a verdict — they used to disagree, because a release
+   * carries Block 4 and a verdict carries no name at all.
+   */
+  test('a name leads and the DID follows it, on both kinds of event', async () => {
+    const { app } = await feedApp((i) => {
+      i.addRelease(release())
+      i.addVerdict(verdict())
+      i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
+      i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
+    })
+    const body = await (await app.request('/')).text()
+
+    // Two events, and every byline carries a quiet DID beside the name.
+    assert.ok((body.match(/class="did"/g) ?? []).length >= 3, 'DIDs are missing')
+    assert.match(body, /<strong>Example Air<\/strong><span class="did"/)
+    assert.match(body, /<strong>Cascadia MRO<\/strong><span class="did"/)
+  })
+
+  /**
+   * An organization that has never published a profile has no name to show,
+   * and inventing one would be worse than the identifier. This is the operator
+   * that has only ever judged things.
+   */
+  test('an organization with no published profile renders as its DID', async () => {
+    const { app } = await feedApp((i) => {
+      i.addVerdict(verdict())
+      i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
+    })
+    const body = await (await app.request('/')).text()
+    assert.match(body, /Cascadia MRO/)
+    assert.match(body, /did%3Aplc%3Aissuer|did:plc:operator/)
   })
 
   test('a verdict card says which release it answers', async () => {
     const { app } = await feedApp((i) => {
       i.addVerdict(verdict())
-      i.setHandle('did:plc:operator', `example-air.${DOMAIN}`)
-      i.setHandle('did:plc:issuer', `cascadia-mro.${DOMAIN}`)
+      i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
+      i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
     })
     const body = await (await app.request('/')).text()
     assert.match(body, /replying to/)
@@ -201,8 +238,8 @@ describe('threads', () => {
       i.addRelease(release())
       i.addVerdict(verdict({ outcome: 'rejected', note: 'Serial does not match.' }))
       i.addDispute(dispute())
-      i.setHandle('did:plc:issuer', `cascadia-mro.${DOMAIN}`)
-      i.setHandle('did:plc:operator', `example-air.${DOMAIN}`)
+      i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
+      i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
     })
 
   const PERMALINK = '/post/did:plc:issuer/3a'

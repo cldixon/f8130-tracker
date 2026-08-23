@@ -65,6 +65,7 @@ type IndexedRecord struct {
 	Release    *Release
 	Acceptance *Acceptance
 	Dispute    *Dispute
+	Station    *Station
 	// Deletions carry only a URI.
 	Deleted bool
 }
@@ -107,6 +108,10 @@ func (s *Store) ApplyCommit(
 		case rec.Dispute != nil:
 			if err := upsertDispute(ctx, tx, rec, seq, observedAt); err != nil {
 				return fmt.Errorf("upsert dispute %s: %w", rec.URI, err)
+			}
+		case rec.Station != nil:
+			if err := upsertStation(ctx, tx, rec); err != nil {
+				return fmt.Errorf("upsert station %s: %w", rec.URI, err)
 			}
 		}
 	}
@@ -235,6 +240,34 @@ func upsertDispute(
 		rec.CID, rec.URI, d.Subject.URI, d.Subject.CID, author, d.Response,
 		d.DisputedAt, observedAt, seq, raw,
 	)
+	return err
+}
+
+// upsertStation records who an organization says it is.
+//
+// The actor row already existed — ensureActor creates one the first time a DID
+// publishes anything — but until now it held nothing except the DID twice
+// over, so every verdict in the feed rendered as a bare identifier. This fills
+// in the columns the schema always had.
+//
+// Overwrites on conflict rather than filling blanks, because a station record
+// is the organization's current statement about itself and a later one
+// supersedes an earlier one.
+func upsertStation(ctx context.Context, tx pgx.Tx, rec IndexedRecord) error {
+	st := rec.Station
+	did := authorOf(rec.URI)
+	if did == "" {
+		return fmt.Errorf("station URI has no repository: %s", rec.URI)
+	}
+
+	_, err := tx.Exec(ctx, `
+		INSERT INTO actor (did, handle, org_name, kind, cert_number)
+		VALUES ($1, $1, $2, $3, $4)
+		ON CONFLICT (did) DO UPDATE SET
+			org_name    = EXCLUDED.org_name,
+			kind        = EXCLUDED.kind,
+			cert_number = EXCLUDED.cert_number
+	`, did, st.DisplayName, st.Kind, nullIfEmpty(st.Certificate))
 	return err
 }
 

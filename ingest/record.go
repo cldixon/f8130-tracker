@@ -11,6 +11,7 @@ const (
 	ReleaseNSID    = "dev.cldixon.f8130.release"
 	AcceptanceNSID = "dev.cldixon.f8130.acceptance"
 	DisputeNSID    = "dev.cldixon.f8130.dispute"
+	StationNSID    = "dev.cldixon.f8130.station"
 )
 
 // StrongRef is an atproto strong reference: a location plus the content hash
@@ -69,6 +70,26 @@ type Dispute struct {
 	Raw        map[string]any
 }
 
+// Station is an organization's self-published profile.
+//
+// This is how an AppView learns who anybody is. Without it a verdict has
+// nothing but a DID to render — the release record carries Block 4 and so can
+// name its issuer, but an acceptance carries no name for either party, and an
+// operator that has never issued anything is a bare identifier forever.
+//
+// Nothing here is committed to by any release. It is descriptive and
+// self-asserted: an organization saying what it calls itself, in its own
+// repository under its own key. That is a weaker claim than a commitment and
+// exactly the right strength for a display name.
+type Station struct {
+	DisplayName string
+	Kind        string
+	Synthetic   string
+	CAGE        string
+	Certificate string
+	Raw         map[string]any
+}
+
 // ErrNotOurs marks a record in a collection this AppView does not index. It is
 // an ordinary outcome, not a failure: the firehose carries everyone's data.
 var ErrNotOurs = fmt.Errorf("record is not an f8130 record")
@@ -92,6 +113,8 @@ func DecodeRecord(collection string, raw []byte) (any, error) {
 		return decodeAcceptance(obj)
 	case DisputeNSID:
 		return decodeDispute(obj)
+	case StationNSID:
+		return decodeStation(obj)
 	default:
 		return nil, ErrNotOurs
 	}
@@ -290,4 +313,34 @@ func decodeDispute(obj map[string]any) (*Dispute, error) {
 	}
 
 	return d, nil
+}
+
+func decodeStation(obj map[string]any) (*Station, error) {
+	st := &Station{Raw: obj}
+	var err error
+
+	if st.DisplayName, err = requireString(obj, "displayName"); err != nil {
+		return nil, err
+	}
+	if st.Kind, err = requireString(obj, "kind"); err != nil {
+		return nil, err
+	}
+	switch st.Kind {
+	case "oem", "mro", "operator", "broker", "lessor":
+	default:
+		return nil, fmt.Errorf("unknown station kind: %q", st.Kind)
+	}
+	// Every artifact in this demonstration carries the marker, and a profile
+	// that does not is not one of ours no matter what collection it sits in.
+	if st.Synthetic, err = requireString(obj, "synthetic"); err != nil {
+		return nil, err
+	}
+	if cage, ok := obj["cage"].(string); ok {
+		st.CAGE = cage
+	}
+	if cert, ok := obj["certificate"].(string); ok {
+		st.Certificate = cert
+	}
+
+	return st, nil
 }

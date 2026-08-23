@@ -10,7 +10,10 @@ CREATE TABLE IF NOT EXISTS actor (
   handle       TEXT NOT NULL,
   org_name     TEXT,
   cert_number  TEXT,
-  kind         TEXT CHECK (kind IN ('oem', 'mro', 'operator', 'broker')),
+  -- 'lessor' was missing until station records started being indexed, at
+  -- which point the two lessors on the roster would have failed the check on
+  -- insert. Nothing had ever written this column, so nothing had ever noticed.
+  kind         TEXT CHECK (kind IN ('oem', 'mro', 'operator', 'broker', 'lessor')),
   first_seen   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

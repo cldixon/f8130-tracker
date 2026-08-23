@@ -1,6 +1,7 @@
 import { Pool } from 'pg'
 
 import type {
+  ActorRow,
   FeedEvent,
   AcceptanceRow,
   DisputeRow,
@@ -194,6 +195,19 @@ export class PostgresIndex implements ReadIndex {
       releases: Number(r.releases),
       distinctRejectors: Number(r.distinct_rejectors),
     }))
+  }
+
+  async actorsFor(dids: string[]): Promise<Map<string, ActorRow>> {
+    const out = new Map<string, ActorRow>()
+    if (dids.length === 0) return out
+    const { rows } = await this.pool.query(
+      `SELECT did, org_name, kind FROM actor WHERE did = ANY($1)`,
+      [dids],
+    )
+    for (const r of rows) {
+      out.set(r.did, { did: r.did, displayName: r.org_name, kind: r.kind })
+    }
+    return out
   }
 
   async handleFor(did: string): Promise<string | null> {

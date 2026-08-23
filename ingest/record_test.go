@@ -245,3 +245,69 @@ func TestAuthorOf(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeStation(t *testing.T) {
+	obj := map[string]any{
+		"$type":       StationNSID,
+		"displayName": "Cascadia MRO",
+		"kind":        "mro",
+		"synthetic":   "SYNTHETIC DEMONSTRATION DATA",
+		"cage":        "SYN0005",
+		"certificate": "SYNTHETIC-CERT-12345",
+	}
+	r, err := DecodeRecord(StationNSID, encode(t, obj))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	st, ok := r.(*Station)
+	if !ok {
+		t.Fatalf("got %T, want *Station", r)
+	}
+	if st.DisplayName != "Cascadia MRO" || st.Kind != "mro" {
+		t.Errorf("decoded %+v", st)
+	}
+	if st.Certificate != "SYNTHETIC-CERT-12345" {
+		t.Errorf("certificate = %q", st.Certificate)
+	}
+}
+
+// Lessors are on the roster and were not in the original kind list. Nothing
+// noticed for as long as nothing wrote the column.
+func TestDecodeStationAcceptsEveryRosterKind(t *testing.T) {
+	for _, kind := range []string{"oem", "mro", "operator", "broker", "lessor"} {
+		obj := map[string]any{
+			"$type":       StationNSID,
+			"displayName": "Some Organization",
+			"kind":        kind,
+			"synthetic":   "SYNTHETIC DEMONSTRATION DATA",
+		}
+		if _, err := DecodeRecord(StationNSID, encode(t, obj)); err != nil {
+			t.Errorf("kind %q rejected: %v", kind, err)
+		}
+	}
+}
+
+func TestDecodeStationRejectsUnknownKind(t *testing.T) {
+	obj := map[string]any{
+		"$type":       StationNSID,
+		"displayName": "Some Organization",
+		"kind":        "airline",
+		"synthetic":   "SYNTHETIC DEMONSTRATION DATA",
+	}
+	if _, err := DecodeRecord(StationNSID, encode(t, obj)); err == nil {
+		t.Fatal("want an error for an unknown kind")
+	}
+}
+
+// Every artifact in this demonstration carries the marker, and a profile
+// without one is not ours whatever collection it arrived in.
+func TestDecodeStationRequiresTheSyntheticMarker(t *testing.T) {
+	obj := map[string]any{
+		"$type":       StationNSID,
+		"displayName": "Some Organization",
+		"kind":        "mro",
+	}
+	if _, err := DecodeRecord(StationNSID, encode(t, obj)); err == nil {
+		t.Fatal("want an error for a profile with no synthetic marker")
+	}
+}
