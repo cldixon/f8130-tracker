@@ -142,7 +142,14 @@ const FINDINGS: Record<ReleaseStatus, string[]> = {
   ],
 }
 
-const SIGNERS = [
+/**
+ * Signers, shuffled rather than narrated.
+ *
+ * A model asked for a technician's name returns the same initial every time —
+ * five surnames and five T.s across one live batch. A pool has more range than
+ * that and costs nothing.
+ */
+export const SIGNERS = [
   'A. Technician',
   'R. Inspector',
   'J. Mercado',
@@ -151,6 +158,18 @@ const SIGNERS = [
   'D. Whitfield',
   'S. Nakamura',
   'P. Halloran',
+  'M. Okonkwo',
+  'B. Terzić',
+  'C. Vasquez',
+  'E. Lindqvist',
+  'F. Haddad',
+  'G. Ferreira',
+  'H. Nowak',
+  'N. Abebe',
+  'O. Brennan',
+  'T. Adeyemi',
+  'V. Choudhury',
+  'W. Kowalski',
 ]
 
 /**

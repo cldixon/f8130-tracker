@@ -923,15 +923,33 @@ export function feedPage(params: {
 
     ${params.live
       ? html`${raw(`<script>
+/*
+ * The stream follows attention, not the tab.
+ *
+ * Holding this connection open is what tells the server somebody is watching,
+ * and the generator writes a real record for every event it produces. An open
+ * tab is a poor proxy for a watcher: a page left in a background window
+ * overnight would keep publishing to a real repository with nobody reading a
+ * line of it.
+ *
+ * So the connection closes when the tab is hidden and when the reader has
+ * stopped interacting, and reopens on the first sign of either coming back.
+ * The server needs no part in this — it already counts viewers by connection,
+ * so a closed stream is an absent viewer and the generator idles on its own.
+ */
 (function () {
   var feed = document.getElementById('feed')
   var pulse = document.getElementById('pulse')
-  var es = new EventSource('/api/feed/stream')
-  es.addEventListener('event', function (m) {
+  var IDLE_MS = 3 * 60 * 1000
+  var es = null
+  var lastSeen = null
+  var lastActive = Date.now()
+
+  function render(markup) {
     var empty = document.getElementById('empty')
     if (empty) empty.parentNode.parentNode.remove()
     var wrap = document.createElement('div')
-    wrap.innerHTML = m.data
+    wrap.innerHTML = markup
     var node = wrap.firstElementChild
     if (!node) return
     if (feed.querySelector('[data-cid="' + node.getAttribute('data-cid') + '"]')) return
@@ -939,8 +957,47 @@ export function feedPage(params: {
     feed.insertBefore(node, feed.firstChild)
     while (feed.children.length > 60) feed.removeChild(feed.lastChild)
     if (pulse) { pulse.classList.add('beat'); setTimeout(function(){ pulse.classList.remove('beat') }, 700) }
+  }
+
+  function connect() {
+    if (es) return
+    // Resume from the newest event this page has already drawn, so anything
+    // another viewer's session produced while this one was idle still arrives.
+    var url = '/api/feed/stream' + (lastSeen ? '?since=' + encodeURIComponent(lastSeen) : '')
+    es = new EventSource(url)
+    es.addEventListener('event', function (m) {
+      lastSeen = new Date().toISOString()
+      render(m.data)
+    })
+    es.onerror = function () { if (pulse) pulse.textContent = 'reconnecting' }
+    if (pulse) { pulse.textContent = 'live'; pulse.classList.remove('idle') }
+  }
+
+  function disconnect(why) {
+    if (!es) return
+    es.close()
+    es = null
+    if (pulse) { pulse.textContent = why; pulse.classList.add('idle') }
+  }
+
+  function active() {
+    lastActive = Date.now()
+    if (!document.hidden) connect()
+  }
+
+  ;['pointerdown', 'pointermove', 'keydown', 'scroll', 'touchstart', 'focus']
+    .forEach(function (ev) { window.addEventListener(ev, active, { passive: true }) })
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) disconnect('paused')
+    else active()
   })
-  es.onerror = function () { if (pulse) pulse.textContent = 'reconnecting' }
+
+  setInterval(function () {
+    if (Date.now() - lastActive > IDLE_MS) disconnect('idle')
+  }, 15000)
+
+  connect()
 })()
 </script>`)}`
       : ''}

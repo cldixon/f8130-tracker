@@ -13,6 +13,7 @@ import { serve } from '@hono/node-server'
 
 import {
   AtprotoIdentityResolver,
+  memoize,
   XrpcRepoClient,
   demoNetwork,
   type IdentityResolver,
@@ -21,6 +22,7 @@ import {
 
 import { ActivityGenerator } from './activity.js'
 import { Dock } from './dock.js'
+import { AnthropicNarrator } from './narrator-anthropic.js'
 import { createApp } from './app.js'
 import { describeConfig, loadConfig } from './config.js'
 import { MemoryIndex, releaseRow } from './memory-index.js'
@@ -124,6 +126,23 @@ async function main() {
       ? false
       : config.mode === 'demo' || process.env.F8130_ACTIVITY === '1'
 
+  // Prose for generated forms, when a key is configured. Memoized by brief so
+  // recurring combinations are paid for once, and absent entirely when there
+  // is no key — in which case every generated form comes from the catalogue,
+  // exactly as it always has.
+  const narrator = process.env.ANTHROPIC_API_KEY
+    ? memoize(
+        new AnthropicNarrator({
+          onError: (err) => console.warn('narrator:', describe(err)),
+        }),
+      )
+    : null
+  console.warn(
+    narrator
+      ? 'Form prose is narrated by Claude Sonnet; failures fall back to the catalogue.'
+      : 'No ANTHROPIC_API_KEY: generated forms come from the built-in catalogue.',
+  )
+
   // Stands in for a goods-in process. Not derived from the index and not
   // derivable from it: an 8130-3 names the issuer, never the recipient.
   const dock = new Dock()
@@ -134,6 +153,7 @@ async function main() {
           writer,
           domain,
           dock,
+          narrator,
           onError: (err) => console.warn('activity generator:', describe(err)),
         })
       : null
@@ -150,6 +170,7 @@ async function main() {
     writer,
     activity,
     dock,
+    narrator,
   })
 
   // Plenty of containers and CI runners have no IPv6 at all, and a hard-coded

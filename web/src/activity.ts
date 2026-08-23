@@ -25,8 +25,9 @@
  */
 
 import {
+  narratedForm,
   orgs,
-  syntheticForm,
+  type Narrator,
   type Org,
   type RawForm,
 } from '@f8130/core'
@@ -56,6 +57,15 @@ export type ActivityOptions = {
   writer: RecordWriter
   /** The PDS hostname the roster's handles are built from. */
   domain: string
+  /**
+   * Where a form's prose comes from.
+   *
+   * Expected to be a buffered narrator — one that answers from a pool it
+   * filled in the background and returns null the moment the pool is empty,
+   * rather than one that reaches for the network while an event is waiting to
+   * publish.
+   */
+  narrator?: Narrator | null
   /** Milliseconds between events. Jittered between these. */
   minGap?: number
   maxGap?: number
@@ -283,9 +293,13 @@ export class ActivityGenerator {
     const operator = this.pickOne(operators)
     if (!issuer || !operator) return
 
-    const form: RawForm = syntheticForm({
+    // A form the buffer had ready, or the catalogue. Never a network call on
+    // the publishing path: a tick that waits on an API is a tick somebody
+    // else's rate limit can delay.
+    const form: RawForm = await narratedForm({
       org: issuer,
       seed: Math.floor(this.rand() * 1e9) ^ this.seq++,
+      narrator: this.opts.narrator ?? null,
     })
 
     const written = await this.opts.writer.createRelease({
