@@ -35,12 +35,14 @@ import type {
 } from './index-port.js'
 import {
   acceptPage,
+  cabinetPage,
   dashboardPage,
   disclosePage,
   errorPage,
   feedCard,
   feedPage,
   formPage,
+  inboxPage,
   issuePage,
   partPage,
   threadPage,
@@ -48,6 +50,7 @@ import {
   type FormFold,
 } from './views.js'
 import { PUBLIC_HANDLE, type NavKey } from './shell.js'
+import type { Dock } from './dock.js'
 import { RELEASE_NSID, type RecordWriter } from './writer.js'
 
 const MAX_CHAIN_DEPTH = 100
@@ -92,6 +95,14 @@ export type AppDeps = {
     viewerJoined(): void
     viewerLeft(): void
   } | null
+  /**
+   * Parts that physically arrived, awaiting inspection.
+   *
+   * Not part of the read model, and deliberately not derived from it: an
+   * 8130-3 names the issuer and not the recipient, so no index built from the
+   * public record can say what is waiting for anybody. See dock.ts.
+   */
+  dock?: Dock | null
 }
 
 export function createApp(deps: AppDeps) {
@@ -437,6 +448,10 @@ export function createApp(deps: AppDeps) {
   })
 
   // --------------------------------------------------------------- verify
+  app.get('/cabinet', (c) =>
+    c.html(cabinetPage({ mode, chrome: chrome(c, 'cabinet') })),
+  )
+
   app.get('/verify', (c) => c.html(verifyPage(mode, undefined, undefined, chrome(c, 'verify'))))
 
   app.post('/verify', async (c) => {
@@ -810,6 +825,7 @@ export function createApp(deps: AppDeps) {
     actors: deps.writer?.actors(),
     current: currentActor(c),
     active,
+    waiting: deps.dock?.count(currentActor(c)) ?? 0,
   })
 
   if (deps.writer) {
@@ -962,6 +978,18 @@ export function createApp(deps: AppDeps) {
       }
     })
 
+    app.get('/inbox', (c) => {
+      const handle = currentActor(c)
+      return c.html(
+        inboxPage({
+          mode,
+          chrome: chrome(c, 'inbox'),
+          actor: writer.actors().find((a) => a.handle === handle),
+          arrivals: deps.dock?.awaiting(handle) ?? [],
+        }),
+      )
+    })
+
     app.get('/accept', (c) =>
       c.html(
         acceptPage({
@@ -1027,6 +1055,16 @@ export function createApp(deps: AppDeps) {
           outcome,
           note: get('note') || undefined,
         })
+
+        // The part has been dealt with, so it comes off the dock. Whether it
+        // was accepted or rejected is beside the point — what settles a goods-in
+        // line is that somebody answered it.
+        deps.dock?.settle(uri)
+
+        // Answering from the inbox goes back to the inbox: the useful next
+        // thing is the next crate, not a receipt for this one.
+        if (get('from') === 'inbox') return c.redirect('/inbox', 303)
+
         return c.html(
           acceptPage({
             mode,

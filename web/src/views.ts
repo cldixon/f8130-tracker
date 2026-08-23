@@ -18,6 +18,7 @@ import type {
 } from './index-port.js'
 import { bareLabel, fieldLabel, issueInputs, signingAs } from './compose.js'
 import { avatar, layout, type Chrome, type Mode } from './shell.js'
+import type { Arrival } from './dock.js'
 import type { Actor } from './writer.js'
 
 // Re-exported because the field labels are asserted against FIELD_ORDER, and
@@ -735,6 +736,137 @@ export function threadPage(params: {
   )
 }
 
+/* ------------------------------------------------------------------ inbox */
+
+/**
+ * Parts that arrived and have not been answered.
+ *
+ * The page says where this list comes from, because the honest answer is
+ * interesting. It is not the network: an 8130-3 names the issuer and not the
+ * recipient, so the public record cannot say what is waiting for anybody. What
+ * an operator actually has is a crate on a dock, and that is what this stands
+ * in for.
+ *
+ * Saying so is also how the next version becomes legible. Once a scheme
+ * exists for fields that are committed but disclosed only to named parties —
+ * the recipient being the obvious one — this list can come off the wire, and
+ * the change will be a real gain in capability rather than a refactor nobody
+ * can see.
+ */
+export function inboxPage(params: {
+  chrome?: Chrome
+  mode?: Mode
+  actor?: Actor
+  arrivals: Arrival[]
+  now?: Date
+}) {
+  const now = params.now ?? new Date()
+
+  const body = !params.actor
+    ? html`<h1>Goods in</h1>
+      <div class="needs-actor">
+        You are watching as the public, which receives nothing. Switch to an
+        organization in the rail to see what is waiting for it.
+      </div>`
+    : html`<h1>Goods in</h1>
+      <p class="sub">
+        Parts delivered to ${params.actor.displayName} that nobody has published
+        a verdict on yet.
+      </p>
+
+      <div class="seam">
+        <strong>This list is not from the network.</strong> An 8130-3 names who
+        issued a release, not who received it — there is no block for it, and
+        adding one would publish which shop works for which operator. So the
+        public record cannot say what is waiting for you. This stands in for
+        your goods-in process: a crate arrived, and here it is.
+        <span class="v2">Under a scheme for fields disclosed only to named
+        parties, the recipient could travel with the record and this list could
+        come off the wire.</span>
+      </div>
+
+      ${params.arrivals.length === 0
+        ? html`<div class="card"><div class="empty">
+            Nothing is waiting. Parts appear here as they are released to you.
+          </div></div>`
+        : html`<div class="feed">
+            ${params.arrivals.map(
+              (a) => html`<article class="event">
+                <div class="who">
+                  ${avatar(a.issuerName, true)}
+                  <strong>${a.issuerName}</strong> released a part to you
+                  <span class="when">${ago(a.at, now)}</span>
+                </div>
+                <div class="what">
+                  <a href="${postPath(a.subject.uri)}">${a.description}</a>
+                  · <a class="mono tag"
+                      href="/part/${encodeURIComponent(a.partNumber)}/${encodeURIComponent(a.serialNumber)}"
+                    >${a.partNumber}</a>
+                  · s/n <span class="mono">${a.serialNumber}</span>
+                </div>
+                <form method="post" action="/accept" class="verdict-row">
+                  <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+                  <input type="hidden" name="subjectCid" value="${a.subject.cid}">
+                  <input type="hidden" name="from" value="inbox">
+                  <select name="outcome" aria-label="Outcome">
+                    <option value="accepted">accepted</option>
+                    <option value="rejected">rejected</option>
+                    <option value="discrepancy">discrepancy</option>
+                  </select>
+                  <input type="text" name="note" placeholder="Stated reason (optional)">
+                  <button type="submit">Publish verdict</button>
+                </form>
+                <div class="meta">
+                  The verdict goes in <strong>your</strong> repository under your
+                  own key. ${a.issuerName} cannot delete it — only answer it.
+                </div>
+              </article>`,
+            )}
+          </div>`}`
+
+  return layout('Goods in', body, params.mode, params.chrome)
+}
+
+/* --------------------------------------------------------------- cabinet */
+
+/**
+ * What this browser is holding.
+ *
+ * Rendered client-side from localStorage, because that is genuinely where the
+ * documents are. The server sends an empty shell and could not fill it in if
+ * it wanted to: it has never seen these bundles and must never store one.
+ *
+ * The demonstration that matters is on the record page rather than here — an
+ * issuer opening a form they issued and finding every withheld block readable,
+ * not because they are signed in but because they hold the nonces. No service
+ * granted that and no service can withdraw it.
+ */
+export function cabinetPage(params: { chrome?: Chrome; mode?: Mode }) {
+  return layout(
+    'Your documents',
+    html`<h1>Your documents</h1>
+    <p class="sub">
+      Bundles this browser is holding. A bundle carries every nonce, so it opens
+      every withheld block on the record it belongs to.
+    </p>
+
+    <div class="seam">
+      <strong>These are not stored on this server.</strong> They are in your
+      browser, and the service has never held a copy — a bundle it stored would
+      be a bundle it could be compelled to hand over, which would put back the
+      trusted intermediary this whole design exists to remove.
+      <span class="v2">Clearing your site data deletes them, and no one can
+      reissue them: the nonces are not recoverable from the commitment.</span>
+    </div>
+
+    <div class="card" id="cabinet">
+      <div class="empty">Reading this browser&rsquo;s storage&hellip;</div>
+    </div>`,
+    params.mode,
+    params.chrome,
+  )
+}
+
 export function feedPage(params: {
   chrome?: Chrome
   mode?: Mode
@@ -855,7 +987,13 @@ export function issuePage(params: {
         <div class="card" style="padding:1.15rem">
           <div class="detail mono" style="word-break:break-all">${issued.uri}</div>
           <label for="out">Bundle — save this, it cannot be reconstructed</label>
-          <textarea id="out" readonly>${JSON.stringify(issued.bundle, null, 2)}</textarea>
+          <textarea id="out" readonly data-uri="${issued.uri}"
+            >${JSON.stringify(issued.bundle, null, 2)}</textarea>
+          <p class="sub" id="kept" hidden style="margin-top:.8rem">
+            Kept in <a href="/cabinet">this browser</a> — not on this server,
+            which must never hold a bundle. Clear your site data and it is gone
+            for good.
+          </p>
           <p class="sub" style="margin-top:.8rem">
             Paste it into <a href="/verify">verify</a> to see it check out, or
             into <a href="/disclose">selective disclosure</a> to reveal one
@@ -1254,6 +1392,15 @@ export function formPage(params: FormPageParams) {
         </div>`
       : ''}
     ${verdict}
+
+    <!-- Lets the browser open this record with a bundle it is already
+         holding. The submit happens client-side; nothing is stored here. -->
+    <span id="opener" data-uri="${params.uri}"
+      ${haveBundle ? 'data-open="1"' : ''}></span>
+    <form method="post" action="/form" id="openWith" hidden>
+      <input type="hidden" name="uri" value="${params.uri}">
+      <input type="hidden" name="bundle" value="">
+    </form>
 
     <form method="post" action="/form">
     <input type="hidden" name="uri" value="${params.uri}">
