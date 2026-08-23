@@ -21,7 +21,7 @@ import { ActivityGenerator } from '../src/activity.js'
 import { createApp } from '../src/app.js'
 import { MemoryIndex } from '../src/memory-index.js'
 import { MemoryRecordWriter, demoActors, type RecordWriter } from '../src/writer.js'
-import type { AcceptanceRow, ReleaseRow } from '../src/index-port.js'
+import type { AcceptanceRow, DisputeRow, ReleaseRow } from '../src/index-port.js'
 
 const DOMAIN = 'f8130.cldixon.dev'
 
@@ -139,7 +139,22 @@ describe('the feed page', () => {
     assert.match(body, /issued a release certificate/)
     assert.match(body, /rejected/)
     assert.match(body, /Serial number does not match\./)
-    assert.match(body, /example-air/)
+    // The verdict names the operator by display name. A verdict record carries
+    // no name — the recipient is not a block on an 8130-3 — so this only reads
+    // properly if the handle the index resolved was matched to the roster.
+    assert.match(body, /Example Air/)
+  })
+
+  test('a verdict card says which release it answers', async () => {
+    const { app } = await feedApp((i) => {
+      i.addVerdict(verdict())
+      i.setHandle('did:plc:operator', `example-air.${DOMAIN}`)
+      i.setHandle('did:plc:issuer', `cascadia-mro.${DOMAIN}`)
+    })
+    const body = await (await app.request('/')).text()
+    assert.match(body, /replying to/)
+    // Points at the release's permalink, not the verdict's own.
+    assert.match(body, /href="\/post\/did%3Aplc%3Aissuer\/3a"/)
   })
 
   test('says how many blocks are committed but withheld', async () => {
@@ -164,6 +179,104 @@ describe('the feed page', () => {
     const body = await (await app.request('/')).text()
     assert.match(body, /No index is attached/)
     assert.match(body, /Check a document/)
+  })
+})
+
+describe('threads', () => {
+  const dispute = (over: Partial<DisputeRow> = {}): DisputeRow => ({
+    cid: 'bafydis',
+    uri: 'at://did:plc:issuer/dev.cldixon.f8130.dispute/3c',
+    subjectUri: 'at://did:plc:operator/dev.cldixon.f8130.acceptance/3b',
+    subjectCid: 'bafyacc',
+    authorDid: 'did:plc:issuer',
+    response: 'Back-to-birth records were supplied at time of sale.',
+    disputedAt: new Date('2026-01-24T10:00:00Z'),
+    observedAt: new Date('2026-01-24T10:01:00Z'),
+    ...over,
+  })
+
+  const threaded = () =>
+    feedApp((i) => {
+      i.addRelease(release())
+      i.addVerdict(verdict({ outcome: 'rejected', note: 'Serial does not match.' }))
+      i.addDispute(dispute())
+      i.setHandle('did:plc:issuer', `cascadia-mro.${DOMAIN}`)
+      i.setHandle('did:plc:operator', `example-air.${DOMAIN}`)
+    })
+
+  const PERMALINK = '/post/did:plc:issuer/3a'
+
+  test('a release, the verdict against it, and the answer to that', async () => {
+    const { app } = await threaded()
+    const body = await (await app.request(PERMALINK)).text()
+
+    assert.match(body, /Fuel control unit/)
+    assert.match(body, /rejected the part/)
+    assert.match(body, /Serial does not match\./)
+    assert.match(body, /Back-to-birth records were supplied/)
+
+    // The order is the argument: the answer is nested under the verdict, and
+    // the verdict under the release.
+    assert.ok(
+      body.indexOf('rejected the part') < body.indexOf('Back-to-birth records'),
+      'the reply must come after the verdict it answers',
+    )
+  })
+
+  /**
+   * The whole reason the thread shape is worth borrowing. An issuer cannot
+   * remove a verdict published against them, because it is a record in
+   * somebody else's repository, and the page has to say so where the verdict
+   * is rather than in a paragraph elsewhere.
+   */
+  test('says the verdict is not the issuer\'s to remove', async () => {
+    const { app } = await threaded()
+    const body = await (await app.request(PERMALINK)).text()
+    assert.match(body, /own\s+repository/)
+    // Whitespace-insensitive: the sentence wraps in the markup.
+    assert.match(body, /not\s+theirs\s+to\s+remove/)
+  })
+
+  /**
+   * A checkmark would say this service vouches for the document. It does not
+   * and cannot: it holds no bundle, so it cannot recompute the commitment. It
+   * offers to run the checks and show them.
+   */
+  test('offers to run the checks rather than stamping a mark', async () => {
+    const { app } = await threaded()
+    const body = await (await app.request(PERMALINK)).text()
+    assert.match(body, /Check a document against it/)
+    assert.ok(!/verified.{0,20}✓|✓.{0,20}verified/i.test(body), 'a badge crept in')
+  })
+
+  test('a release with no verdict says so rather than looking finished', async () => {
+    const { app } = await feedApp((i) => i.addRelease(release()))
+    const body = await (await app.request(PERMALINK)).text()
+    assert.match(body, /No verdict has been published/)
+  })
+
+  test('the withheld blocks stay withheld in a thread', async () => {
+    const { app } = await threaded()
+    const body = await (await app.request(PERMALINK)).text()
+    for (const secret of ['REPAIRED', 'Metering valve wear', 'R. Inspector']) {
+      assert.ok(!body.includes(secret), `${secret} leaked into the thread`)
+    }
+    assert.match(body, /8 of 17 blocks are committed but not published/)
+  })
+
+  test('a release this observer has never seen is a 404, not an error', async () => {
+    const { app } = await feedApp()
+    const res = await app.request('/post/did:plc:nobody/3zz')
+    assert.equal(res.status, 404)
+    assert.match(await res.text(), /has not seen that release/)
+  })
+
+  test('the permalink is repo plus record key, so a reindex cannot break it', async () => {
+    const { app } = await threaded()
+    // Same release, a CID this index no longer stores under.
+    const body = await (await app.request(PERMALINK)).text()
+    assert.match(body, /Fuel control unit/)
+    assert.ok(!body.includes('bafyrel'), 'the URL should not depend on the CID')
   })
 })
 

@@ -247,11 +247,17 @@ export class MemoryRecordWriter implements RecordWriter {
         outcome: 'accepted' | 'rejected' | 'discrepancy'
         note?: string
       }): Promise<{ uri: string; cid: unknown }>
+      dispute(p: {
+        handle: string
+        subject: StrongRef
+        response: string
+      }): Promise<{ uri: string; cid: unknown }>
       resolveHandle(handle: string): Promise<string | null>
     },
     private readonly index: {
       addRelease(row: any): void
       addVerdict(row: any): void
+      addDispute(row: any): void
       setHandle(did: string, handle: string): void
     },
     private readonly cast: Actor[],
@@ -311,15 +317,25 @@ export class MemoryRecordWriter implements RecordWriter {
     return { uri: written.uri, cid: String(written.cid) }
   }
 
-  /**
-   * Disputes are not indexed anywhere yet — ingest decodes releases and
-   * acceptances only — so this writes nothing rather than pretending.
-   */
-  async createDispute(_params: {
+  async createDispute(params: {
     handle: string
     subject: StrongRef
     response: string
   }): Promise<Written> {
-    return { uri: '', cid: '' }
+    const written = await this.net.dispute(params)
+    const did = written.uri.split('/')[2]!
+    const now = new Date()
+    this.index.setHandle(did, params.handle)
+    this.index.addDispute({
+      cid: String(written.cid),
+      uri: written.uri,
+      subjectUri: params.subject.uri,
+      subjectCid: params.subject.cid,
+      authorDid: did,
+      response: params.response,
+      disputedAt: now,
+      observedAt: now,
+    })
+    return { uri: written.uri, cid: String(written.cid) }
   }
 }

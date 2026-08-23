@@ -63,6 +63,25 @@ export type FeedEvent =
   | { kind: 'release'; at: Date; release: ReleaseRow }
   | { kind: 'verdict'; at: Date; verdict: AcceptanceRow }
 
+/**
+ * An issuer answering a verdict published against them.
+ *
+ * They cannot delete or amend it — the verdict is a record in the verifier's
+ * repository — so replying is the whole of what they can do. Indexing that
+ * reply is what makes the limit visible rather than merely true.
+ */
+export type DisputeRow = {
+  cid: string
+  uri: string
+  subjectUri: string
+  subjectCid: string
+  /** The repository it was found in, which is the only authorship claim here. */
+  authorDid: string
+  response: string
+  disputedAt: Date
+  observedAt: Date
+}
+
 export type IssuerStat = {
   did: string
   releases: number
@@ -83,6 +102,10 @@ export interface ReadIndex {
   /** Walks prev_cid back toward birth, newest first. */
   chain(cid: string, maxDepth: number): Promise<ReleaseRow[]>
   acceptancesForSubjects(cids: string[]): Promise<AcceptanceRow[]>
+  /** Replies to verdicts, keyed by the acceptance CID each answers. */
+  disputesForSubjects(cids: string[]): Promise<DisputeRow[]>
+  /** One release by its at:// URI, which is what a permalink can rebuild. */
+  releaseByUri(uri: string): Promise<ReleaseRow | null>
   issuerStats(): Promise<IssuerStat[]>
   handleFor(did: string): Promise<string | null>
 }

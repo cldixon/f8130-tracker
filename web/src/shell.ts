@@ -351,6 +351,52 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
 .av.sm { width: 1.5rem; height: 1.5rem; font-size: .58rem; }
 .av.public { background: var(--skip) !important; }
 
+/* thread */
+.post {
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 1rem 1.1rem;
+}
+.post .who { display: flex; align-items: center; gap: .6rem; }
+.post .ident strong { display: block; font-size: .95rem; }
+.post .ident .hnd { font-size: .78rem; color: var(--muted); }
+.post .pt { font-size: 1.25rem; margin: .8rem 0 .35rem; }
+.post .pmeta { font-size: .88rem; margin-bottom: .7rem; }
+.post .ptimes { display: flex; gap: 1.75rem; flex-wrap: wrap; padding: .7rem 0;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.post .ptimes div { font-size: .82rem; }
+.post .ptimes .label { display: block; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .05em; font-size: .64rem; }
+.post .pactions { display: flex; gap: .5rem; flex-wrap: wrap; padding: .8rem 0 .2rem; }
+.act {
+  font-size: .84rem; text-decoration: none; color: var(--accent);
+  border: 1px solid var(--line); border-radius: 999px; padding: .3rem .8rem;
+}
+.act:hover { background: var(--skip-bg); }
+.post .meta { margin-top: .6rem; font-size: .78rem; color: var(--muted); }
+
+.replies { margin-top: .6rem; display: flex; flex-direction: column; gap: .5rem; }
+/* Indented, and joined to the post above by a rail, because the nesting is
+   the argument: everything below the first card lives in somebody else's
+   repository and cannot be removed from up here. */
+.replies .reply { margin-left: 1.25rem; position: relative; }
+.replies .reply::before {
+  content: ''; position: absolute; left: -.8rem; top: -.55rem; bottom: 50%;
+  width: 1px; background: var(--line);
+}
+.event.answer {
+  margin: .6rem 0 0 1.25rem; background: var(--skip-bg); position: relative;
+}
+.event.answer::before {
+  content: ''; position: absolute; left: -.8rem; top: -.6rem; bottom: 50%;
+  width: 1px; background: var(--line);
+}
+.event .replying { font-size: .76rem; color: var(--muted); margin-bottom: .25rem; }
+.event .who .ico, .event .av { align-self: center; }
+a.tag { text-decoration: none; border-bottom: 1px dotted var(--line); }
+a.tag:hover { border-bottom-color: var(--accent); }
+.event .when a { color: inherit; text-decoration: none; }
+.event .when a:hover { text-decoration: underline; }
+
 /* composer */
 dialog#composer {
   width: min(38rem, calc(100vw - 2rem)); max-height: 86vh; padding: 0;
