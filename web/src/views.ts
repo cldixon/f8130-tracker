@@ -8,7 +8,12 @@ import type {
   Stage,
   VerificationReport,
 } from '@f8130/core'
-import type { AcceptanceRow, IssuerStat, ReleaseRow } from './index-port.js'
+import type {
+  AcceptanceRow,
+  FeedEvent,
+  IssuerStat,
+  ReleaseRow,
+} from './index-port.js'
 import type { Actor } from './writer.js'
 
 const STYLES = `
@@ -43,12 +48,55 @@ nav strong { letter-spacing: -0.02em; }
 nav a { text-decoration: none; color: var(--muted); font-size: .92rem; }
 nav a:hover { color: var(--fg); }
 
-.banner {
-  background: var(--warn-bg); border: 1px solid var(--line);
-  border-left: 3px solid var(--warn);
-  padding: .6rem .8rem; border-radius: 4px; font-size: .85rem;
-  color: var(--fg); margin-bottom: 1.5rem;
+/* The one standing admonition, in the chrome rather than on every page.
+   There used to be three or four before any content; a warning repeated that
+   often is read as furniture and stops working. */
+.marker {
+  background: var(--warn-bg); border-bottom: 1px solid var(--line);
+  font-size: .78rem; color: var(--muted); text-align: center;
+  padding: .35rem 1.25rem;
 }
+.marker strong { color: var(--fg); }
+nav .whoami { margin-left: auto; display: flex; align-items: center; gap: .4rem; }
+nav .whoami span { font-size: .78rem; color: var(--muted); }
+nav .whoami select {
+  font-size: .82rem; padding: .2rem .4rem; width: auto; max-width: 14rem;
+}
+nav .whoami button { margin: 0; padding: .2rem .5rem; font-size: .8rem; }
+
+/* feed */
+.feed { display: flex; flex-direction: column; gap: .6rem; }
+.event {
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  padding: .8rem .95rem;
+}
+.event.rejected { border-left: 3px solid var(--fail); }
+.event.discrepancy { border-left: 3px solid var(--warn); }
+.event .who { font-size: .92rem; display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; }
+.event .who .when { margin-left: auto; color: var(--muted); font-size: .76rem; white-space: nowrap; }
+.event .dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--accent); flex: 0 0 auto; align-self: center; }
+.event .dot.accepted { background: var(--pass); }
+.event .dot.rejected { background: var(--fail); }
+.event .dot.discrepancy { background: var(--warn); }
+.event .what { margin-top: .25rem; font-size: .9rem; }
+.event .mine {
+  font-size: .64rem; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 3px;
+  padding: 0 .25rem; margin-left: .15rem; vertical-align: .05em;
+}
+.event .note {
+  margin-top: .4rem; padding: .4rem .6rem; border-radius: 4px;
+  background: var(--skip-bg); font-size: .85rem; color: var(--fg);
+}
+.event .meta { margin-top: .35rem; font-size: .74rem; color: var(--muted); }
+@keyframes arrive { from { opacity: 0; transform: translateY(-.4rem); } to { opacity: 1; transform: none; } }
+.event.fresh { animation: arrive .35s ease-out; }
+.pulse {
+  display: inline-block; margin-left: .5rem; font-size: .68rem;
+  text-transform: uppercase; letter-spacing: .07em; color: var(--pass);
+  border: 1px solid var(--pass); border-radius: 3px; padding: 0 .3rem;
+}
+.pulse.beat { background: var(--pass-bg); }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
 .demo {
   background: var(--skip-bg); border: 1px solid var(--line);
@@ -112,6 +160,7 @@ input[type=text] { padding: .5rem .65rem; border: 1px solid var(--line); border-
 label { display: block; font-size: .8rem; color: var(--muted); margin: 1rem 0 .3rem; }
 button { margin-top: 1.15rem; padding: .55rem 1.1rem; font-size: .92rem; font-weight: 600;
   border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+button:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
 footer { border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem;
   color: var(--muted); font-size: .78rem; }
 .empty { padding: 1.5rem 1.15rem; color: var(--muted); font-size: .9rem; }
@@ -122,9 +171,13 @@ select { padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 6p
   background: var(--card); color: var(--fg); font-size: .9rem; max-width: 22rem; width: 100%; }
 .hint { font-size: .68rem; text-transform: uppercase; letter-spacing: .05em;
   color: var(--accent); border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; }
-.persona { display: flex; gap: .6rem; align-items: flex-end; flex-wrap: wrap; }
-.persona label { margin: 0 0 .3rem; }
-.persona button { margin-top: 0; }
+.signing { font-size: .88rem; color: var(--muted); margin: 0 0 1.25rem; }
+.signing strong { color: var(--fg); }
+.needs-actor {
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 4px; padding: .7rem .85rem; font-size: .88rem;
+  margin-bottom: 1.25rem; color: var(--muted);
+}
 
 /* ---------------------------------------------------------------- form view */
 
@@ -232,10 +285,24 @@ pre.rec mark { background: color-mix(in srgb, var(--accent) 22%, transparent); c
 
 export type Mode = 'demo' | 'live'
 
+/**
+ * The one piece of per-request state every page shares: who the visitor is
+ * looking as.
+ *
+ * It lives in the layout rather than on the pages that write records because
+ * the alternative — a picker on the issue page and another on the verdict
+ * page — is what shipped first, and it was wrong in a way that took a user to
+ * find: changing the in-page dropdown without pressing its button left the
+ * cookie alone, so the very next request went back to whoever happened to be
+ * first in the roster. One control, one place, takes effect immediately.
+ */
+export type Chrome = { actors?: Actor[]; current?: string }
+
 export function layout(
   title: string,
   body: HtmlEscapedString | Promise<HtmlEscapedString>,
   mode: Mode = 'live',
+  chrome?: Chrome,
 ) {
   return html`<!doctype html>
 <html lang="en">
@@ -248,32 +315,35 @@ export function layout(
 <body>
 <nav><div>
   <strong>f8130</strong>
-  <a href="/">Dashboard</a>
-  <a href="/verify">Verify a document</a>
-  <a href="/disclose">Selective disclosure</a>
-  <a href="/issue">Issue</a>
-</div></nav>
-<main>
-  <div class="banner">
-    <strong>Synthetic demonstration data.</strong>
-    Fictional organizations and non-existent part numbers. Not an
-    airworthiness system, and not an approved method for one.
-  </div>
-  ${mode === 'demo'
-    ? html`<div class="demo">
-        <strong>Demo instance.</strong> This server is not reading the real
-        AT Protocol network — it runs an in-memory one with real signing keys
-        and real proofs, so the cryptography below is genuine while the hosting
-        is simulated. Sample documents:
-        <a href="/demo/bundles.json">/demo/bundles.json</a>.
-      </div>`
+  <a href="/">Activity</a>
+  <a href="/parts">Parts</a>
+  <a href="/verify">Check a document</a>
+  ${chrome?.actors && chrome.actors.length > 0
+    ? html`<form method="post" action="/act-as" class="whoami">
+        <span>viewing as</span>
+        <select name="handle" onchange="this.form.submit()">
+          <option value="" ${!chrome.current ? 'selected' : ''}>the public</option>
+          ${chrome.actors.map(
+            (a) => html`<option value="${a.handle}" ${a.handle === chrome.current ? 'selected' : ''}>
+              ${a.displayName}
+            </option>`,
+          )}
+        </select>
+        <noscript><button type="submit">Switch</button></noscript>
+      </form>`
     : ''}
+</div></nav>
+<div class="marker">
+  <strong>SYNTHETIC DATA</strong> — fictional organizations, invented part
+  numbers, nothing here is airworthiness evidence.${mode === 'demo'
+    ? html` <strong>Demo instance</strong> — an in-memory network: real keys
+        and real proofs, simulated hosting.
+        <a href="/demo/bundles.json">Sample documents</a>.`
+    : ''}
+</div>
+<main>
   ${body}
-  <footer>
-    SYNTHETIC DATA — demonstration only. Records are read from independent
-    AT Protocol repositories; this service holds no signing keys and is not
-    the source of truth for anything shown.
-  </footer>
+  <footer>Demonstration only · this service holds no signing keys</footer>
 </main>
 </body>
 </html>`
@@ -307,6 +377,7 @@ export function verifyPage(
   mode: Mode = 'live',
   report?: VerificationReport,
   error?: string,
+  chrome?: Chrome,
 ) {
   const form = html`<form method="post" action="/verify">
     <label for="bundle">Bundle JSON — the document as it was handed to you</label>
@@ -327,6 +398,7 @@ export function verifyPage(
       ${error ? html`<div class="verdict no"><h2>Could not read that bundle</h2><p>${error}</p></div>` : ''}
       <div class="card" style="padding:1.15rem">${form}</div>`,
       mode,
+      chrome,
     )
   }
 
@@ -396,10 +468,12 @@ export function verifyPage(
     <h2>Verify another</h2>
     <div class="card" style="padding:1.15rem">${form}</div>`,
     mode,
+    chrome,
   )
 }
 
 export function partPage(params: {
+  chrome?: Chrome
   partNumber: string
   serialNumber: string
   chain: ReleaseRow[]
@@ -420,6 +494,7 @@ export function partPage(params: {
         That is not proof none exists — only that none has passed through here.
       </div></div>`,
       params.mode,
+      params.chrome,
     )
   }
 
@@ -484,6 +559,7 @@ export function partPage(params: {
 }
 
 export function dashboardPage(params: {
+  chrome?: Chrome
   recent: ReleaseRow[]
   issuers: IssuerStat[]
   handles: Map<string, string>
@@ -502,6 +578,7 @@ export function dashboardPage(params: {
         database.
       </div></div>`,
       params.mode,
+      params.chrome,
     )
   }
 
@@ -549,6 +626,7 @@ export function dashboardPage(params: {
           </table>`}
     </div>`,
     params.mode,
+    params.chrome,
   )
 }
 
@@ -598,6 +676,7 @@ export function fieldLabel(name: string): string {
 }
 
 export function disclosePage(params: {
+  chrome?: Chrome
   mode?: Mode
   fields: readonly string[]
   disclosure?: Disclosure
@@ -639,6 +718,7 @@ export function disclosePage(params: {
         : ''}
       <div class="card" style="padding:1.15rem">${form}</div>`,
       params.mode,
+      params.chrome,
     )
   }
 
@@ -710,9 +790,161 @@ export function disclosePage(params: {
     <h2>Build another</h2>
     <div class="card" style="padding:1.15rem">${form}</div>`,
     params.mode,
+    params.chrome,
   )
 }
 
+
+/* --------------------------------------------------------------------- feed */
+
+const OUTCOME_WORD: Record<string, string> = {
+  accepted: 'accepted',
+  rejected: 'rejected',
+  discrepancy: 'flagged a discrepancy on',
+}
+
+const ago = (at: Date, now: Date) => {
+  const s = Math.max(0, Math.round((now.getTime() - at.getTime()) / 1000))
+  if (s < 60) return `${s}s ago`
+  if (s < 3600) return `${Math.round(s / 60)}m ago`
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`
+  return `${Math.round(s / 86400)}d ago`
+}
+
+/**
+ * One event, as a card.
+ *
+ * Exported because the live stream sends the same markup rather than a second
+ * client-side template: one renderer means a streamed card and a reloaded card
+ * cannot drift apart.
+ */
+export function feedCard(
+  event: FeedEvent,
+  handles: Map<string, string>,
+  now = new Date(),
+  /** Handle of the organization being viewed as, if any. */
+  viewer?: string,
+): HtmlEscapedString | Promise<HtmlEscapedString> {
+  // What the viewpoint control changes, and all it changes: which events are
+  // marked as involving you. It grants no extra visibility — the withheld
+  // blocks stay withheld whoever is looking, because the index never held
+  // them in the first place.
+  const yours = (did: string) =>
+    viewer !== undefined && handles.get(did) === viewer
+      ? html`<span class="mine">you</span>`
+      : ''
+
+  if (event.kind === 'release') {
+    const r = event.release
+    const withheld = FIELDS.filter((f) => !f.public).length
+    return html`<article class="event" data-cid="${r.cid}">
+      <div class="who">
+        <span class="dot rel"></span>
+        <strong>${r.organizationName}</strong>${yours(r.issuerDid)} issued a release certificate
+        <span class="when">${ago(event.at, now)}</span>
+      </div>
+      <div class="what">
+        <a href="/form?uri=${encodeURIComponent(r.uri)}">${r.description}</a>
+        · <span class="mono">${r.partNumber}</span>
+        · s/n <span class="mono">${r.serialNumber}</span>
+      </div>
+      <div class="meta">
+        ${withheld} of ${FIELDS.length} blocks committed and withheld ·
+        form <span class="mono">${r.formNumber}</span>
+      </div>
+    </article>`
+  }
+
+  const v = event.verdict
+  const verifier = handles.get(v.verifierDid) ?? v.verifierDid
+  const issuer = handles.get(v.issuerDid) ?? v.issuerDid
+  return html`<article class="event ${v.outcome}" data-cid="${v.cid}">
+    <div class="who">
+      <span class="dot ${v.outcome}"></span>
+      <strong>${verifier}</strong>${yours(v.verifierDid)}
+      ${OUTCOME_WORD[v.outcome] ?? v.outcome}
+      a part from <strong>${issuer}</strong>${yours(v.issuerDid)}
+      <span class="when">${ago(event.at, now)}</span>
+    </div>
+    <div class="what">
+      <a href="/part/${encodeURIComponent(v.partNumber)}/${encodeURIComponent(v.serialNumber)}">
+        ${v.partNumber} / ${v.serialNumber}
+      </a>
+    </div>
+    ${v.note ? html`<div class="note">“${v.note}”</div>` : ''}
+    <div class="meta">
+      published in ${verifier}&rsquo;s own repository — the issuer cannot remove it
+    </div>
+  </article>`
+}
+
+export function feedPage(params: {
+  chrome?: Chrome
+  mode?: Mode
+  events: FeedEvent[]
+  handles: Map<string, string>
+  current?: string
+  /** False when there is no index to read, which is a different empty. */
+  hasIndex: boolean
+  live: boolean
+  now?: Date
+}) {
+  const now = params.now ?? new Date()
+  const body = html`
+    <h1>Activity</h1>
+    <p class="sub">
+      Every release and every verdict this observer has seen, newest first,
+      ordered by when <em>it</em> saw them rather than by any time an issuer
+      claimed.
+      ${params.live
+        ? html`<span class="pulse" id="pulse">live</span>`
+        : ''}
+    </p>
+
+    ${!params.hasIndex
+      ? html`<div class="card"><div class="empty">
+          No index is attached, so there is nothing to browse. Verification
+          still works — it consults no database at all.
+          <a href="/verify">Check a document</a>.
+        </div></div>`
+      : params.events.length === 0
+        ? html`<div class="card"><div class="empty" id="empty">
+            Nothing observed yet. ${params.live
+              ? 'Records appear here within a few seconds of being published.'
+              : ''}
+          </div></div>`
+        : ''}
+
+    <div id="feed" class="feed">
+      ${params.events.map((e) => feedCard(e, params.handles, now, params.current))}
+    </div>
+
+    ${params.live
+      ? html`${raw(`<script>
+(function () {
+  var feed = document.getElementById('feed')
+  var pulse = document.getElementById('pulse')
+  var es = new EventSource('/api/feed/stream')
+  es.addEventListener('event', function (m) {
+    var empty = document.getElementById('empty')
+    if (empty) empty.parentNode.parentNode.remove()
+    var wrap = document.createElement('div')
+    wrap.innerHTML = m.data
+    var node = wrap.firstElementChild
+    if (!node) return
+    if (feed.querySelector('[data-cid="' + node.getAttribute('data-cid') + '"]')) return
+    node.classList.add('fresh')
+    feed.insertBefore(node, feed.firstChild)
+    while (feed.children.length > 60) feed.removeChild(feed.lastChild)
+    if (pulse) { pulse.classList.add('beat'); setTimeout(function(){ pulse.classList.remove('beat') }, 700) }
+  })
+  es.onerror = function () { if (pulse) pulse.textContent = 'reconnecting' }
+})()
+</script>`)}`
+      : ''}
+  `
+  return layout('Activity', body, params.mode ?? 'live', params.chrome)
+}
 
 /* ------------------------------------------------------------------ writing */
 
@@ -750,28 +982,36 @@ function issueInputs(prefill: Record<string, unknown> | null) {
         <textarea id="${spec.name}" name="${spec.name}"
           style="min-height:5rem">${value(spec.name)}</textarea>`
     }
+    // The placeholder goes in as a value rather than as a fragment of markup:
+    // interpolating the whole `placeholder="…"` string escapes its quotes and
+    // renders an attribute whose name contains the entities, which is why the
+    // date field used to display its own hint in quotation marks.
     return html`${label}
       <input type="${spec.kind === 'integer' ? 'number' : 'text'}"
         id="${spec.name}" name="${spec.name}" value="${value(spec.name)}"
-        ${spec.kind === 'timestamp' ? 'placeholder="2026-04-01T12:00:00Z"' : ''}>`
+        placeholder="${spec.kind === 'timestamp' ? '2026-04-01T12:00:00Z' : ''}">`
   })
 }
 
-function personaPicker(actors: Actor[], current?: string) {
-  return html`<form method="post" action="/act-as" class="persona">
-    <label for="actor">Acting as</label>
-    <select id="actor" name="handle">
-      ${actors.map(
-        (a) => html`<option value="${a.handle}" ${a.handle === current ? 'selected' : ''}>
-          ${a.displayName} (${a.kind})
-        </option>`,
-      )}
-    </select>
-    <button type="submit">Switch</button>
-  </form>`
+/**
+ * Says who is about to sign, and sends the visitor to the one control that
+ * changes it. It deliberately cannot change it itself.
+ */
+function signingAs(current: Actor | undefined) {
+  if (!current) {
+    return html`<div class="needs-actor">
+      You are viewing as the public, which cannot sign anything. Choose an
+      organization in the header to continue.
+    </div>`
+  }
+  return html`<p class="signing">
+    Signing as <strong>${current.displayName}</strong> (${current.kind}) —
+    switch in the header.
+  </p>`
 }
 
 export function issuePage(params: {
+  chrome?: Chrome
   mode?: Mode
   actors: Actor[]
   current?: string
@@ -781,6 +1021,7 @@ export function issuePage(params: {
   prefill?: Record<string, unknown> | null
 }) {
   const issued = params.issued
+  const actor = params.actors.find((a) => a.handle === params.current)
 
   return layout(
     'Issue a release',
@@ -788,17 +1029,11 @@ export function issuePage(params: {
     <p class="sub">
       Fields marked private never appear on the public record — only inside the
       commitment. This service builds the record and hands it to
-      ${params.current ?? 'the issuer'}'s own server to sign; it holds no
+      ${actor?.displayName ?? 'the issuer'}'s own server to sign; it holds no
       signing key of its own.
     </p>
 
-    <div class="banner">
-      <strong>Persona switcher, not a login.</strong> Anyone may act as any
-      demonstration organization here. Real issuance would authenticate the
-      individual holding the certificate.
-    </div>
-
-    <div class="card" style="padding:1.15rem">${personaPicker(params.actors, params.current)}</div>
+    ${signingAs(actor)}
 
     ${params.error
       ? html`<div class="verdict no" style="margin-top:1.25rem"><h2>Could not issue</h2><p>${params.error}</p></div>`
@@ -828,7 +1063,9 @@ export function issuePage(params: {
       the demonstration data.
     </p>
     <form method="get" action="/issue" style="margin-bottom:1rem">
-      <button type="submit" name="example" value="1">Generate a synthetic example</button>
+      <input type="hidden" name="handle" value="${params.current ?? ''}">
+      <button type="submit" name="example" value="1"
+        ${actor ? '' : 'disabled'}>Generate a synthetic example</button>
     </form>
 
     <div class="card" style="padding:1.15rem">
@@ -840,20 +1077,24 @@ export function issuePage(params: {
         <label for="prevCid">Previous release CID (optional)</label>
         <input type="text" id="prevCid" name="prevCid"
           value="${String(params.prefill?.prevCid ?? '')}" placeholder="bafyrei…">
-        <button type="submit">Sign and publish</button>
+        <button type="submit" ${actor ? '' : 'disabled'}>Sign and publish</button>
       </form>
     </div>`,
     params.mode,
+    params.chrome,
   )
 }
 
 export function acceptPage(params: {
+  chrome?: Chrome
   mode?: Mode
   actors: Actor[]
   current?: string
   written?: { uri: string; kind: 'acceptance' | 'dispute' }
   error?: string
 }) {
+  const actor = params.actors.find((a) => a.handle === params.current)
+
   return layout(
     'Record a verdict',
     html`<h1>Record a verdict on a part you received</h1>
@@ -863,7 +1104,7 @@ export function acceptPage(params: {
       suppress it. They can only answer it.
     </p>
 
-    <div class="card" style="padding:1.15rem">${personaPicker(params.actors, params.current)}</div>
+    ${signingAs(actor)}
 
     ${params.error
       ? html`<div class="verdict no" style="margin-top:1.25rem"><h2>Could not record</h2><p>${params.error}</p></div>`
@@ -911,6 +1152,7 @@ export function acceptPage(params: {
       </form>
     </div>`,
     params.mode,
+    params.chrome,
   )
 }
 
@@ -920,6 +1162,7 @@ export type FormFold = { label: string; hash: string; side?: 'left' | 'right' }
 
 export type FormPageParams = {
   mode?: Mode
+  chrome?: Chrome
   /** at:// URI of the release. */
   uri: string
   issuerHandle?: string
@@ -1231,5 +1474,5 @@ export function formPage(params: FormPageParams) {
       <button type="submit">Open the form</button>
     </form>
   `
-  return layout('Release certificate', body, params.mode ?? 'live')
+  return layout('Release certificate', body, params.mode ?? 'live', params.chrome)
 }

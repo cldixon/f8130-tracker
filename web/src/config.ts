@@ -70,8 +70,12 @@ export function describeConfig(c: Config): string[] {
         'resolving real handles and reading real repositories.',
     )
   }
-  if (!c.databaseUrl) {
+  if (!c.databaseUrl && c.mode === 'live') {
     lines.push('No DATABASE_URL: browsing is disabled, verification is unaffected.')
+  }
+  if (c.mode === 'demo') {
+    lines.push('Browsing is served from an in-memory index, and dies with the process.')
+    lines.push('Synthetic activity runs while the feed is being watched. F8130_ACTIVITY=0 disables it.')
   }
   return lines
 }

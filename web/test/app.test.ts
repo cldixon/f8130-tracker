@@ -47,6 +47,7 @@ function tamper(bundle: Bundle, values: Record<string, unknown>): Bundle {
 }
 
 const emptyIndex = (over: Partial<ReadIndex> = {}): ReadIndex => ({
+  feed: async () => [],
   recentReleases: async () => [],
   releasesForPart: async () => [],
   chain: async () => [],
@@ -88,7 +89,6 @@ describe('health and shape', () => {
     for (const path of ['/', '/verify']) {
       const body = await (await app.request(path)).text()
       assert.match(body, /SYNTHETIC DATA/, `${path} is missing the marker`)
-      assert.match(body, /Synthetic demonstration data/)
     }
   })
 
@@ -115,7 +115,7 @@ describe('verification without a database', () => {
 
   test('the dashboard says browsing is down but verification is not', async () => {
     const { app } = await appWithNetwork(null)
-    const body = await (await app.request('/')).text()
+    const body = await (await app.request('/parts')).text()
     assert.match(body, /verifying a document.*still works/is)
   })
 
@@ -175,7 +175,7 @@ describe('the verify page', () => {
     const body = await (
       await app.request('/verify', {
         method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
         body: new URLSearchParams({ bundle: JSON.stringify(overhaul.bundle) }),
       })
     ).text()
@@ -196,7 +196,7 @@ describe('the verify page', () => {
     const body = await (
       await app.request('/verify', {
         method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
         body: new URLSearchParams({
           bundle: JSON.stringify(tamper(overhaul.bundle, { remarks: 'No defects found.' })),
         }),
@@ -220,7 +220,7 @@ describe('the verify page', () => {
     const body = await (
       await app.request('/verify', {
         method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
         body: new URLSearchParams({ bundle: JSON.stringify(forged) }),
       })
     ).text()
@@ -232,7 +232,7 @@ describe('the verify page', () => {
     const { app } = await appWithNetwork()
     const res = await app.request('/verify', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams({ bundle: '{oh no' }),
     })
     assert.equal(res.status, 400)
@@ -244,7 +244,7 @@ describe('the verify page', () => {
     const body = await (
       await app.request('/verify', {
         method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
         body: new URLSearchParams({ bundle: JSON.stringify(overhaul.bundle) }),
       })
     ).text()
@@ -269,7 +269,7 @@ describe('browsing with an index', () => {
         handleFor: async () => 'cascadia-mro.f8130.cldixon.dev',
       }),
     )
-    const body = await (await app.request('/')).text()
+    const body = await (await app.request('/parts')).text()
     assert.match(body, /NT882104/)
     assert.match(body, /cascadia-mro/)
   })
@@ -282,7 +282,7 @@ describe('browsing with an index', () => {
         ],
       }),
     )
-    const body = await (await app.request('/')).text()
+    const body = await (await app.request('/parts')).text()
     assert.match(body, /class="flagged"/)
   })
 
@@ -437,7 +437,7 @@ describe('selective disclosure', () => {
     const { app, overhaul } = await appWithNetwork()
     const res = await app.request('/disclose', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams([
         ['bundle', JSON.stringify(overhaul.bundle)],
         ['field', 'remarks'],
@@ -529,7 +529,7 @@ describe('selective disclosure', () => {
     const { app, overhaul } = await appWithNetwork()
     const res = await app.request('/disclose', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams({ bundle: JSON.stringify(overhaul.bundle) }),
     })
     assert.equal(res.status, 400)
@@ -571,6 +571,16 @@ function fakeWriter(over: Partial<RecordWriter> = {}) {
   return { writer, calls }
 }
 
+/**
+ * The cookie the viewpoint control sets.
+ *
+ * Write requests carry it because the public viewpoint deliberately cannot
+ * sign: the app no longer falls back to whoever happens to be first in the
+ * roster, which is the bug that made the generate-example button issue as the
+ * wrong organization.
+ */
+const ACTING = 'f8130_actor=cascadia-mro.f8130.cldixon.dev'
+
 async function appWithWriter(over: Partial<RecordWriter> = {}) {
   const { net, overhaul } = await standardNetwork()
   const { writer, calls } = fakeWriter(over)
@@ -589,7 +599,7 @@ describe('issuance', () => {
     const { app, calls } = await appWithWriter()
     const res = await app.request('/issue', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams({
         approvingAuthority: 'FAA/United States',
         formNumber: 'SYNTHETIC-8130-9001',
@@ -621,7 +631,7 @@ describe('issuance', () => {
     const { app, calls } = await appWithWriter()
     await app.request('/issue', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams({
         approvingAuthority: 'FAA/United States',
         formNumber: 'F', partNumber: 'P', serialNumber: 'S', status: 'NEW',
@@ -645,7 +655,7 @@ describe('issuance', () => {
     })
     const res = await app.request('/issue', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams({ completedAt: 'yesterday' }),
     })
     assert.equal(res.status, 400)
@@ -656,7 +666,7 @@ describe('issuance', () => {
     const { app } = await appWithWriter()
     const res = await app.request('/act-as', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams({ handle: 'attacker.example.com' }),
     })
     assert.equal(res.headers.get('set-cookie'), null)
@@ -668,7 +678,7 @@ describe('verdicts', () => {
     const { app, calls, overhaul } = await appWithWriter()
     const res = await app.request('/accept', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams({
         subjectUri: overhaul.bundle.uri,
         subjectCid: 'bafywhatever',
@@ -690,7 +700,7 @@ describe('verdicts', () => {
     const { app } = await appWithWriter()
     const res = await app.request('/accept', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams({
         subjectUri: `at://${CASCADIA.did}/dev.cldixon.f8130.release/3mzzzzzzzzz2z`,
         subjectCid: 'bafynope',
@@ -705,7 +715,7 @@ describe('verdicts', () => {
     const { app, calls } = await appWithWriter()
     const res = await app.request('/dispute', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams({
         subjectUri: 'at://did:plc:e/dev.cldixon.f8130.acceptance/3a',
         subjectCid: 'bafyacc',
@@ -722,7 +732,7 @@ describe('verdicts', () => {
     const { app } = await appWithWriter()
     const res = await app.request('/dispute', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams({ subjectUri: 'at://x/y/z' }),
     })
     assert.equal(res.status, 400)
@@ -748,7 +758,7 @@ describe('the form view', () => {
   const post = (app: any, body: Record<string, string>) =>
     app.request('/form', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: new URLSearchParams(body),
     })
 
@@ -940,7 +950,9 @@ describe('issuing from a generated example', () => {
 
   test('generates an example filled into every input', async () => {
     const { app } = await appWithWriter()
-    const body = await (await app.request('/issue?example=1')).text()
+    const body = await (
+      await app.request('/issue?example=1', { headers: { cookie: ACTING } })
+    ).text()
     const empties = FIELDS.filter((f) =>
       f.name === 'remarks'
         ? /name="remarks"[^>]*><\/textarea>/.test(body)
@@ -956,7 +968,9 @@ describe('issuing from a generated example', () => {
    */
   test('a generated example issues without being edited', async () => {
     const { app, calls } = await appWithWriter()
-    const page = await (await app.request('/issue?example=1')).text()
+    const page = await (
+      await app.request('/issue?example=1', { headers: { cookie: ACTING } })
+    ).text()
 
     const submitted = new URLSearchParams()
     for (const spec of FIELDS) {
@@ -979,7 +993,7 @@ describe('issuing from a generated example', () => {
 
     const res = await app.request('/issue', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
       body: submitted,
     })
     assert.equal(res.status, 200)
@@ -1001,8 +1015,9 @@ describe('issuing from a generated example', () => {
 
   test('the example is the acting organization issuing, so Block 4 is its own', async () => {
     const { app } = await appWithWriter()
-    // With no cookie the persona defaults to the writer's first actor.
-    const body = await (await app.request('/issue?example=1')).text()
+    const body = await (
+      await app.request('/issue?example=1', { headers: { cookie: ACTING } })
+    ).text()
     const org = orgs('f8130.cldixon.dev').find(
       (o) => o.handle === 'cascadia-mro.f8130.cldixon.dev',
     )!
