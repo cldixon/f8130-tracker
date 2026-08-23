@@ -53,7 +53,7 @@
 import { RELEASE_STATUS } from './fields.js'
 import type { RawForm } from './fields.js'
 import type { Org } from './roster.js'
-import { buildForm, PARTS, syntheticForm, type ReleaseStatus } from './synthetic.js'
+import { buildForm, PARTS, SIGNERS, syntheticForm, type ReleaseStatus } from './synthetic.js'
 
 /** What a narrator is asked for. Everything else the caller already knows. */
 export type NarrationBrief = {
@@ -70,14 +70,21 @@ export type NarrationBrief = {
   familyHint: string
 }
 
-/** The only fields a model is permitted to author. */
+/**
+ * The only fields a model is permitted to author.
+ *
+ * `signerName` used to be here and was taken back. Across six live briefs the
+ * model returned T. Alwera, T. Alonso, T. Hollis, T. Aldous and T. Adeyemi —
+ * five different surnames and the same initial every time. A name is exactly
+ * the kind of field a shuffled pool does better than a model: more range, for
+ * free, deterministic in the seed, and one less field on the surface a model
+ * could write something unwanted into.
+ */
 export type Narration = {
   /** Block 7. A component name, title case, no manufacturer. */
   description: string
   /** Block 12. What was found and what was done. */
   remarks: string
-  /** Block 13d/14d. A technician or inspector, as initial and surname. */
-  signerName: string
 }
 
 /**
@@ -124,7 +131,7 @@ export const NARRATION_TOOL: NarrationToolSchema = {
   input_schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['description', 'remarks', 'signerName'],
+    required: ['description', 'remarks'],
     properties: {
       description: {
         type: 'string',
@@ -140,16 +147,9 @@ export const NARRATION_TOOL: NarrationToolSchema = {
         description:
           'Block 12. What was found and what was done, in the register a ' +
           'shop actually writes: a finding, then the work, then the ' +
-          'disposition. One to three sentences. Reference a maintenance ' +
-          'manual generically ("per CMM") — never a real manufacturer, ' +
-          'airline, operator or repair station by name.',
-      },
-      signerName: {
-        type: 'string',
-        maxLength: 60,
-        description:
-          'Block 13d/14d. The person signing, as an initial and a surname — ' +
-          '"R. Inspector", "K. Osei". Invented; not a real person.',
+          'disposition. One or two short sentences, under 200 characters. ' +
+          'Maintenance references are written plainly — "per CMM 29-11-08" ' +
+          '— and no company is ever named.',
       },
     },
   },
@@ -173,10 +173,16 @@ export const NARRATION_SYSTEM = [
   'CMM." Not marketing copy, not a narrative, not an explanation of what an',
   '8130-3 is.',
   '',
+  'Length matters. Block 12 is one or two short sentences, under 200',
+  'characters. A shop writes the minimum that records what happened.',
+  '',
   'Two absolute rules:',
-  '1. Never name a real manufacturer, airline, operator, lessor or repair',
-  '   station — not Boeing, Airbus, Honeywell, GE, Pratt, Collins, Safran,',
-  '   United, Delta, Lufthansa, or any other. Refer to manuals generically.',
+  '1. No company is ever named — not a manufacturer, airline, operator,',
+  '   lessor or repair station. This is ordinary practice rather than a',
+  '   restriction to write around: a maintenance reference on a form is',
+  '   "per CMM 29-11-08" or "per SB 73-0042", never "per <company> CMM".',
+  '   Do not acknowledge the rule in the text or invent a circumlocution',
+  '   for it; just write the reference the plain way.',
   '2. Never write a part number, serial number, certificate number or work',
   '   order. Those are composed elsewhere and are not yours to invent.',
   '',
@@ -187,7 +193,7 @@ export const NARRATION_SYSTEM = [
 export function narrationPrompt(brief: NarrationBrief): string {
   const work =
     brief.status === 'NEW'
-      ? 'This is new manufacture, so the remarks describe production acceptance rather than a repair — there is no prior defect to find.'
+      ? 'This is new manufacture certified for conformity under Block 13, so the remarks describe production acceptance testing. There is no prior defect to find, and nothing is being returned to service — that phrase belongs to Block 14 and must not appear.'
       : `The Block 11 status is ${brief.status}, so the remarks must describe work consistent with exactly that and not with a different status.`
 
   return [
@@ -260,13 +266,12 @@ export function validateNarration(
   }
   const o = raw as Record<string, unknown>
 
-  for (const key of ['description', 'remarks', 'signerName'] as const) {
+  for (const key of ['description', 'remarks'] as const) {
     if (typeof o[key] !== 'string') return { ok: false, reason: `${key} is not a string` }
   }
 
   const description = (o.description as string).trim()
   const remarks = (o.remarks as string).trim()
-  const signerName = (o.signerName as string).trim()
 
   // Lengths, against the lexicon's own limits rather than the tool schema's.
   // The record is what has to fit; the schema is only a hint to the model.
@@ -276,20 +281,16 @@ export function validateNarration(
   if (remarks.length === 0 || remarks.length > 1000) {
     return { ok: false, reason: 'remarks length' }
   }
-  if (signerName.length === 0 || signerName.length > 60) {
-    return { ok: false, reason: 'signerName length' }
-  }
-
   // Control characters would survive canonicalization as invisible bytes in a
   // committed leaf, which is a bad thing to be unable to see.
-  for (const [key, v] of [['description', description], ['remarks', remarks], ['signerName', signerName]] as const) {
+  for (const [key, v] of [['description', description], ['remarks', remarks]] as const) {
     // eslint-disable-next-line no-control-regex
     if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(v)) {
       return { ok: false, reason: `${key} has control characters` }
     }
   }
 
-  const haystack = `${description}\n${remarks}\n${signerName}`
+  const haystack = `${description}\n${remarks}`
   for (const pattern of NAME_PATTERNS) {
     const hit = pattern.exec(haystack)
     if (hit) return { ok: false, reason: `names ${hit[0]}` }
@@ -314,7 +315,7 @@ export function validateNarration(
     return { ok: false, reason: 'remarks name the issuing organization' }
   }
 
-  return { ok: true, narration: { description, remarks, signerName } }
+  return { ok: true, narration: { description, remarks } }
 }
 
 // ---------------------------------------------------------------------------
@@ -415,7 +416,8 @@ export async function narratedForm(params: {
     organizationAddress: org.address,
     signerCert:
       org.certificate ?? `SYNTHETIC-CERT-9${String(mix(seed, 7) % 10000).padStart(4, '0')}`,
-    signerName: narration.signerName,
+    // From the pool rather than the model — see Narration.
+    signerName: SIGNERS[mix(seed, 8) % SIGNERS.length]!,
   })
 }
 

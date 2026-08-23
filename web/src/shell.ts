@@ -91,6 +91,10 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
   border: 1px solid var(--pass); border-radius: 3px; padding: 0 .3rem;
 }
 .pulse.beat { background: var(--pass-bg); }
+/* Paused or idle: the stream is closed, so the generator has no viewer and
+   is writing nothing. Saying which is honest — a still feed with no
+   explanation reads as broken. */
+.pulse.idle { color: var(--muted); border-color: var(--line); }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
 .demo {
   background: var(--skip-bg); border: 1px solid var(--line);

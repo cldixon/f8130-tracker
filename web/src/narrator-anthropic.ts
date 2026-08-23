@@ -1,5 +1,5 @@
 /**
- * A narrator backed by Claude Haiku.
+ * A narrator backed by Claude Sonnet.
  *
  * The only file in the project that talks to a model. It lives in `web` rather
  * than in `core` so core stays pure and dependency-free — the same reason the
@@ -27,13 +27,19 @@ import {
 } from '@f8130/core'
 
 /**
- * Haiku, deliberately.
+ * Sonnet, for the prose rather than for the reasoning.
  *
- * Three sentences of shop prose is not a reasoning task, and the job runs on
- * every event of a live feed. The cost of a form is a small fraction of a cent
- * and the latency is well inside the gap between two feed events.
+ * Three sentences of shop findings is not a hard task, and a smaller model
+ * produces valid output — but the whole point of narrating rather than drawing
+ * from a catalogue is range, and range is what the larger model has. The job
+ * costs a fraction of a cent either way and the latency sits well inside the
+ * gap between two feed events.
+ *
+ * No `thinking` and no `effort` here: this is a single constrained tool call,
+ * and adaptive thinking would spend tokens deciding how to write two
+ * sentences.
  */
-const MODEL = 'claude-haiku-4-5'
+const MODEL = 'claude-sonnet-5'
 
 export type AnthropicNarratorOptions = {
   apiKey?: string
@@ -54,13 +60,21 @@ export class AnthropicNarrator implements Narrator {
     // A bare constructor resolves ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or a
     // stored profile, in that order. Passing an explicit key is for callers
     // that hold one directly.
+    // maxRetries: 0 is deliberate and was measured. The SDK retries timeouts
+    // twice by default, which turns a bounded stall into three times the
+    // bound — six calls with a four-second timeout took eighty seconds of
+    // wall clock rather than the twenty-four the timeout implied. Retrying is
+    // the wrong instinct on the publishing path of a feed when a perfectly
+    // good fallback is one branch away.
+    const config = { maxRetries: 0 }
     this.client = opts.apiKey
-      ? new Anthropic({ apiKey: opts.apiKey })
-      : new Anthropic()
-    // Short on purpose. This sits on the publishing path of a live feed, and
-    // a call that has not answered in four seconds is worth abandoning for the
-    // catalogue rather than holding an event open for.
-    this.timeoutMs = opts.timeoutMs ?? 4_000
+      ? new Anthropic({ ...config, apiKey: opts.apiKey })
+      : new Anthropic(config)
+    // Measured rather than guessed. Four seconds was too tight for Sonnet on
+    // this prompt and nearly everything fell back; twelve leaves room without
+    // holding a feed event open long enough to notice. With retries off this
+    // is the true worst case, not a third of it.
+    this.timeoutMs = opts.timeoutMs ?? 12_000
     this.onError = opts.onError
   }
 

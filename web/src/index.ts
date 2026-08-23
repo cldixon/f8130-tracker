@@ -139,7 +139,7 @@ async function main() {
     : null
   console.warn(
     narrator
-      ? 'Form prose is narrated by Claude Haiku; failures fall back to the catalogue.'
+      ? 'Form prose is narrated by Claude Sonnet; failures fall back to the catalogue.'
       : 'No ANTHROPIC_API_KEY: generated forms come from the built-in catalogue.',
   )
 

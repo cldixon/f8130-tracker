@@ -887,6 +887,57 @@ describe('the live stream', () => {
     assert.equal(left, 1, 'closing the tab must stop the generator')
   })
 
+  /**
+   * An open tab is a poor proxy for a watcher. The generator writes a real
+   * record per event, so a page left in a background window overnight would
+   * publish to a real repository with nobody reading a line of it.
+   */
+  test('the page closes the stream when hidden or idle', async () => {
+    const { app } = await feedApp((i) => i.addRelease(release()))
+    const body = await (await app.request('/')).text()
+
+    assert.match(body, /visibilitychange/)
+    assert.match(body, /IDLE_MS/)
+    assert.match(body, /es\.close\(\)/)
+    // And says which state it is in, because a still feed with no explanation
+    // reads as broken rather than as paused.
+    assert.match(body, /'paused'/)
+    assert.match(body, /'idle'/)
+  })
+
+  test('a resumed stream picks up where the page left off', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    // Observed before the resume point: a fresh stream must not replay it.
+    index.addRelease(release({ cid: 'old', observedAt: new Date('2026-01-01T00:00:00Z') }))
+    const app = createApp({ resolver: net, repo: net, index, mode: 'live' })
+
+    // Aborted rather than merely cancelled: the route's poll interval is
+    // cleared on abort, and an interval left running holds the test process
+    // open forever.
+    const controller = new AbortController()
+    const res = await app.request(
+      `/api/feed/stream?since=${encodeURIComponent('2026-06-01T00:00:00Z')}`,
+      { signal: controller.signal },
+    )
+    assert.equal(res.status, 200)
+    assert.equal(res.headers.get('content-type'), 'text/event-stream')
+    await res.body!.cancel()
+    controller.abort()
+  })
+
+  test('a malformed since is ignored rather than fatal', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const app = createApp({ resolver: net, repo: net, index: new MemoryIndex(), mode: 'live' })
+    const controller = new AbortController()
+    const res = await app.request('/api/feed/stream?since=not-a-date', {
+      signal: controller.signal,
+    })
+    assert.equal(res.status, 200)
+    await res.body!.cancel()
+    controller.abort()
+  })
+
   test('is refused when there is no index to stream from', async () => {
     const { net } = await demoNetwork(DOMAIN)
     const app = createApp({ resolver: net, repo: net, index: null, mode: 'live' })

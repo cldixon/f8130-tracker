@@ -279,7 +279,14 @@ export function createApp(deps: AppDeps) {
     // viewpoint reloads the page, which opens a new one.
     const viewer = currentActor(c)
 
-    let since = new Date()
+    // A resumed stream picks up where the page left off. The client sends the
+    // timestamp of the newest event it has drawn, so events another viewer's
+    // session produced while this one was paused still arrive rather than
+    // being silently skipped.
+    const resume = c.req.query('since')
+    const parsed = resume ? new Date(resume) : null
+    let since =
+      parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date()
     let closed = false
 
     const stream = new ReadableStream({
