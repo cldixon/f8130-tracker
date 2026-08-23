@@ -43,6 +43,7 @@ import {
   verifyPage,
   type FormFold,
 } from './views.js'
+import { PUBLIC_HANDLE, type NavKey } from './shell.js'
 import type { RecordWriter } from './writer.js'
 
 const MAX_CHAIN_DEPTH = 100
@@ -133,7 +134,7 @@ export function createApp(deps: AppDeps) {
     return c.html(
       feedPage({
         mode,
-        chrome: chrome(c),
+        chrome: chrome(c, 'home'),
         events,
         handles: await handlesFor(events),
         current: currentActor(c),
@@ -229,7 +230,7 @@ export function createApp(deps: AppDeps) {
     if (!deps.index) {
       return c.html(
         dashboardPage({
-          chrome: chrome(c),
+          chrome: chrome(c, 'parts'),
           recent: [],
           issuers: [],
           handles: new Map(),
@@ -248,7 +249,7 @@ export function createApp(deps: AppDeps) {
     ])
     return c.html(
       dashboardPage({
-        chrome: chrome(c),
+        chrome: chrome(c, 'parts'),
         recent,
         issuers,
         handles,
@@ -269,7 +270,7 @@ export function createApp(deps: AppDeps) {
     if (releases.length === 0) {
       return c.html(
         partPage({
-          chrome: chrome(c),
+          chrome: chrome(c, 'parts'),
           partNumber,
           serialNumber,
           chain: [],
@@ -305,7 +306,7 @@ export function createApp(deps: AppDeps) {
 
     return c.html(
       partPage({
-        chrome: chrome(c),
+        chrome: chrome(c, 'parts'),
         partNumber,
         serialNumber,
         chain,
@@ -318,7 +319,7 @@ export function createApp(deps: AppDeps) {
   })
 
   // --------------------------------------------------------------- verify
-  app.get('/verify', (c) => c.html(verifyPage(mode, undefined, undefined, chrome(c))))
+  app.get('/verify', (c) => c.html(verifyPage(mode, undefined, undefined, chrome(c, 'verify'))))
 
   app.post('/verify', async (c) => {
     const form = await c.req.parseBody()
@@ -330,7 +331,7 @@ export function createApp(deps: AppDeps) {
       parsed = JSON.parse(raw)
     } catch {
       return c.html(
-        verifyPage(mode, undefined, 'That is not valid JSON.', chrome(c)),
+        verifyPage(mode, undefined, 'That is not valid JSON.', chrome(c, 'verify')),
         400,
       )
     }
@@ -343,9 +344,9 @@ export function createApp(deps: AppDeps) {
         resolver: deps.resolver,
         repo: deps.repo,
       })
-      return c.html(verifyPage(mode, report, undefined, chrome(c)))
+      return c.html(verifyPage(mode, report, undefined, chrome(c, 'verify')))
     } catch (err) {
-      return c.html(verifyPage(mode, undefined, describe(err), chrome(c)), 400)
+      return c.html(verifyPage(mode, undefined, describe(err), chrome(c, 'verify')), 400)
     }
   })
 
@@ -654,10 +655,26 @@ export function createApp(deps: AppDeps) {
   // pretend to solve.
   const ACTOR_COOKIE = 'f8130_actor'
 
+  /**
+   * Who the visitor is acting as.
+   *
+   * Three states, not two. No cookie means a first arrival, and a first
+   * arrival lands signed in as a repair station — an application whose first
+   * screen has no composer and no identity is a worse demonstration than one
+   * that starts somewhere. `~public` is the explicit choice to watch as a
+   * stranger, which is the viewpoint that shows what the record actually
+   * discloses, so it stays one click away rather than being the front door.
+   */
+  const defaultActor = (): string | undefined =>
+    deps.writer?.actors().find((a) => a.kind === 'mro')?.handle ??
+    deps.writer?.actors()[0]?.handle
+
   const currentActor = (c: any): string | undefined => {
     const raw = c.req.header('cookie') ?? ''
     const match = /(?:^|;\s*)f8130_actor=([^;]+)/.exec(raw)
-    const handle = match ? decodeURIComponent(match[1]!) : undefined
+    if (!match) return defaultActor()
+    const handle = decodeURIComponent(match[1]!)
+    if (handle === PUBLIC_HANDLE) return undefined
     // Only ever a handle the writer already knows; a tampered cookie selects
     // nothing rather than becoming an injection point.
     return deps.writer?.actors().some((a) => a.handle === handle) ? handle : undefined
@@ -671,9 +688,10 @@ export function createApp(deps: AppDeps) {
    * repository and no bundle, and the demonstration is more honest if that is
    * the default a visitor arrives in.
    */
-  const chrome = (c: any) => ({
+  const chrome = (c: any, active: NavKey = null) => ({
     actors: deps.writer?.actors(),
     current: currentActor(c),
+    active,
   })
 
   if (deps.writer) {
@@ -683,10 +701,13 @@ export function createApp(deps: AppDeps) {
       const form = await c.req.parseBody()
       const handle = typeof form.handle === 'string' ? form.handle : ''
 
-      // An empty selection means "the public" — the viewpoint with no bundles
-      // and no repository, which is the one most visitors actually occupy.
-      if (handle === '') {
-        c.header('set-cookie', `${ACTOR_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`)
+      // Signing out is a stored choice rather than a cleared cookie: with no
+      // cookie at all the next request would sign back in as the default.
+      if (handle === PUBLIC_HANDLE) {
+        c.header(
+          'set-cookie',
+          `${ACTOR_COOKIE}=${PUBLIC_HANDLE}; Path=/; HttpOnly; SameSite=Lax`,
+        )
         return c.redirect(c.req.header('referer') ?? '/', 303)
       }
       if (writer.actors().some((a) => a.handle === handle)) {
@@ -697,6 +718,24 @@ export function createApp(deps: AppDeps) {
       }
       // Back where they were, so switching viewpoint does not also navigate.
       return c.redirect(c.req.header('referer') ?? '/', 303)
+    })
+
+    /**
+     * A generated example, as data.
+     *
+     * The composer fills its own inputs from this rather than round-tripping,
+     * because a round trip closes the dialog. Same builder the seed job and
+     * the full page use — a second one would drift the way the roster and the
+     * record shape both did, quietly, and only visibly once something failed.
+     */
+    app.get('/api/example', (c) => {
+      const handle = currentActor(c)
+      if (!handle) return c.json({ error: 'the public cannot sign' }, 403)
+      const org = orgs(process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev').find(
+        (o) => o.handle === handle,
+      )
+      if (!org) return c.json({ error: 'unknown organization' }, 404)
+      return c.json(syntheticForm({ org, seed: Math.floor(Math.random() * 1e9) }))
     })
 
     app.get('/issue', (c) => {
@@ -736,7 +775,7 @@ export function createApp(deps: AppDeps) {
       return c.html(
         issuePage({
           mode,
-          chrome: { actors: writer.actors(), current: handle },
+          chrome: { actors: writer.actors(), current: handle, composer: false },
           actors: writer.actors(),
           current: handle,
           prefill,
@@ -751,7 +790,7 @@ export function createApp(deps: AppDeps) {
         return c.html(
           issuePage({
             mode,
-            chrome: chrome(c),
+            chrome: { ...chrome(c), composer: false },
             actors: writer.actors(),
             error: 'Choose an organization in the header before signing.',
           }),
@@ -785,7 +824,7 @@ export function createApp(deps: AppDeps) {
         return c.html(
           issuePage({
             mode,
-            chrome: chrome(c),
+            chrome: { ...chrome(c), composer: false },
             actors: writer.actors(),
             current: handle,
             issued: { uri: issued.uri, bundle: issued.bundle },
@@ -795,7 +834,7 @@ export function createApp(deps: AppDeps) {
         return c.html(
           issuePage({
             mode,
-            chrome: chrome(c),
+            chrome: { ...chrome(c), composer: false },
             actors: writer.actors(),
             current: handle,
             error: describe(err),

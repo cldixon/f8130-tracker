@@ -15,7 +15,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { demoNetwork, orgs } from '@f8130/core'
+import { demoNetwork, orgs, FIELDS } from '@f8130/core'
 
 import { ActivityGenerator } from '../src/activity.js'
 import { createApp } from '../src/app.js'
@@ -24,6 +24,9 @@ import { MemoryRecordWriter, demoActors, type RecordWriter } from '../src/writer
 import type { AcceptanceRow, ReleaseRow } from '../src/index-port.js'
 
 const DOMAIN = 'f8130.cldixon.dev'
+
+/** The stored choice to watch as a stranger. */
+const PUBLIC = 'f8130_actor=~public'
 
 const release = (over: Partial<ReleaseRow> = {}): ReleaseRow => ({
   cid: 'bafyrel',
@@ -177,9 +180,23 @@ describe('the viewpoint control', () => {
     const { app } = await writerFor()
     for (const path of ['/', '/parts', '/verify', '/disclose', '/issue', '/accept']) {
       const body = await (await app.request(path)).text()
-      assert.match(body, /action="\/act-as"/, `${path} has no viewpoint control`)
-      assert.match(body, /the public/, `${path} cannot return to the public view`)
+      assert.match(body, /action="\/act-as"/, `${path} has no account control`)
+      assert.match(body, /The public/, `${path} cannot return to the public view`)
     }
+  })
+
+  /**
+   * An application whose first screen has no identity and no composer is a
+   * worse demonstration than one that starts somewhere. The public viewpoint
+   * is the one that shows what the record actually discloses, so it stays one
+   * click away rather than being the front door.
+   */
+  test('a first arrival lands signed in as a repair station', async () => {
+    const { app } = await writerFor()
+    const body = await (await app.request('/')).text()
+    const mro = orgs(DOMAIN).find((o) => o.kind === 'mro')!
+    assert.match(body, new RegExp(mro.displayName))
+    assert.match(body, /class="newpost" data-compose/, 'no way to compose')
   })
 
   /**
@@ -194,23 +211,48 @@ describe('the viewpoint control', () => {
     assert.equal(body.split('action="/act-as"').length - 1, 1)
   })
 
-  test('the public viewpoint is the default and cannot sign', async () => {
+  test('watching as the public cannot sign', async () => {
     const { app } = await writerFor()
-    const body = await (await app.request('/issue')).text()
+    const body = await (
+      await app.request('/issue', { headers: { cookie: PUBLIC } })
+    ).text()
     assert.match(body, /viewing as the public/)
 
     const res = await app.request('/issue', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: PUBLIC },
       body: new URLSearchParams({ partNumber: 'P', serialNumber: 'S' }),
     })
     assert.equal(res.status, 400)
     assert.match(await res.text(), /Choose an organization/)
   })
 
+  /**
+   * The composer fills its inputs by field name, and one of the seventeen is
+   * called "item". Anything reaching for it through a form's element
+   * collection gets that collection's own item() method instead, so the field
+   * has to be in the payload for the browser-side fix to have something to
+   * find.
+   */
+  test('the generated example carries every field, Block 6 included', async () => {
+    const { app } = await writerFor()
+    const form = (await (await app.request('/api/example')).json()) as Record<string, unknown>
+    for (const spec of FIELDS) {
+      assert.ok(spec.name in form, `no ${spec.name} (Block ${spec.block})`)
+    }
+  })
+
+  test('the public is offered no example to generate either', async () => {
+    const { app } = await writerFor()
+    const res = await app.request('/api/example', { headers: { cookie: PUBLIC } })
+    assert.equal(res.status, 403)
+  })
+
   test('the public viewpoint cannot press the buttons that sign', async () => {
     const { app } = await writerFor()
-    const body = await (await app.request('/issue')).text()
+    const body = await (
+      await app.request('/issue', { headers: { cookie: PUBLIC } })
+    ).text()
     assert.match(body, /name="example" value="1"\s*disabled/)
     assert.match(body, /<button type="submit" disabled>Sign and publish/)
   })
@@ -230,7 +272,7 @@ describe('the viewpoint control', () => {
     assert.match(body, /placeholder="2026-04-01T12:00:00Z"/)
   })
 
-  test('choosing an organization sets the cookie; choosing the public clears it', async () => {
+  test('choosing an organization sets the cookie; the public is also a choice', async () => {
     const { app } = await writerFor()
     const pick = await app.request('/act-as', {
       method: 'post',
@@ -240,12 +282,14 @@ describe('the viewpoint control', () => {
     assert.equal(pick.status, 303)
     assert.match(pick.headers.get('set-cookie') ?? '', /f8130_actor=cascadia-mro/)
 
-    const clear = await app.request('/act-as', {
+    // Stored rather than cleared: with no cookie at all the next request
+    // would sign straight back in as the default repair station.
+    const out = await app.request('/act-as', {
       method: 'post',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ handle: '' }),
+      body: new URLSearchParams({ handle: '~public' }),
     })
-    assert.match(clear.headers.get('set-cookie') ?? '', /f8130_actor=;.*Max-Age=0/)
+    assert.match(out.headers.get('set-cookie') ?? '', /f8130_actor=~public/)
   })
 
   test('a cookie naming an unknown organization selects nothing', async () => {
@@ -255,6 +299,16 @@ describe('the viewpoint control', () => {
     ).text()
     assert.match(body, /viewing as the public/)
     assert.ok(!body.includes('attacker.example.com'))
+  })
+
+  test('the composer hangs off every page except the one that is the form', async () => {
+    const { app } = await writerFor()
+    const feed = await (await app.request('/')).text()
+    assert.match(feed, /<dialog id="composer">/)
+
+    // Two seventeen-block forms in one document would mean duplicate ids.
+    const issue = await (await app.request('/issue')).text()
+    assert.ok(!issue.includes('<dialog id="composer">'))
   })
 
   /**
@@ -292,7 +346,7 @@ describe('the viewpoint control', () => {
     ).text()
     assert.match(asIssuer, /class="mine"/)
 
-    const asPublic = await (await app.request('/')).text()
+    const asPublic = await (await app.request('/', { headers: { cookie: PUBLIC } })).text()
     assert.ok(!asPublic.includes('class="mine"'), 'the public is party to nothing')
   })
 })

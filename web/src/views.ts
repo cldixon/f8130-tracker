@@ -14,340 +14,14 @@ import type {
   IssuerStat,
   ReleaseRow,
 } from './index-port.js'
+import { bareLabel, fieldLabel, issueInputs, signingAs } from './compose.js'
+import { avatar, layout, type Chrome, type Mode } from './shell.js'
 import type { Actor } from './writer.js'
 
-const STYLES = `
-:root {
-  --bg: #fbfbfa; --fg: #1a1a19; --muted: #6b6b68; --line: #e2e2df;
-  --card: #ffffff; --pass: #1a7f47; --fail: #b3261e; --warn: #8a6100;
-  --skip: #8a8a86; --accent: #2c5aa0;
-  --pass-bg: #eaf5ee; --fail-bg: #fdecea; --warn-bg: #fdf5e3; --skip-bg: #f4f4f2;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16161a; --fg: #e8e8e6; --muted: #9a9a96; --line: #2e2e34;
-    --card: #1e1e23; --pass: #6cc48d; --fail: #f2857c; --warn: #e0b354;
-    --skip: #7a7a78; --accent: #86aae8;
-    --pass-bg: #17301f; --fail-bg: #351b19; --warn-bg: #33290f; --skip-bg: #232328;
-  }
-}
-* { box-sizing: border-box; }
-body {
-  margin: 0; background: var(--bg); color: var(--fg);
-  font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-}
-main { max-width: 62rem; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
-a { color: var(--accent); }
-h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: -0.01em; }
-h2 { font-size: 1.05rem; margin: 2rem 0 .75rem; letter-spacing: -0.01em; }
-.sub { color: var(--muted); margin: 0 0 1.75rem; }
-code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86em; }
-nav { border-bottom: 1px solid var(--line); background: var(--card); }
-nav div { max-width: 62rem; margin: 0 auto; padding: .8rem 1.25rem; display: flex; gap: 1.25rem; align-items: baseline; }
-nav strong { letter-spacing: -0.02em; }
-nav a { text-decoration: none; color: var(--muted); font-size: .92rem; }
-nav a:hover { color: var(--fg); }
-
-/* The one standing admonition, in the chrome rather than on every page.
-   There used to be three or four before any content; a warning repeated that
-   often is read as furniture and stops working. */
-.marker {
-  background: var(--warn-bg); border-bottom: 1px solid var(--line);
-  font-size: .78rem; color: var(--muted); text-align: center;
-  padding: .35rem 1.25rem;
-}
-.marker strong { color: var(--fg); }
-nav .whoami { margin-left: auto; display: flex; align-items: center; gap: .4rem; }
-nav .whoami span { font-size: .78rem; color: var(--muted); }
-nav .whoami select {
-  font-size: .82rem; padding: .2rem .4rem; width: auto; max-width: 14rem;
-}
-nav .whoami button { margin: 0; padding: .2rem .5rem; font-size: .8rem; }
-
-/* feed */
-.feed { display: flex; flex-direction: column; gap: .6rem; }
-.event {
-  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-  padding: .8rem .95rem;
-}
-.event.rejected { border-left: 3px solid var(--fail); }
-.event.discrepancy { border-left: 3px solid var(--warn); }
-.event .who { font-size: .92rem; display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; }
-.event .who .when { margin-left: auto; color: var(--muted); font-size: .76rem; white-space: nowrap; }
-.event .dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--accent); flex: 0 0 auto; align-self: center; }
-.event .dot.accepted { background: var(--pass); }
-.event .dot.rejected { background: var(--fail); }
-.event .dot.discrepancy { background: var(--warn); }
-.event .what { margin-top: .25rem; font-size: .9rem; }
-.event .mine {
-  font-size: .64rem; text-transform: uppercase; letter-spacing: .06em;
-  color: var(--accent); border: 1px solid var(--accent); border-radius: 3px;
-  padding: 0 .25rem; margin-left: .15rem; vertical-align: .05em;
-}
-.event .note {
-  margin-top: .4rem; padding: .4rem .6rem; border-radius: 4px;
-  background: var(--skip-bg); font-size: .85rem; color: var(--fg);
-}
-.event .meta { margin-top: .35rem; font-size: .74rem; color: var(--muted); }
-@keyframes arrive { from { opacity: 0; transform: translateY(-.4rem); } to { opacity: 1; transform: none; } }
-.event.fresh { animation: arrive .35s ease-out; }
-.pulse {
-  display: inline-block; margin-left: .5rem; font-size: .68rem;
-  text-transform: uppercase; letter-spacing: .07em; color: var(--pass);
-  border: 1px solid var(--pass); border-radius: 3px; padding: 0 .3rem;
-}
-.pulse.beat { background: var(--pass-bg); }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
-.demo {
-  background: var(--skip-bg); border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
-  padding: .6rem .8rem; border-radius: 4px; font-size: .85rem;
-  margin-bottom: 1.5rem;
-}
-
-/* verification stages */
-.verdict { padding: 1rem 1.15rem; border-radius: 8px; margin-bottom: 1.25rem; border: 1px solid var(--line); }
-.verdict.ok { background: var(--pass-bg); border-left: 3px solid var(--pass); }
-.verdict.no { background: var(--fail-bg); border-left: 3px solid var(--fail); }
-.verdict h2 { margin: 0 0 .2rem; font-size: 1.15rem; }
-.verdict p { margin: 0; color: var(--muted); font-size: .92rem; }
-
-.stage { display: flex; gap: .9rem; padding: .85rem 1.15rem; border-bottom: 1px solid var(--line); }
-.stage:last-child { border-bottom: 0; }
-.stage .badge {
-  flex: 0 0 auto; width: 4.4rem; text-align: center; align-self: flex-start;
-  font-size: .68rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-  padding: .2rem 0; border-radius: 3px;
-}
-.badge.pass { color: var(--pass); background: var(--pass-bg); }
-.badge.fail { color: var(--fail); background: var(--fail-bg); }
-.badge.warn { color: var(--warn); background: var(--warn-bg); }
-.badge.skipped { color: var(--skip); background: var(--skip-bg); }
-.stage .body { min-width: 0; }
-.stage .title { font-weight: 600; font-size: .93rem; }
-.stage .detail { color: var(--muted); font-size: .88rem; margin-top: .12rem; }
-.stage .evidence { margin-top: .4rem; font-size: .78rem; color: var(--muted); word-break: break-all; }
-
-/* the lesson: a real signature over a document that has since changed */
-.contrast {
-  margin-top: 1.25rem; padding: .85rem 1.15rem; border-radius: 6px;
-  background: var(--fail-bg); border: 1px dashed var(--fail); font-size: .89rem;
-}
-.contrast strong { color: var(--fail); }
-
-/* timeline */
-.link { display: flex; gap: 1rem; padding: 1rem 1.15rem; border-bottom: 1px solid var(--line); }
-.link:last-child { border-bottom: 0; }
-.link .rail { flex: 0 0 auto; width: .6rem; display: flex; flex-direction: column; align-items: center; }
-.link .dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--accent); margin-top: .45rem; }
-.link .line { flex: 1; width: 1px; background: var(--line); }
-.times { display: flex; gap: 1.75rem; margin-top: .5rem; flex-wrap: wrap; }
-.times div { font-size: .78rem; }
-.times .label { color: var(--muted); text-transform: uppercase; letter-spacing: .05em; font-size: .68rem; }
-.gap { background: var(--fail-bg); border: 1px dashed var(--fail); border-radius: 6px; padding: .85rem 1.15rem; margin-top: 1rem; font-size: .89rem; }
-
-table { width: 100%; border-collapse: collapse; font-size: .89rem; }
-th { text-align: left; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: .6rem 1.15rem; border-bottom: 1px solid var(--line); font-weight: 600; }
-td { padding: .65rem 1.15rem; border-bottom: 1px solid var(--line); }
-tr:last-child td { border-bottom: 0; }
-.flagged { color: var(--fail); font-weight: 600; }
-.scroll { overflow-x: auto; }
-
-textarea { width: 100%; min-height: 11rem; font-family: ui-monospace, monospace; font-size: .82rem;
-  padding: .75rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
-input[type=text] { padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--card); color: var(--fg); font-size: .9rem; width: 100%; max-width: 22rem; }
-label { display: block; font-size: .8rem; color: var(--muted); margin: 1rem 0 .3rem; }
-button { margin-top: 1.15rem; padding: .55rem 1.1rem; font-size: .92rem; font-weight: 600;
-  border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
-button:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
-footer { border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem;
-  color: var(--muted); font-size: .78rem; }
-.empty { padding: 1.5rem 1.15rem; color: var(--muted); font-size: .9rem; }
-.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .3rem .8rem; margin-top: .4rem; }
-.check { display: flex; align-items: center; gap: .4rem; margin: 0; font-size: .85rem; color: var(--fg); }
-.check input { margin: 0; }
-select { padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--card); color: var(--fg); font-size: .9rem; max-width: 22rem; width: 100%; }
-.hint { font-size: .68rem; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--accent); border: 1px solid var(--line); border-radius: 3px; padding: 0 .3rem; }
-.signing { font-size: .88rem; color: var(--muted); margin: 0 0 1.25rem; }
-.signing strong { color: var(--fg); }
-.needs-actor {
-  border: 1px solid var(--line); border-left: 3px solid var(--accent);
-  border-radius: 4px; padding: .7rem .85rem; font-size: .88rem;
-  margin-bottom: 1.25rem; color: var(--muted);
-}
-
-/* ---------------------------------------------------------------- form view */
-
-/* The rendered 8130-3.
-   The watermark is a pseudo-element over the whole sheet rather than a corner
-   badge, because a corner badge crops out of a screenshot and this is the one
-   artifact in the project that must never travel without saying what it is. */
-.sheet {
-  position: relative; background: var(--card); border: 1px solid var(--fg);
-  border-radius: 2px; overflow: hidden;
-}
-.sheet::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 2;
-  background-image: repeating-linear-gradient(
-    -30deg, transparent 0 38px,
-    color-mix(in srgb, var(--fail) 7%, transparent) 38px 76px);
-}
-.sheet .stamp {
-  position: absolute; inset: 0; display: flex; align-items: center;
-  justify-content: center; pointer-events: none; z-index: 3;
-}
-.sheet .stamp span {
-  transform: rotate(-24deg); font-weight: 800; letter-spacing: .18em;
-  font-size: clamp(1rem, 3.4vw, 2rem); text-align: center; line-height: 1.35;
-  color: color-mix(in srgb, var(--fail) 26%, transparent);
-  border: 3px solid color-mix(in srgb, var(--fail) 20%, transparent);
-  padding: .5rem 1.1rem; border-radius: 6px;
-}
-.sheet .head {
-  border-bottom: 1px solid var(--fg); padding: .55rem .7rem; text-align: center;
-}
-.sheet .head .t1 { font-size: .78rem; letter-spacing: .04em; }
-.sheet .head .t2 { font-weight: 700; font-size: .95rem; letter-spacing: .02em; }
-.grid { display: grid; grid-template-columns: repeat(4, 1fr); }
-.blk {
-  border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
-  padding: .4rem .55rem .5rem; min-height: 3.5rem; position: relative;
-  cursor: pointer; background: transparent; text-align: left; width: 100%;
-  color: inherit; font: inherit; display: block;
-}
-.blk:last-child { border-right: 0; }
-.blk .n {
-  font-size: .6rem; color: var(--muted); text-transform: uppercase;
-  letter-spacing: .07em; display: block; margin-bottom: .18rem;
-}
-.blk .v { font-size: .87rem; word-break: break-word; }
-.blk .v.wide { font-size: .8rem; }
-.blk.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.blk:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
-.blk.span2 { grid-column: span 2; }
-.blk.span4 { grid-column: span 4; }
-.blk.withheld .v { color: var(--muted); font-style: italic; }
-.blk .leafhash {
-  display: block; margin-top: .2rem; font-size: .64rem; color: var(--muted);
-  font-family: ui-monospace, monospace; word-break: break-all;
-}
-.cert { display: grid; grid-template-columns: 1fr 1fr; }
-.cert > div { border-right: 1px solid var(--line); }
-.cert > div:last-child { border-right: 0; }
-.cert .capt {
-  font-size: .66rem; padding: .35rem .55rem; border-bottom: 1px solid var(--line);
-  color: var(--muted); text-transform: uppercase; letter-spacing: .06em;
-}
-.cert .unused { opacity: .38; }
-.cert .stmt { padding: .45rem .55rem; font-size: .74rem; }
-.cert .stmt.on { font-weight: 600; }
-
-/* panes */
-.panes { display: grid; gap: 1rem; grid-template-columns: 1fr; }
-@media (min-width: 60rem) { .panes { grid-template-columns: 1fr 1fr; } }
-.pane { border: 1px solid var(--line); border-radius: 8px; background: var(--card); overflow: hidden; }
-.pane > h3 {
-  margin: 0; padding: .55rem .8rem; font-size: .74rem; text-transform: uppercase;
-  letter-spacing: .07em; color: var(--muted); border-bottom: 1px solid var(--line);
-  font-weight: 600;
-}
-.pane .body { padding: .7rem .8rem; }
-pre.rec {
-  margin: 0; padding: .7rem .8rem; font-family: ui-monospace, monospace;
-  font-size: .74rem; line-height: 1.5;
-  white-space: pre-wrap; word-break: break-all;
-}
-pre.rec .k { color: var(--accent); }
-pre.rec mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; border-radius: 2px; }
-
-/* the leaf strip */
-.leaves { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
-.leaf {
-  font-family: ui-monospace, monospace; font-size: .58rem; text-align: center;
-  padding: .28rem .1rem; border-radius: 2px; background: var(--skip-bg);
-  border: 1px solid transparent; overflow: hidden;
-}
-.leaf.pad { opacity: .4; }
-.leaf.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
-.leaf .bn { display: block; font-size: .55rem; color: var(--muted); }
-.fold { margin-top: .7rem; font-family: ui-monospace, monospace; font-size: .72rem; }
-.fold div { padding: .18rem 0; word-break: break-all; }
-.fold .op { color: var(--muted); }
-.fold .root { border-top: 1px solid var(--line); margin-top: .25rem; padding-top: .3rem; }
-.inert {
-  padding: .8rem; font-size: .85rem; color: var(--muted);
-  background: var(--skip-bg); border-radius: 6px;
-}
-`
-
-export type Mode = 'demo' | 'live'
-
-/**
- * The one piece of per-request state every page shares: who the visitor is
- * looking as.
- *
- * It lives in the layout rather than on the pages that write records because
- * the alternative — a picker on the issue page and another on the verdict
- * page — is what shipped first, and it was wrong in a way that took a user to
- * find: changing the in-page dropdown without pressing its button left the
- * cookie alone, so the very next request went back to whoever happened to be
- * first in the roster. One control, one place, takes effect immediately.
- */
-export type Chrome = { actors?: Actor[]; current?: string }
-
-export function layout(
-  title: string,
-  body: HtmlEscapedString | Promise<HtmlEscapedString>,
-  mode: Mode = 'live',
-  chrome?: Chrome,
-) {
-  return html`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title} · f8130</title>
-<style>${raw(STYLES)}</style>
-</head>
-<body>
-<nav><div>
-  <strong>f8130</strong>
-  <a href="/">Activity</a>
-  <a href="/parts">Parts</a>
-  <a href="/verify">Check a document</a>
-  ${chrome?.actors && chrome.actors.length > 0
-    ? html`<form method="post" action="/act-as" class="whoami">
-        <span>viewing as</span>
-        <select name="handle" onchange="this.form.submit()">
-          <option value="" ${!chrome.current ? 'selected' : ''}>the public</option>
-          ${chrome.actors.map(
-            (a) => html`<option value="${a.handle}" ${a.handle === chrome.current ? 'selected' : ''}>
-              ${a.displayName}
-            </option>`,
-          )}
-        </select>
-        <noscript><button type="submit">Switch</button></noscript>
-      </form>`
-    : ''}
-</div></nav>
-<div class="marker">
-  <strong>SYNTHETIC DATA</strong> — fictional organizations, invented part
-  numbers, nothing here is airworthiness evidence.${mode === 'demo'
-    ? html` <strong>Demo instance</strong> — an in-memory network: real keys
-        and real proofs, simulated hosting.
-        <a href="/demo/bundles.json">Sample documents</a>.`
-    : ''}
-</div>
-<main>
-  ${body}
-  <footer>Demonstration only · this service holds no signing keys</footer>
-</main>
-</body>
-</html>`
-}
+// Re-exported because the field labels are asserted against FIELD_ORDER, and
+// the test should not have to know which module happens to own them.
+export { fieldLabel } from './compose.js'
+export { layout, type Chrome, type Mode } from './shell.js'
 
 const fmt = (d: Date | string | null | undefined) => {
   if (!d) return '—'
@@ -640,41 +314,6 @@ export function errorPage(status: number, message: string) {
 
 /* ------------------------------------------------------- selective disclosure */
 
-/**
- * Human names for the committed fields.
- *
- * Every entry corresponds to a numbered block on FAA Form 8130-3, and
- * `fieldLabel` prefixes the block so the page and the paper form can be read
- * side by side. A test asserts this table covers FIELD_ORDER, because a field
- * with no label renders as a camelCase identifier and nobody notices.
- */
-const FIELD_LABELS: Record<string, string> = {
-  approvingAuthority: 'Approving authority',
-  formNumber: 'Form tracking number',
-  organizationName: 'Organization name',
-  organizationAddress: 'Organization address',
-  workOrder: 'Work order / contract / invoice',
-  item: 'Item',
-  description: 'Description',
-  partNumber: 'Part number',
-  quantity: 'Quantity',
-  serialNumber: 'Serial number',
-  status: 'Status / work',
-  remarks: 'Remarks',
-  certifyingBlock: 'Certifying block',
-  approvalBasis: 'Approval basis',
-  signerCert: 'Approval / certificate no.',
-  signerName: 'Name',
-  completedAt: 'Date',
-}
-
-/** "Block 4 · Organization name", falling back to the raw name. */
-export function fieldLabel(name: string): string {
-  const label = FIELD_LABELS[name] ?? name
-  const spec = FIELDS.find((f) => f.name === name)
-  return spec ? `Block ${spec.block} · ${label}` : label
-}
-
 export function disclosePage(params: {
   chrome?: Chrome
   mode?: Mode
@@ -890,6 +529,7 @@ export function feedPage(params: {
   now?: Date
 }) {
   const now = params.now ?? new Date()
+  const me = params.chrome?.actors?.find((a) => a.handle === params.chrome?.current)
   const body = html`
     <h1>Activity</h1>
     <p class="sub">
@@ -914,6 +554,12 @@ export function feedPage(params: {
               : ''}
           </div></div>`
         : ''}
+
+    ${me
+      ? html`<a href="/issue" class="compose-row" data-compose>
+          ${avatar(me.displayName, true)} Release a part…
+        </a>`
+      : ''}
 
     <div id="feed" class="feed">
       ${params.events.map((e) => feedCard(e, params.handles, now, params.current))}
@@ -947,68 +593,6 @@ export function feedPage(params: {
 }
 
 /* ------------------------------------------------------------------ writing */
-
-/**
- * The issue form, drawn from the committed field set.
- *
- * It used to be a hand-written list, and the field set moved out from under it:
- * for a while the form asked for cost and customer, which are not blocks on an
- * 8130-3, and never asked for Block 1, Block 4 or the certifying column, all of
- * which a record requires. It rendered fine and could not produce a valid
- * record. Deriving it means a field cannot be missing from the form without
- * being missing from the schema.
- */
-function issueInputs(prefill: Record<string, unknown> | null) {
-  const value = (name: string) => {
-    const v = prefill?.[name]
-    return v === null || v === undefined ? '' : String(v)
-  }
-  return FIELDS.map((spec) => {
-    const label = html`<label for="${spec.name}">
-      ${fieldLabel(spec.name)}${spec.public ? '' : html` <span class="hint">private</span>`}
-    </label>`
-    if (spec.kind === 'enum') {
-      return html`${label}
-        <select id="${spec.name}" name="${spec.name}">
-          ${(spec.values ?? []).map(
-            (v) => html`<option value="${v}" ${value(spec.name) === v ? 'selected' : ''}>${v}</option>`,
-          )}
-        </select>`
-    }
-    // Block 12 is the one field that is genuinely prose — findings, workscope
-    // and whatever else the shop wrote down — and it does not fit on a line.
-    if (spec.name === 'remarks') {
-      return html`${label}
-        <textarea id="${spec.name}" name="${spec.name}"
-          style="min-height:5rem">${value(spec.name)}</textarea>`
-    }
-    // The placeholder goes in as a value rather than as a fragment of markup:
-    // interpolating the whole `placeholder="…"` string escapes its quotes and
-    // renders an attribute whose name contains the entities, which is why the
-    // date field used to display its own hint in quotation marks.
-    return html`${label}
-      <input type="${spec.kind === 'integer' ? 'number' : 'text'}"
-        id="${spec.name}" name="${spec.name}" value="${value(spec.name)}"
-        placeholder="${spec.kind === 'timestamp' ? '2026-04-01T12:00:00Z' : ''}">`
-  })
-}
-
-/**
- * Says who is about to sign, and sends the visitor to the one control that
- * changes it. It deliberately cannot change it itself.
- */
-function signingAs(current: Actor | undefined) {
-  if (!current) {
-    return html`<div class="needs-actor">
-      You are viewing as the public, which cannot sign anything. Choose an
-      organization in the header to continue.
-    </div>`
-  }
-  return html`<p class="signing">
-    Signing as <strong>${current.displayName}</strong> (${current.kind}) —
-    switch in the header.
-  </p>`
-}
 
 export function issuePage(params: {
   chrome?: Chrome
@@ -1242,7 +826,7 @@ function block(params: {
   selected: boolean
 }) {
   const spec = FIELDS.find((f) => f.name === params.field)
-  const label = FIELD_LABELS[params.field] ?? params.field
+  const label = bareLabel(params.field)
   const cls = [
     'blk',
     params.span === 2 ? 'span2' : params.span === 4 ? 'span4' : '',
