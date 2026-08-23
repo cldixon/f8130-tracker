@@ -1,6 +1,7 @@
 import { Pool } from 'pg'
 
 import type {
+  FeedEvent,
   AcceptanceRow,
   IssuerStat,
   ReadIndex,
@@ -62,6 +63,40 @@ export class PostgresIndex implements ReadIndex {
       receivedAt: r.received_at,
       observedAt: r.observed_at,
     }
+  }
+
+  /**
+   * The two record kinds, merged on the observer's own clock.
+   *
+   * A UNION rather than two queries the caller interleaves, so `limit` means
+   * the newest N events rather than the newest N of each — otherwise a burst
+   * of releases would push every verdict off the page.
+   */
+  async feed(params: { limit: number; since?: Date }): Promise<FeedEvent[]> {
+    const { rows } = await this.pool.query(
+      `SELECT kind, observed_at, payload FROM (
+         SELECT 'release'    AS kind, observed_at, to_jsonb(r) AS payload FROM release r
+         UNION ALL
+         SELECT 'acceptance' AS kind, observed_at, to_jsonb(a) AS payload FROM acceptance a
+       ) events
+       WHERE $2::timestamptz IS NULL OR observed_at > $2
+       ORDER BY observed_at DESC, kind
+       LIMIT $1`,
+      [params.limit, params.since ?? null],
+    )
+    return rows.map((r: any) =>
+      r.kind === 'release'
+        ? {
+            kind: 'release' as const,
+            at: r.observed_at,
+            release: PostgresIndex.toRelease(r.payload),
+          }
+        : {
+            kind: 'verdict' as const,
+            at: r.observed_at,
+            verdict: PostgresIndex.toAcceptance(r.payload),
+          },
+    )
   }
 
   async recentReleases(limit: number): Promise<ReleaseRow[]> {

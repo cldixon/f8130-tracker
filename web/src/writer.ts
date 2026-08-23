@@ -23,6 +23,8 @@ import {
   type RawForm,
 } from '@f8130/core'
 
+import { releaseRow } from './memory-index.js'
+
 export const RELEASE_NSID = 'dev.cldixon.f8130.release'
 export const ACCEPTANCE_NSID = 'dev.cldixon.f8130.acceptance'
 export const DISPUTE_NSID = 'dev.cldixon.f8130.dispute'
@@ -216,4 +218,108 @@ export function demoActors(domain: string): Actor[] {
     displayName: org.displayName,
     kind: org.kind,
   }))
+}
+
+/**
+ * Writes into the in-memory network, and tells an in-memory index about it.
+ *
+ * Demo mode has real signing keys and real inclusion proofs but no firehose and
+ * no Postgres, so the observation step that a live deployment gets for free has
+ * to be short-circuited: this appends the indexed row itself. The signatures a
+ * visitor checks are genuine; the independence of the observer is not. That is
+ * the same simplification demo mode already makes about hosting, and it is why
+ * a demo instance says so on every page.
+ */
+export class MemoryRecordWriter implements RecordWriter {
+  constructor(
+    private readonly net: {
+      issue(p: { handle: string; form: RawForm; prev?: StrongRef }): Promise<{
+        uri: string
+        cid: unknown
+        bundle: Bundle
+      }>
+      accept(p: {
+        handle: string
+        subject: StrongRef
+        issuerDid: string
+        partNumber: string
+        serialNumber: string
+        outcome: 'accepted' | 'rejected' | 'discrepancy'
+        note?: string
+      }): Promise<{ uri: string; cid: unknown }>
+      resolveHandle(handle: string): Promise<string | null>
+    },
+    private readonly index: {
+      addRelease(row: any): void
+      addVerdict(row: any): void
+      setHandle(did: string, handle: string): void
+    },
+    private readonly cast: Actor[],
+  ) {}
+
+  actors(): Actor[] {
+    return this.cast
+  }
+
+  async createRelease(params: {
+    handle: string
+    form: RawForm
+    prev?: StrongRef
+  }): Promise<Written & { bundle: Bundle }> {
+    const issued = await this.net.issue(params)
+    const cid = String(issued.cid)
+    this.index.setHandle(issued.uri.split('/')[2]!, params.handle)
+    this.index.addRelease(
+      releaseRow({
+        uri: issued.uri,
+        cid,
+        bundle: issued.bundle,
+        prev: params.prev,
+        observedAt: new Date(),
+      }),
+    )
+    return { uri: issued.uri, cid, bundle: issued.bundle }
+  }
+
+  async createAcceptance(params: {
+    handle: string
+    subject: StrongRef
+    issuerDid: string
+    partNumber: string
+    serialNumber: string
+    outcome: 'accepted' | 'rejected' | 'discrepancy'
+    note?: string
+  }): Promise<Written> {
+    const written = await this.net.accept(params)
+    const did = written.uri.split('/')[2]!
+    const now = new Date()
+    this.index.setHandle(did, params.handle)
+    this.index.addVerdict({
+      cid: String(written.cid),
+      uri: written.uri,
+      subjectUri: params.subject.uri,
+      subjectCid: params.subject.cid,
+      issuerDid: params.issuerDid,
+      verifierDid: did,
+      partNumber: params.partNumber,
+      serialNumber: params.serialNumber,
+      outcome: params.outcome,
+      note: params.note ?? null,
+      receivedAt: now,
+      observedAt: now,
+    })
+    return { uri: written.uri, cid: String(written.cid) }
+  }
+
+  /**
+   * Disputes are not indexed anywhere yet — ingest decodes releases and
+   * acceptances only — so this writes nothing rather than pretending.
+   */
+  async createDispute(_params: {
+    handle: string
+    subject: StrongRef
+    response: string
+  }): Promise<Written> {
+    return { uri: '', cid: '' }
+  }
 }

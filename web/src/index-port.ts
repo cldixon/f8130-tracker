@@ -51,6 +51,18 @@ export type AcceptanceRow = {
   observedAt: Date
 }
 
+/**
+ * One thing that happened, as this observer saw it happen.
+ *
+ * Ordered by `observedAt` rather than by anything the issuer claimed. A feed
+ * sorted on `completedAt` would let a backdating issuer choose where in the
+ * timeline their record appears, which is the one thing an independent
+ * observer's own clock is for.
+ */
+export type FeedEvent =
+  | { kind: 'release'; at: Date; release: ReleaseRow }
+  | { kind: 'verdict'; at: Date; verdict: AcceptanceRow }
+
 export type IssuerStat = {
   did: string
   releases: number
@@ -58,6 +70,13 @@ export type IssuerStat = {
 }
 
 export interface ReadIndex {
+  /**
+   * Releases and verdicts interleaved, newest first.
+   *
+   * `since` returns only what arrived after that moment, which is how the live
+   * stream stays incremental without the client re-reading the whole feed.
+   */
+  feed(params: { limit: number; since?: Date }): Promise<FeedEvent[]>
   recentReleases(limit: number): Promise<ReleaseRow[]>
   /** Newest first. An empty result means this observer has never seen the part. */
   releasesForPart(partNumber: string, serialNumber: string): Promise<ReleaseRow[]>

@@ -13,6 +13,8 @@
  * cloning the repository can see it work before standing anything up.
  */
 
+import { createHash } from 'node:crypto'
+
 import { Secp256k1Keypair } from '@atproto/crypto'
 import { TID } from '@atproto/common'
 import { cidForLex } from '@atproto/lex-cbor'
@@ -26,6 +28,7 @@ import {
 import { buildBundle } from '../bundle.js'
 import { commitForm } from '../commitment.js'
 import { PUBLIC_FIELDS, type RawForm } from '../fields.js'
+import { orgs } from '../roster.js'
 import type {
   IdentityResolver,
   RecordLocation,
@@ -36,6 +39,7 @@ import type {
 import { RepoFetchError } from './ports.js'
 import type { Bundle } from '../bundle.js'
 
+export const ACCEPTANCE_NSID = 'dev.cldixon.f8130.acceptance'
 export const RELEASE_NSID = 'dev.cldixon.f8130.release'
 
 type KeyEpoch = { key: SigningKey; from: Date }
@@ -192,6 +196,58 @@ export class MemoryNetwork implements IdentityResolver, RepoClient {
     }
   }
 
+  /**
+   * Publishes a verdict into the *verifier's* repository.
+   *
+   * The asymmetry is the point and it survives into the in-memory network: an
+   * acceptance is written by the operator who received the part, in their own
+   * repo, under their own key. The issuer cannot delete it. They can only
+   * answer it.
+   */
+  async accept(params: {
+    handle: string
+    subject: { uri: string; cid: any }
+    issuerDid: string
+    partNumber: string
+    serialNumber: string
+    outcome: 'accepted' | 'rejected' | 'discrepancy'
+    note?: string
+    receivedAt?: string
+  }): Promise<{ uri: string; cid: any }> {
+    const org = this.org(params.handle)
+
+    const record: Record<string, unknown> = {
+      $type: ACCEPTANCE_NSID,
+      subject: { uri: params.subject.uri, cid: params.subject.cid },
+      issuerDid: params.issuerDid,
+      verifierDid: org.did,
+      partNumber: params.partNumber,
+      serialNumber: params.serialNumber,
+      outcome: params.outcome,
+      ...(params.note ? { note: params.note } : {}),
+      receivedAt:
+        params.receivedAt ?? new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+    }
+
+    const rkey = TID.nextStr()
+    org.repo = await org.repo.applyWrites(
+      [
+        {
+          action: WriteOpAction.Create,
+          collection: ACCEPTANCE_NSID as any,
+          rkey: rkey as any,
+          record: record as any,
+        },
+      ],
+      org.keypair,
+    )
+
+    return {
+      uri: `at://${org.did}/${ACCEPTANCE_NSID}/${rkey}`,
+      cid: await cidForLex(record as any),
+    }
+  }
+
   // ------------------------------------------------------- IdentityResolver
 
   async resolveHandle(handle: string): Promise<string | null> {
@@ -330,3 +386,50 @@ export async function standardNetwork() {
   return { net, birth, overhaul }
 }
 
+
+/**
+ * A DID for an organization that exists only in memory.
+ *
+ * Deterministic in the slug so a demo instance is stable across restarts, and
+ * it never touches plc.directory — nothing here is registered anywhere. The
+ * `dm` prefix inside the identifier is a further guard: a real did:plc
+ * identifier is the base32 of a genesis-operation hash, so one beginning with
+ * a fixed marker cannot be mistaken for a registered identity.
+ */
+function demoDid(slug: string): string {
+  const digest = createHash('sha256').update(slug).digest()
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz234567'
+  let out = 'dm'
+  for (let i = 0; out.length < 24; i++) out += alphabet[digest[i]! % 32]
+  return `did:plc:${out}`
+}
+
+/**
+ * The whole demonstration cast, in memory.
+ *
+ * Demo mode used to hold three organizations, which was enough to verify a
+ * chain and far too few to watch a system work: an activity feed drawn from
+ * three parties reads as three parties talking to themselves. This builds every
+ * organization on the roster, keeping the three pinned DIDs for the ones whose
+ * fixtures and sample bundles name them.
+ */
+export async function demoNetwork(domain = 'f8130.cldixon.dev') {
+  const net = new MemoryNetwork()
+  const pinned = new Map(
+    [NORTHWIND, CASCADIA, MERIDIAN].map((o) => [o.handle, o] as const),
+  )
+
+  for (const org of orgs(domain)) {
+    const fixed = pinned.get(org.handle)
+    await net.createOrg(fixed ?? { handle: org.handle, did: demoDid(org.slug) })
+  }
+
+  const birth = await net.issue({ handle: NORTHWIND.handle, form: birthForm })
+  const overhaul = await net.issue({
+    handle: CASCADIA.handle,
+    form: overhaulForm,
+    prev: { uri: birth.uri, cid: birth.cid },
+  })
+
+  return { net, birth, overhaul }
+}

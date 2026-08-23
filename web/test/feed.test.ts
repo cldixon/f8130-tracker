@@ -1,0 +1,513 @@
+/**
+ * The activity feed, the live stream, and the synthetic generator behind them.
+ *
+ * These are the three parts of the front page, and each has a claim that only
+ * a test can hold honest:
+ *
+ *   - the feed is ordered on the observer's clock, not on anything an issuer
+ *     wrote down, so a backdated certificate cannot choose where it appears;
+ *   - the stream renders the same card the page does, so a streamed event and
+ *     a reloaded one cannot drift apart;
+ *   - the generator writes nothing while nobody is watching, because every
+ *     event it produces is a permanent write to a real repository.
+ */
+
+import { test, describe } from 'node:test'
+import assert from 'node:assert/strict'
+
+import { demoNetwork, orgs } from '@f8130/core'
+
+import { ActivityGenerator } from '../src/activity.js'
+import { createApp } from '../src/app.js'
+import { MemoryIndex } from '../src/memory-index.js'
+import { MemoryRecordWriter, demoActors, type RecordWriter } from '../src/writer.js'
+import type { AcceptanceRow, ReleaseRow } from '../src/index-port.js'
+
+const DOMAIN = 'f8130.cldixon.dev'
+
+const release = (over: Partial<ReleaseRow> = {}): ReleaseRow => ({
+  cid: 'bafyrel',
+  uri: 'at://did:plc:issuer/dev.cldixon.f8130.release/3a',
+  issuerDid: 'did:plc:issuer',
+  prevUri: null,
+  prevCid: null,
+  approvingAuthority: 'FAA/United States',
+  formNumber: 'SYNTHETIC-8130-0001',
+  organizationName: 'Cascadia MRO',
+  organizationAddress: '4400 Airport Way, Everett, WA 98204',
+  description: 'Fuel control unit',
+  partNumber: 'NT882104',
+  serialNumber: 'SN000417',
+  signerCert: 'SYNTHETIC-CERT-1',
+  completedAt: new Date('2026-01-22T09:30:00Z'),
+  observedAt: new Date('2026-01-22T10:00:00Z'),
+  ...over,
+})
+
+const verdict = (over: Partial<AcceptanceRow> = {}): AcceptanceRow => ({
+  cid: 'bafyacc',
+  uri: 'at://did:plc:operator/dev.cldixon.f8130.acceptance/3b',
+  subjectUri: 'at://did:plc:issuer/dev.cldixon.f8130.release/3a',
+  subjectCid: 'bafyrel',
+  issuerDid: 'did:plc:issuer',
+  verifierDid: 'did:plc:operator',
+  partNumber: 'NT882104',
+  serialNumber: 'SN000417',
+  outcome: 'accepted',
+  note: null,
+  receivedAt: new Date('2026-01-23T08:00:00Z'),
+  observedAt: new Date('2026-01-23T08:05:00Z'),
+  ...over,
+})
+
+async function feedApp(seed: (index: MemoryIndex) => void = () => {}) {
+  const { net } = await demoNetwork(DOMAIN)
+  const index = new MemoryIndex()
+  seed(index)
+  const app = createApp({ resolver: net, repo: net, index, mode: 'live' })
+  return { app, index, net }
+}
+
+describe('the read model', () => {
+  test('interleaves releases and verdicts, newest observation first', async () => {
+    const index = new MemoryIndex()
+    index.addRelease(release({ cid: 'a', observedAt: new Date('2026-02-01T00:00:00Z') }))
+    index.addVerdict(verdict({ cid: 'b', observedAt: new Date('2026-02-03T00:00:00Z') }))
+    index.addRelease(release({ cid: 'c', observedAt: new Date('2026-02-02T00:00:00Z') }))
+
+    const events = await index.feed({ limit: 10 })
+    assert.deepEqual(
+      events.map((e) => (e.kind === 'release' ? e.release.cid : e.verdict.cid)),
+      ['b', 'c', 'a'],
+    )
+  })
+
+  /**
+   * The property the whole ordering choice exists for: an issuer who backdates
+   * Block 14b still lands wherever the observer saw them, not at the top.
+   */
+  test('a backdated certificate cannot choose where it appears', async () => {
+    const index = new MemoryIndex()
+    index.addRelease(
+      release({
+        cid: 'old',
+        completedAt: new Date('2020-01-01T00:00:00Z'),
+        observedAt: new Date('2026-02-02T00:00:00Z'),
+      }),
+    )
+    index.addRelease(
+      release({
+        cid: 'backdated',
+        // Claims to predate the other one by a decade.
+        completedAt: new Date('2010-01-01T00:00:00Z'),
+        observedAt: new Date('2026-02-03T00:00:00Z'),
+      }),
+    )
+    const events = await index.feed({ limit: 10 })
+    assert.equal(events[0]!.kind === 'release' && events[0]!.release.cid, 'backdated')
+  })
+
+  test('since returns only what arrived after that moment', async () => {
+    const index = new MemoryIndex()
+    index.addRelease(release({ cid: 'before', observedAt: new Date('2026-02-01T00:00:00Z') }))
+    index.addRelease(release({ cid: 'after', observedAt: new Date('2026-02-05T00:00:00Z') }))
+
+    const fresh = await index.feed({ limit: 10, since: new Date('2026-02-02T00:00:00Z') })
+    assert.deepEqual(
+      fresh.map((e) => (e.kind === 'release' ? e.release.cid : e.verdict.cid)),
+      ['after'],
+    )
+
+    // Exclusive, so re-polling with the newest timestamp cannot replay it.
+    const again = await index.feed({ limit: 10, since: new Date('2026-02-05T00:00:00Z') })
+    assert.equal(again.length, 0)
+  })
+})
+
+describe('the feed page', () => {
+  test('shows releases and verdicts as one stream', async () => {
+    const { app } = await feedApp((i) => {
+      i.addRelease(release())
+      i.addVerdict(verdict({ outcome: 'rejected', note: 'Serial number does not match.' }))
+      i.setHandle('did:plc:operator', 'example-air.f8130.cldixon.dev')
+      i.setHandle('did:plc:issuer', 'cascadia-mro.f8130.cldixon.dev')
+    })
+    const body = await (await app.request('/')).text()
+    assert.match(body, /issued a release certificate/)
+    assert.match(body, /rejected/)
+    assert.match(body, /Serial number does not match\./)
+    assert.match(body, /example-air/)
+  })
+
+  test('says how many blocks are committed but withheld', async () => {
+    const { app } = await feedApp((i) => i.addRelease(release()))
+    const body = await (await app.request('/')).text()
+    // Eight of seventeen, and the page has to say so: the interesting claim is
+    // that the index never held them, not that it chose not to render them.
+    assert.match(body, /8 of 17 blocks committed and withheld/)
+  })
+
+  test('a private block never reaches the page', async () => {
+    const { app } = await feedApp((i) => i.addRelease(release()))
+    const body = await (await app.request('/')).text()
+    for (const secret of ['REPAIRED', 'Metering valve wear', 'R. Inspector']) {
+      assert.ok(!body.includes(secret), `${secret} leaked into the feed`)
+    }
+  })
+
+  test('with no index it says browsing is down and verification is not', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const app = createApp({ resolver: net, repo: net, index: null, mode: 'live' })
+    const body = await (await app.request('/')).text()
+    assert.match(body, /No index is attached/)
+    assert.match(body, /Check a document/)
+  })
+})
+
+describe('the viewpoint control', () => {
+  const writerFor = async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
+    return { app, index, writer }
+  }
+
+  test('appears on every page, not only the feed', async () => {
+    const { app } = await writerFor()
+    for (const path of ['/', '/parts', '/verify', '/disclose', '/issue', '/accept']) {
+      const body = await (await app.request(path)).text()
+      assert.match(body, /action="\/act-as"/, `${path} has no viewpoint control`)
+      assert.match(body, /the public/, `${path} cannot return to the public view`)
+    }
+  })
+
+  /**
+   * There used to be two of these — one in the header and one on the page —
+   * and only the header one took effect. Changing the page's dropdown and
+   * pressing "generate" produced a form belonging to whoever was first in the
+   * roster, which is how the bug was found.
+   */
+  test('there is exactly one of it per page', async () => {
+    const { app } = await writerFor()
+    const body = await (await app.request('/issue')).text()
+    assert.equal(body.split('action="/act-as"').length - 1, 1)
+  })
+
+  test('the public viewpoint is the default and cannot sign', async () => {
+    const { app } = await writerFor()
+    const body = await (await app.request('/issue')).text()
+    assert.match(body, /viewing as the public/)
+
+    const res = await app.request('/issue', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ partNumber: 'P', serialNumber: 'S' }),
+    })
+    assert.equal(res.status, 400)
+    assert.match(await res.text(), /Choose an organization/)
+  })
+
+  test('the public viewpoint cannot press the buttons that sign', async () => {
+    const { app } = await writerFor()
+    const body = await (await app.request('/issue')).text()
+    assert.match(body, /name="example" value="1"\s*disabled/)
+    assert.match(body, /<button type="submit" disabled>Sign and publish/)
+  })
+
+  /**
+   * The date hint used to be interpolated as a fragment of markup, so its
+   * quotes were escaped and the browser rendered an attribute whose name
+   * contained the entities — the field displayed its own placeholder in
+   * quotation marks.
+   */
+  test('the date hint is a placeholder rather than escaped markup', async () => {
+    const { app } = await writerFor()
+    const body = await (
+      await app.request('/issue', { headers: { cookie: `f8130_actor=cascadia-mro.${DOMAIN}` } })
+    ).text()
+    assert.ok(!body.includes('&quot;2026'), 'the placeholder was escaped into the attribute name')
+    assert.match(body, /placeholder="2026-04-01T12:00:00Z"/)
+  })
+
+  test('choosing an organization sets the cookie; choosing the public clears it', async () => {
+    const { app } = await writerFor()
+    const pick = await app.request('/act-as', {
+      method: 'post',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ handle: `cascadia-mro.${DOMAIN}` }),
+    })
+    assert.equal(pick.status, 303)
+    assert.match(pick.headers.get('set-cookie') ?? '', /f8130_actor=cascadia-mro/)
+
+    const clear = await app.request('/act-as', {
+      method: 'post',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ handle: '' }),
+    })
+    assert.match(clear.headers.get('set-cookie') ?? '', /f8130_actor=;.*Max-Age=0/)
+  })
+
+  test('a cookie naming an unknown organization selects nothing', async () => {
+    const { app } = await writerFor()
+    const body = await (
+      await app.request('/issue', { headers: { cookie: 'f8130_actor=attacker.example.com' } })
+    ).text()
+    assert.match(body, /viewing as the public/)
+    assert.ok(!body.includes('attacker.example.com'))
+  })
+
+  /**
+   * The reported bug, exactly: pick an organization, press generate, and the
+   * generated form must belong to that organization rather than to whoever
+   * the cookie happens to name.
+   */
+  test('the generate button issues as the organization it can see', async () => {
+    const { app } = await writerFor()
+    const vantage = orgs(DOMAIN).find((o) => o.key === 'vantage')!
+    const res = await app.request(
+      `/issue?example=1&handle=${encodeURIComponent(vantage.handle)}`,
+      // A cookie still naming someone else, which is the state the bug needed.
+      { headers: { cookie: `f8130_actor=cascadia-mro.${DOMAIN}` } },
+    )
+    const body = await res.text()
+    assert.ok(
+      body.includes(`name="organizationName" value="${vantage.displayName}"`),
+      'Block 4 did not name the organization the visitor chose',
+    )
+    assert.match(
+      res.headers.get('set-cookie') ?? '',
+      /f8130_actor=vantage-propulsion/,
+      'the viewpoint control did not follow the choice',
+    )
+  })
+
+  test('marks the events the viewing organization is party to', async () => {
+    const { app, index } = await writerFor()
+    index.setHandle('did:plc:issuer', `cascadia-mro.${DOMAIN}`)
+    index.addRelease(release())
+
+    const asIssuer = await (
+      await app.request('/', { headers: { cookie: `f8130_actor=cascadia-mro.${DOMAIN}` } })
+    ).text()
+    assert.match(asIssuer, /class="mine"/)
+
+    const asPublic = await (await app.request('/')).text()
+    assert.ok(!asPublic.includes('class="mine"'), 'the public is party to nothing')
+  })
+})
+
+describe('the standing admonition', () => {
+  test('appears once per page rather than three or four times', async () => {
+    const { app } = await feedApp()
+    for (const path of ['/', '/parts', '/verify', '/disclose']) {
+      const body = await (await app.request(path)).text()
+      assert.equal(
+        body.split('class="marker"').length - 1,
+        1,
+        `${path} does not carry exactly one marker`,
+      )
+      assert.ok(!body.includes('class="banner"'), `${path} still stacks banners`)
+    }
+  })
+})
+
+describe('the live stream', () => {
+  test('is an event stream, and tells the generator a viewer arrived', async () => {
+    let joined = 0
+    let left = 0
+    const { net } = await demoNetwork(DOMAIN)
+    const app = createApp({
+      resolver: net,
+      repo: net,
+      index: new MemoryIndex(),
+      mode: 'live',
+      activity: { viewerJoined: () => joined++, viewerLeft: () => left++ },
+    })
+
+    const controller = new AbortController()
+    const res = await app.request('/api/feed/stream', { signal: controller.signal })
+    assert.equal(res.headers.get('content-type'), 'text/event-stream')
+
+    const reader = res.body!.getReader()
+    const first = new TextDecoder().decode((await reader.read()).value)
+    assert.match(first, /: connected/)
+    assert.equal(joined, 1)
+
+    await reader.cancel()
+    controller.abort()
+    await new Promise((r) => setImmediate(r))
+    assert.equal(left, 1, 'closing the tab must stop the generator')
+  })
+
+  test('is refused when there is no index to stream from', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const app = createApp({ resolver: net, repo: net, index: null, mode: 'live' })
+    assert.equal((await app.request('/api/feed/stream')).status, 503)
+  })
+})
+
+describe('the synthetic generator', () => {
+  /** Records every write, and hands back plausible references. */
+  function recorder() {
+    const calls: any[] = []
+    let n = 0
+    const actors = demoActors(DOMAIN)
+    const writer: RecordWriter = {
+      actors: () => actors,
+      createRelease: async (p) => {
+        n++
+        const out = {
+          uri: `at://did:plc:iss${n}/dev.cldixon.f8130.release/3r${n}`,
+          cid: `bafyrel${n}`,
+          bundle: {} as any,
+        }
+        calls.push({ kind: 'release', ...p, ...out })
+        return out
+      },
+      createAcceptance: async (p) => {
+        n++
+        const out = {
+          uri: `at://did:plc:op${n}/dev.cldixon.f8130.acceptance/3a${n}`,
+          cid: `bafyacc${n}`,
+        }
+        calls.push({ kind: 'acceptance', ...p, ...out })
+        return out
+      },
+      createDispute: async (p) => {
+        n++
+        const out = {
+          uri: `at://did:plc:iss${n}/dev.cldixon.f8130.dispute/3d${n}`,
+          cid: `bafydis${n}`,
+        }
+        calls.push({ kind: 'dispute', ...p, ...out })
+        return out
+      },
+    }
+    return { writer, calls }
+  }
+
+  const gen = (rolls: number[], over: Partial<ConstructorParameters<typeof ActivityGenerator>[0]> = {}) => {
+    const { writer, calls } = recorder()
+    let i = 0
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => 1_700_000_000_000,
+      // Scripted, then an unremarkable 0.5 once the script runs out — a test
+      // should have to spell out only the rolls it actually cares about.
+      random: () => (i < rolls.length ? rolls[i++]! : 0.5),
+      ...over,
+    })
+    return { g, calls, writer }
+  }
+
+  test('writes nothing until somebody is watching', () => {
+    const { g } = gen([0.9])
+    assert.equal(g.running, false)
+    g.viewerJoined()
+    assert.equal(g.running, true)
+    g.viewerLeft()
+    assert.equal(g.running, false, 'an unwatched demo must not accumulate history')
+  })
+
+  test('keeps running while any viewer remains', () => {
+    const { g } = gen([0.9])
+    g.viewerJoined()
+    g.viewerJoined()
+    g.viewerLeft()
+    assert.equal(g.running, true)
+    g.viewerLeft()
+    assert.equal(g.running, false)
+  })
+
+  test('the first event is a release from a shop to an operator', async () => {
+    const { g, calls } = gen([0.9])
+    await g.tick()
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].kind, 'release')
+
+    const issuer = orgs(DOMAIN).find((o) => o.handle === calls[0].handle)!
+    assert.ok(['mro', 'oem'].includes(issuer.kind), 'only shops and makers issue')
+    // Block 4 is the issuer's own, which is the one thing on a form a shop
+    // cannot plausibly get wrong about itself.
+    assert.equal(calls[0].form.organizationName, issuer.displayName)
+    assert.equal(calls[0].form.organizationAddress, issuer.address)
+  })
+
+  test('a release is later answered by the operator who received it', async () => {
+    // Tick one: 0.9 issues, and the three rolls after it pick the parties and
+    // the part. Tick two: 0.3 falls in the close-out band and 0.9 accepts.
+    const { g, calls } = gen([0.9, 0.5, 0.5, 0.5, 0.3, 0.9])
+    await g.tick()
+    await g.tick()
+
+    assert.equal(calls.length, 2)
+    const [rel, acc] = calls
+    assert.equal(acc.kind, 'acceptance')
+    assert.equal(acc.subject.uri, rel.uri, 'the verdict must name the release it judges')
+    assert.equal(acc.partNumber, rel.form.partNumber)
+
+    // The verdict is published by the operator, not by the issuer: a receipt
+    // the issuer could write is not a receipt.
+    const verifier = orgs(DOMAIN).find((o) => o.handle === acc.handle)!
+    assert.ok(['operator', 'lessor'].includes(verifier.kind))
+    assert.notEqual(acc.handle, rel.handle)
+  })
+
+  test('a rejection carries a stated reason and can be answered', async () => {
+    // Same shape as above, but 0.05 is under the rejection rate. The roll
+    // after it picks the stated reason, and tick three then opens with 0.1 —
+    // inside the band where an issuer may answer.
+    const { g, calls } = gen([0.9, 0.5, 0.5, 0.5, 0.3, 0.05, 0.5, 0.1])
+    await g.tick()
+    await g.tick()
+    const rejection = calls[1]
+    assert.equal(rejection.outcome, 'rejected')
+    assert.ok(rejection.note, 'a rejection with no stated reason is an accusation')
+
+    await g.tick()
+    const reply = calls[2]
+    assert.equal(reply.kind, 'dispute')
+    assert.equal(reply.subject.uri, rejection.uri)
+    assert.equal(reply.handle, calls[0].handle, 'only the issuer may answer')
+  })
+
+  test('a write that fails is counted rather than thrown', async () => {
+    const errors: unknown[] = []
+    const { g } = gen([0.9], {
+      writer: {
+        actors: () => demoActors(DOMAIN),
+        createRelease: async () => {
+          throw new Error('the PDS said no')
+        },
+        createAcceptance: async () => ({ uri: '', cid: '' }),
+        createDispute: async () => ({ uri: '', cid: '' }),
+      },
+      onError: (e) => errors.push(e),
+    })
+    await g.tick()
+    assert.equal(g.stats.errors, 1)
+    assert.equal(errors.length, 1)
+  })
+
+  test('what it writes reaches the feed through the ordinary path', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
+
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => 1_700_000_000_000,
+      random: () => 0.9,
+    })
+    await g.tick()
+
+    assert.equal(index.size.releases, 1)
+    const body = await (await app.request('/')).text()
+    assert.match(body, /issued a release certificate/)
+    assert.match(body, /SYNTHETIC/)
+  })
+})

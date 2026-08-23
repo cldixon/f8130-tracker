@@ -24,12 +24,19 @@ import {
   type RepoClient,
 } from '@f8130/core'
 
-import type { AcceptanceRow, ReadIndex, ReleaseRow } from './index-port.js'
+import type {
+  AcceptanceRow,
+  FeedEvent,
+  ReadIndex,
+  ReleaseRow,
+} from './index-port.js'
 import {
   acceptPage,
   dashboardPage,
   disclosePage,
   errorPage,
+  feedCard,
+  feedPage,
   formPage,
   issuePage,
   partPage,
@@ -70,6 +77,16 @@ export type AppDeps = {
    * for a deployment that has no PDS to write to.
    */
   writer?: RecordWriter | null
+  /**
+   * Synthetic activity, if this deployment generates any.
+   *
+   * The app only ever tells it that a viewer arrived or left; when to write and
+   * what to write are entirely the generator's business.
+   */
+  activity?: {
+    viewerJoined(): void
+    viewerLeft(): void
+  } | null
 }
 
 export function createApp(deps: AppDeps) {
@@ -81,11 +98,138 @@ export function createApp(deps: AppDeps) {
     c.json({ ok: true, mode, index: Boolean(deps.index) }),
   )
 
-  // ------------------------------------------------------------- dashboard
+  // ------------------------------------------------------------------ feed
+  //
+  // The front page. Two things make it worth having as the front page rather
+  // than a tab: it is the only view that shows the system rather than a
+  // document, and it is ordered on this observer's own clock, so a backdating
+  // issuer cannot choose where in the timeline they appear.
+
+  const FEED_LIMIT = 40
+
+  /** Handles for the DIDs on screen, so a feed does not read as raw DIDs. */
+  async function handlesFor(events: FeedEvent[]): Promise<Map<string, string>> {
+    const dids = new Set<string>()
+    for (const e of events) {
+      if (e.kind === 'release') dids.add(e.release.issuerDid)
+      else {
+        dids.add(e.verdict.verifierDid)
+        dids.add(e.verdict.issuerDid)
+      }
+    }
+    const out = new Map<string, string>()
+    if (!deps.index) return out
+    await Promise.all(
+      [...dids].map(async (did) => {
+        const h = await deps.index!.handleFor(did)
+        if (h) out.set(did, h)
+      }),
+    )
+    return out
+  }
+
   app.get('/', async (c) => {
+    const events = deps.index ? await deps.index.feed({ limit: FEED_LIMIT }) : []
+    return c.html(
+      feedPage({
+        mode,
+        chrome: chrome(c),
+        events,
+        handles: await handlesFor(events),
+        current: currentActor(c),
+        hasIndex: Boolean(deps.index),
+        live: Boolean(deps.index),
+      }),
+    )
+  })
+
+  /**
+   * The live stream.
+   *
+   * Polls this AppView's own index rather than tapping the firehose directly,
+   * which is deliberate: the feed shows what an observer *observed*, so
+   * anything that reaches the index reaches the feed — the generator, a visitor
+   * using the issue page, or the seed job. Tapping the firehose here would show
+   * records the index had not accepted yet, which is a different claim.
+   *
+   * Holding this connection open is also what tells the generator somebody is
+   * watching. Close the tab and synthetic activity stops.
+   */
+  app.get('/api/feed/stream', (c) => {
+    if (!deps.index) return c.text('no index', 503)
+    const index = deps.index
+
+    // Fixed at connect time. The stream is per-connection, and switching
+    // viewpoint reloads the page, which opens a new one.
+    const viewer = currentActor(c)
+
+    let since = new Date()
+    let closed = false
+
+    const stream = new ReadableStream({
+      start(controller) {
+        const enc = new TextEncoder()
+        const send = (chunk: string) => {
+          if (!closed) controller.enqueue(enc.encode(chunk))
+        }
+
+        deps.activity?.viewerJoined()
+        send(': connected\n\n')
+
+        const poll = setInterval(async () => {
+          if (closed) return
+          try {
+            const events = await index.feed({ limit: FEED_LIMIT, since })
+            if (events.length > 0) {
+              // Oldest first, so prepending each one leaves the newest on top.
+              const handles = await handlesFor(events)
+              for (const e of [...events].reverse()) {
+                const markup = String(await feedCard(e, handles, new Date(), viewer))
+                  .replace(/\s*\n\s*/g, ' ')
+                send(`event: event\ndata: ${markup}\n\n`)
+              }
+              since = events[0]!.at
+            } else {
+              // Keeps proxies from closing an idle connection, and is how the
+              // generator learns the viewer is still there.
+              send(': keep-alive\n\n')
+            }
+          } catch {
+            // A transient index error should drop one poll, not the stream.
+          }
+        }, 3000)
+
+        const shutdown = () => {
+          if (closed) return
+          closed = true
+          clearInterval(poll)
+          deps.activity?.viewerLeft()
+          try {
+            controller.close()
+          } catch {
+            // already closed by the client going away
+          }
+        }
+        c.req.raw.signal.addEventListener('abort', shutdown)
+      },
+    })
+
+    return new Response(stream, {
+      headers: {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      },
+    })
+  })
+
+  // ------------------------------------------------------------- dashboard
+  app.get('/parts', async (c) => {
     if (!deps.index) {
       return c.html(
         dashboardPage({
+          chrome: chrome(c),
           recent: [],
           issuers: [],
           handles: new Map(),
@@ -103,7 +247,14 @@ export function createApp(deps: AppDeps) {
       ...issuers.map((i) => i.did),
     ])
     return c.html(
-      dashboardPage({ recent, issuers, handles, indexAvailable: true, mode }),
+      dashboardPage({
+        chrome: chrome(c),
+        recent,
+        issuers,
+        handles,
+        indexAvailable: true,
+        mode,
+      }),
     )
   })
 
@@ -118,6 +269,7 @@ export function createApp(deps: AppDeps) {
     if (releases.length === 0) {
       return c.html(
         partPage({
+          chrome: chrome(c),
           partNumber,
           serialNumber,
           chain: [],
@@ -153,6 +305,7 @@ export function createApp(deps: AppDeps) {
 
     return c.html(
       partPage({
+        chrome: chrome(c),
         partNumber,
         serialNumber,
         chain,
@@ -165,7 +318,7 @@ export function createApp(deps: AppDeps) {
   })
 
   // --------------------------------------------------------------- verify
-  app.get('/verify', (c) => c.html(verifyPage(mode)))
+  app.get('/verify', (c) => c.html(verifyPage(mode, undefined, undefined, chrome(c))))
 
   app.post('/verify', async (c) => {
     const form = await c.req.parseBody()
@@ -176,7 +329,10 @@ export function createApp(deps: AppDeps) {
     try {
       parsed = JSON.parse(raw)
     } catch {
-      return c.html(verifyPage(mode, undefined, 'That is not valid JSON.'), 400)
+      return c.html(
+        verifyPage(mode, undefined, 'That is not valid JSON.', chrome(c)),
+        400,
+      )
     }
 
     try {
@@ -187,9 +343,9 @@ export function createApp(deps: AppDeps) {
         resolver: deps.resolver,
         repo: deps.repo,
       })
-      return c.html(verifyPage(mode, report))
+      return c.html(verifyPage(mode, report, undefined, chrome(c)))
     } catch (err) {
-      return c.html(verifyPage(mode, undefined, describe(err)), 400)
+      return c.html(verifyPage(mode, undefined, describe(err), chrome(c)), 400)
     }
   })
 
@@ -232,7 +388,9 @@ export function createApp(deps: AppDeps) {
   })
 
   // ------------------------------------------------- selective disclosure
-  app.get('/disclose', (c) => c.html(disclosePage({ mode, fields: FIELD_ORDER })))
+  app.get('/disclose', (c) =>
+    c.html(disclosePage({ mode, chrome: chrome(c), fields: FIELD_ORDER })),
+  )
 
   app.post('/disclose', async (c) => {
     const form = await c.req.parseBody({ all: true })
@@ -244,7 +402,10 @@ export function createApp(deps: AppDeps) {
         : []
 
     const fail = (error: string, status: 400 | 404 = 400) =>
-      c.html(disclosePage({ mode, fields: FIELD_ORDER, error }), status)
+      c.html(
+        disclosePage({ mode, chrome: chrome(c), fields: FIELD_ORDER, error }),
+        status,
+      )
 
     if (picked.length === 0) return fail('Choose at least one field to reveal.')
 
@@ -400,7 +561,15 @@ export function createApp(deps: AppDeps) {
     if (!uri) return c.html(errorPage(400, 'A record URI is required.'), 400)
     const field = c.req.query('field') ?? null
     const data = await formData(uri, null, field)
-    return c.html(formPage({ mode, uri, issuerHandle: issuerNameOf(data.record), ...data }))
+    return c.html(
+      formPage({
+        mode,
+        chrome: chrome(c),
+        uri,
+        issuerHandle: issuerNameOf(data.record),
+        ...data,
+      }),
+    )
   })
 
   app.post('/form', async (c) => {
@@ -418,7 +587,13 @@ export function createApp(deps: AppDeps) {
     if (raw.trim() === '') {
       const data = await formData(uriField, null, field)
       return c.html(
-        formPage({ mode, uri: uriField, issuerHandle: issuerNameOf(data.record), ...data }),
+        formPage({
+          mode,
+          chrome: chrome(c),
+          uri: uriField,
+          issuerHandle: issuerNameOf(data.record),
+          ...data,
+        }),
       )
     }
 
@@ -488,11 +663,18 @@ export function createApp(deps: AppDeps) {
     return deps.writer?.actors().some((a) => a.handle === handle) ? handle : undefined
   }
 
-  const actorOr = (c: any): string => {
-    const handle = currentActor(c) ?? deps.writer?.actors()[0]?.handle
-    if (!handle) throw new Error('no demonstration accounts are configured')
-    return handle
-  }
+  /**
+   * What the layout needs to draw the viewpoint control, on every page.
+   *
+   * `current` is undefined for the public viewpoint, which is a real answer
+   * rather than a missing one: most people who look at a certificate hold no
+   * repository and no bundle, and the demonstration is more honest if that is
+   * the default a visitor arrives in.
+   */
+  const chrome = (c: any) => ({
+    actors: deps.writer?.actors(),
+    current: currentActor(c),
+  })
 
   if (deps.writer) {
     const writer = deps.writer
@@ -500,23 +682,47 @@ export function createApp(deps: AppDeps) {
     app.post('/act-as', async (c) => {
       const form = await c.req.parseBody()
       const handle = typeof form.handle === 'string' ? form.handle : ''
+
+      // An empty selection means "the public" — the viewpoint with no bundles
+      // and no repository, which is the one most visitors actually occupy.
+      if (handle === '') {
+        c.header('set-cookie', `${ACTOR_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`)
+        return c.redirect(c.req.header('referer') ?? '/', 303)
+      }
       if (writer.actors().some((a) => a.handle === handle)) {
         c.header(
           'set-cookie',
           `${ACTOR_COOKIE}=${encodeURIComponent(handle)}; Path=/; HttpOnly; SameSite=Lax`,
         )
       }
-      return c.redirect(c.req.header('referer') ?? '/issue', 303)
+      // Back where they were, so switching viewpoint does not also navigate.
+      return c.redirect(c.req.header('referer') ?? '/', 303)
     })
 
     app.get('/issue', (c) => {
-      const handle = actorOr(c)
+      // The example button submits the handle it can see, and the handle it
+      // can see wins. Reading only the cookie is what let a visitor pick an
+      // organization, press generate, and get a form belonging to whoever was
+      // first in the roster.
+      const asked = c.req.query('handle')
+      const handle =
+        asked && writer.actors().some((a) => a.handle === asked)
+          ? asked
+          : currentActor(c)
+
+      // Keep the viewpoint control in step with what the page is about to do.
+      if (handle && handle !== currentActor(c)) {
+        c.header(
+          'set-cookie',
+          `${ACTOR_COOKIE}=${encodeURIComponent(handle)}; Path=/; HttpOnly; SameSite=Lax`,
+        )
+      }
 
       // The generated example is issued BY the acting organization, so its
       // Block 4 is that organization's own — the one thing on the form a shop
       // could not plausibly get wrong about itself.
       let prefill: Record<string, unknown> | null = null
-      if (c.req.query('example') !== undefined) {
+      if (handle && c.req.query('example') !== undefined) {
         const org = orgs(process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev').find(
           (o) => o.handle === handle,
         )
@@ -528,13 +734,30 @@ export function createApp(deps: AppDeps) {
       }
 
       return c.html(
-        issuePage({ mode, actors: writer.actors(), current: handle, prefill }),
+        issuePage({
+          mode,
+          chrome: { actors: writer.actors(), current: handle },
+          actors: writer.actors(),
+          current: handle,
+          prefill,
+        }),
       )
     })
 
     app.post('/issue', async (c) => {
       const form = await c.req.parseBody()
-      const handle = actorOr(c)
+      const handle = currentActor(c)
+      if (!handle) {
+        return c.html(
+          issuePage({
+            mode,
+            chrome: chrome(c),
+            actors: writer.actors(),
+            error: 'Choose an organization in the header before signing.',
+          }),
+          400,
+        )
+      }
       const str = (k: string) =>
         typeof form[k] === 'string' && form[k] !== '' ? (form[k] as string) : undefined
       const num = (k: string) => {
@@ -562,6 +785,7 @@ export function createApp(deps: AppDeps) {
         return c.html(
           issuePage({
             mode,
+            chrome: chrome(c),
             actors: writer.actors(),
             current: handle,
             issued: { uri: issued.uri, bundle: issued.bundle },
@@ -571,6 +795,7 @@ export function createApp(deps: AppDeps) {
         return c.html(
           issuePage({
             mode,
+            chrome: chrome(c),
             actors: writer.actors(),
             current: handle,
             error: describe(err),
@@ -581,12 +806,30 @@ export function createApp(deps: AppDeps) {
     })
 
     app.get('/accept', (c) =>
-      c.html(acceptPage({ mode, actors: writer.actors(), current: actorOr(c) })),
+      c.html(
+        acceptPage({
+          mode,
+          chrome: chrome(c),
+          actors: writer.actors(),
+          current: currentActor(c),
+        }),
+      ),
     )
 
     app.post('/accept', async (c) => {
       const form = await c.req.parseBody()
-      const handle = actorOr(c)
+      const handle = currentActor(c)
+      if (!handle) {
+        return c.html(
+          acceptPage({
+            mode,
+            chrome: chrome(c),
+            actors: writer.actors(),
+            error: 'Choose an organization in the header before publishing.',
+          }),
+          400,
+        )
+      }
       const get = (k: string) => (typeof form[k] === 'string' ? (form[k] as string) : '')
 
       const uri = get('subjectUri')
@@ -595,7 +838,13 @@ export function createApp(deps: AppDeps) {
 
       const fail = (msg: string) =>
         c.html(
-          acceptPage({ mode, actors: writer.actors(), current: handle, error: msg }),
+          acceptPage({
+            mode,
+            chrome: chrome(c),
+            actors: writer.actors(),
+            current: handle,
+            error: msg,
+          }),
           400,
         )
 
@@ -624,6 +873,7 @@ export function createApp(deps: AppDeps) {
         return c.html(
           acceptPage({
             mode,
+            chrome: chrome(c),
             actors: writer.actors(),
             current: handle,
             written: { uri: written.uri, kind: 'acceptance' },
@@ -636,7 +886,18 @@ export function createApp(deps: AppDeps) {
 
     app.post('/dispute', async (c) => {
       const form = await c.req.parseBody()
-      const handle = actorOr(c)
+      const handle = currentActor(c)
+      if (!handle) {
+        return c.html(
+          acceptPage({
+            mode,
+            chrome: chrome(c),
+            actors: writer.actors(),
+            error: 'Choose an organization in the header before publishing.',
+          }),
+          400,
+        )
+      }
       const get = (k: string) => (typeof form[k] === 'string' ? (form[k] as string) : '')
 
       const uri = get('subjectUri')
@@ -647,6 +908,7 @@ export function createApp(deps: AppDeps) {
         return c.html(
           acceptPage({
             mode,
+            chrome: chrome(c),
             actors: writer.actors(),
             current: handle,
             error: 'An acceptance URI, CID and response are all required.',
@@ -664,6 +926,7 @@ export function createApp(deps: AppDeps) {
         return c.html(
           acceptPage({
             mode,
+            chrome: chrome(c),
             actors: writer.actors(),
             current: handle,
             written: { uri: written.uri, kind: 'dispute' },
@@ -673,6 +936,7 @@ export function createApp(deps: AppDeps) {
         return c.html(
           acceptPage({
             mode,
+            chrome: chrome(c),
             actors: writer.actors(),
             current: handle,
             error: describe(err),

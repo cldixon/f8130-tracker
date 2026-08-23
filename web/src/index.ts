@@ -14,28 +14,70 @@ import { serve } from '@hono/node-server'
 import {
   AtprotoIdentityResolver,
   XrpcRepoClient,
-  standardNetwork,
+  demoNetwork,
   type IdentityResolver,
   type RepoClient,
 } from '@f8130/core'
 
+import { ActivityGenerator } from './activity.js'
 import { createApp } from './app.js'
 import { describeConfig, loadConfig } from './config.js'
+import { MemoryIndex, releaseRow } from './memory-index.js'
+import type { ReadIndex } from './index-port.js'
 import { PostgresIndex } from './postgres.js'
-import { AtpRecordWriter, demoActors, type RecordWriter } from './writer.js'
+import {
+  AtpRecordWriter,
+  MemoryRecordWriter,
+  demoActors,
+  type RecordWriter,
+} from './writer.js'
 
 async function main() {
   const config = loadConfig()
   for (const line of describeConfig(config)) console.warn(line)
 
+  const domain = process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev'
+
   let resolver: IdentityResolver
   let repo: RepoClient
   let demoBundles: Record<string, unknown> | null = null
+  let writer: RecordWriter | null = null
+  let index: ReadIndex | null = null
 
   if (config.mode === 'demo') {
-    const { net, birth, overhaul } = await standardNetwork()
+    const { net, birth, overhaul } = await demoNetwork(domain)
     resolver = net
     repo = net
+
+    // Demo mode gets its own index and its own writer, which together let the
+    // feed and the issue form work with no Postgres and no PDS. The signatures
+    // and the proofs are the real thing; only the hosting is simulated.
+    const memory = new MemoryIndex()
+    index = memory
+    writer = new MemoryRecordWriter(net, memory, demoActors(domain))
+
+    // The two fixture certificates were signed inside demoNetwork, before any
+    // index existed, so an observer has to be told about them the same way it
+    // would have learned from the firehose. Without this the front page is
+    // empty until the generator produces its first event, and the part page
+    // for the sample bundles has nothing to show.
+    const seen = new Date(Date.now() - 60_000)
+    for (const [handle, issued, prev] of [
+      ['northwind-turbine.' + domain, birth, undefined],
+      ['cascadia-mro.' + domain, overhaul, { uri: birth.uri, cid: String(birth.cid) }],
+    ] as const) {
+      memory.setHandle(issued.uri.split('/')[2]!, handle)
+      memory.addRelease(
+        releaseRow({
+          uri: issued.uri,
+          cid: String(issued.cid),
+          bundle: issued.bundle,
+          prev,
+          observedAt: seen,
+        }),
+      )
+    }
+
     demoBundles = {
       genuine: overhaul.bundle,
       birth: birth.bundle,
@@ -53,24 +95,44 @@ async function main() {
     repo = new XrpcRepoClient()
   }
 
-  const index = config.databaseUrl
-    ? PostgresIndex.fromUrl(config.databaseUrl)
-    : null
+  if (config.mode === 'live') {
+    index = config.databaseUrl ? PostgresIndex.fromUrl(config.databaseUrl) : null
 
-  // Writing needs a live PDS and the demonstration account password. Without
-  // both, the app runs read-only rather than offering forms that cannot work.
-  let writer: RecordWriter | null = null
-  const pdsUrl = process.env.PDS_INTERNAL_URL
-  const actPassword = process.env.SEED_ACCOUNT_PASSWORD
-  if (config.mode === 'live' && pdsUrl && actPassword) {
-    writer = new AtpRecordWriter({
-      service: pdsUrl,
-      password: actPassword,
-      actors: demoActors(process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev'),
-    })
-    console.warn(`Issuance enabled against ${pdsUrl}`)
-  } else {
-    console.warn('Issuance disabled: needs live mode, PDS_INTERNAL_URL and SEED_ACCOUNT_PASSWORD.')
+    // Writing needs a live PDS and the demonstration account password. Without
+    // both, the app runs read-only rather than offering forms that cannot work.
+    const pdsUrl = process.env.PDS_INTERNAL_URL
+    const actPassword = process.env.SEED_ACCOUNT_PASSWORD
+    if (pdsUrl && actPassword) {
+      writer = new AtpRecordWriter({
+        service: pdsUrl,
+        password: actPassword,
+        actors: demoActors(domain),
+      })
+      console.warn(`Issuance enabled against ${pdsUrl}`)
+    } else {
+      console.warn('Issuance disabled: needs PDS_INTERNAL_URL and SEED_ACCOUNT_PASSWORD.')
+    }
+  }
+
+  // Synthetic activity is opt-in in live mode and on by default in demo mode.
+  // The asymmetry is the point: in demo mode a generated record dies with the
+  // process, and in live mode it is a permanent write to a real repository, so
+  // a deployment has to ask for it.
+  const wantActivity =
+    process.env.F8130_ACTIVITY === '0'
+      ? false
+      : config.mode === 'demo' || process.env.F8130_ACTIVITY === '1'
+
+  const activity =
+    wantActivity && writer
+      ? new ActivityGenerator({
+          writer,
+          domain,
+          onError: (err) => console.warn('activity generator:', describe(err)),
+        })
+      : null
+  if (wantActivity && !writer) {
+    console.warn('Synthetic activity disabled: no write path is configured.')
   }
 
   const app = createApp({
@@ -80,6 +142,7 @@ async function main() {
     demoBundles,
     mode: config.mode,
     writer,
+    activity,
   })
 
   // Plenty of containers and CI runners have no IPv6 at all, and a hard-coded
@@ -111,6 +174,9 @@ async function main() {
     process.exit(1)
   })
 }
+
+const describe = (err: unknown) =>
+  err instanceof Error ? err.message : String(err)
 
 main().catch((err) => {
   console.error(err)
