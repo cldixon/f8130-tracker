@@ -200,7 +200,9 @@ func (c *Consumer) extractRecords(
 			continue
 		}
 		collection := nsid.String()
-		if collection != ReleaseNSID && collection != AcceptanceNSID {
+		if collection != ReleaseNSID &&
+			collection != AcceptanceNSID &&
+			collection != DisputeNSID {
 			continue
 		}
 		uri := fmt.Sprintf("at://%s/%s/%s", evt.Repo, collection, rkey.String())
@@ -246,6 +248,10 @@ func (c *Consumer) extractRecords(
 				continue
 			}
 			rec.Acceptance = v
+		case *Dispute:
+			// Nothing to cross-check: a dispute names no author, so the
+			// repository it was found in is the author by construction.
+			rec.Dispute = v
 		default:
 			continue
 		}

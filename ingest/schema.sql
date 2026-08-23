@@ -86,6 +86,33 @@ CREATE TABLE IF NOT EXISTS acceptance (
 CREATE INDEX IF NOT EXISTS acceptance_issuer_outcome_idx ON acceptance (issuer_did, outcome);
 CREATE INDEX IF NOT EXISTS acceptance_subject_idx ON acceptance (subject_cid);
 
+-- An issuer answering a verdict published against them.
+--
+-- They cannot delete or amend the verdict — it lives in the verifier's
+-- repository, not theirs — so a reply is the whole of what they can do, and
+-- indexing it is what makes that visible rather than merely true.
+CREATE TABLE IF NOT EXISTS dispute (
+  cid           TEXT PRIMARY KEY,
+  uri           TEXT NOT NULL UNIQUE,
+
+  -- The acceptance being answered. Not a foreign key, for the same reason as
+  -- the others: cross-repository ordering is not guaranteed.
+  subject_uri   TEXT NOT NULL,
+  subject_cid   TEXT NOT NULL,
+
+  -- The repository the record was found in. A dispute names no author, which
+  -- is the only authorship claim worth anything.
+  author_did    TEXT NOT NULL,
+
+  response      TEXT NOT NULL,
+  disputed_at   TIMESTAMPTZ NOT NULL,
+  observed_at   TIMESTAMPTZ NOT NULL,
+  seq           BIGINT NOT NULL,
+  raw_record    JSONB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS dispute_subject_idx ON dispute (subject_cid);
+
 -- Single-row table. The cursor advances in the same transaction as the rows it
 -- describes, so a crash between the two is not representable: either the
 -- records and the cursor both moved, or neither did.

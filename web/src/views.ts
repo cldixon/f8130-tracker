@@ -10,6 +10,7 @@ import type {
 } from '@f8130/core'
 import type {
   AcceptanceRow,
+  DisputeRow,
   FeedEvent,
   IssuerStat,
   ReleaseRow,
@@ -457,13 +458,37 @@ const ago = (at: Date, now: Date) => {
  * client-side template: one renderer means a streamed card and a reloaded card
  * cannot drift apart.
  */
+/** at://did/collection/rkey → the permalink this app serves it at. */
+export function postPath(uri: string): string {
+  const parts = uri.split('/')
+  const did = parts[2] ?? ''
+  const rkey = parts[4] ?? ''
+  return `/post/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`
+}
+
+/**
+ * One event, as a card.
+ *
+ * Exported because the live stream sends the same markup rather than a second
+ * client-side template: one renderer means a streamed card and a reloaded card
+ * cannot drift apart.
+ */
 export function feedCard(
   event: FeedEvent,
   handles: Map<string, string>,
   now = new Date(),
   /** Handle of the organization being viewed as, if any. */
   viewer?: string,
+  /** How many verdicts this observer has seen on each release. */
+  replies?: Map<string, number>,
+  /**
+   * Display names by DID. Handles stay separate because they are the identity
+   * the viewpoint check compares against, while these are only for reading.
+   */
+  names?: Map<string, string>,
 ): HtmlEscapedString | Promise<HtmlEscapedString> {
+  const nameOf = (did: string) =>
+    names?.get(did) ?? handles.get(did) ?? short(did, 12)
   // What the viewpoint control changes, and all it changes: which events are
   // marked as involving you. It grants no extra visibility — the withheld
   // blocks stay withheld whoever is looking, because the index never held
@@ -476,45 +501,160 @@ export function feedCard(
   if (event.kind === 'release') {
     const r = event.release
     const withheld = FIELDS.filter((f) => !f.public).length
+    const n = replies?.get(r.cid) ?? 0
     return html`<article class="event" data-cid="${r.cid}">
       <div class="who">
-        <span class="dot rel"></span>
+        ${avatar(r.organizationName, true)}
         <strong>${r.organizationName}</strong>${yours(r.issuerDid)} issued a release certificate
-        <span class="when">${ago(event.at, now)}</span>
+        <span class="when"><a href="${postPath(r.uri)}">${ago(event.at, now)}</a></span>
       </div>
       <div class="what">
-        <a href="/form?uri=${encodeURIComponent(r.uri)}">${r.description}</a>
-        · <span class="mono">${r.partNumber}</span>
+        <a href="${postPath(r.uri)}">${r.description}</a>
+        · <a class="mono tag" href="/part/${encodeURIComponent(r.partNumber)}/${encodeURIComponent(r.serialNumber)}"
+          >${r.partNumber}</a>
         · s/n <span class="mono">${r.serialNumber}</span>
       </div>
       <div class="meta">
         ${withheld} of ${FIELDS.length} blocks committed and withheld ·
         form <span class="mono">${r.formNumber}</span>
+        ${n > 0
+          ? html` · <a href="${postPath(r.uri)}">${n} ${n === 1 ? 'verdict' : 'verdicts'}</a>`
+          : ''}
       </div>
     </article>`
   }
 
   const v = event.verdict
-  const verifier = handles.get(v.verifierDid) ?? v.verifierDid
-  const issuer = handles.get(v.issuerDid) ?? v.issuerDid
+  const verifier = nameOf(v.verifierDid)
+  const issuer = nameOf(v.issuerDid)
   return html`<article class="event ${v.outcome}" data-cid="${v.cid}">
+    <div class="replying">
+      replying to <a href="${postPath(v.subjectUri)}">${issuer}&rsquo;s release</a>
+    </div>
     <div class="who">
-      <span class="dot ${v.outcome}"></span>
+      ${avatar(verifier, true)}
       <strong>${verifier}</strong>${yours(v.verifierDid)}
       ${OUTCOME_WORD[v.outcome] ?? v.outcome}
       a part from <strong>${issuer}</strong>${yours(v.issuerDid)}
-      <span class="when">${ago(event.at, now)}</span>
+      <span class="when"><a href="${postPath(v.subjectUri)}">${ago(event.at, now)}</a></span>
     </div>
     <div class="what">
-      <a href="/part/${encodeURIComponent(v.partNumber)}/${encodeURIComponent(v.serialNumber)}">
-        ${v.partNumber} / ${v.serialNumber}
-      </a>
+      <a class="mono tag" href="/part/${encodeURIComponent(v.partNumber)}/${encodeURIComponent(v.serialNumber)}">
+        ${v.partNumber}
+      </a> · s/n <span class="mono">${v.serialNumber}</span>
     </div>
-    ${v.note ? html`<div class="note">“${v.note}”</div>` : ''}
+    ${v.note ? html`<div class="note">&ldquo;${v.note}&rdquo;</div>` : ''}
     <div class="meta">
       published in ${verifier}&rsquo;s own repository — the issuer cannot remove it
     </div>
   </article>`
+}
+
+/* ------------------------------------------------------------------ thread */
+
+/**
+ * One release and everything published in answer to it.
+ *
+ * The shape is a thread because the records are one. A verdict is a record in
+ * the verifier's repository carrying a strong reference to the release, which
+ * is structurally what a reply is on this protocol — and the consequence is
+ * the thing worth showing: the issuer whose release is at the top cannot
+ * delete anything below it. They can add.
+ *
+ * Nothing here is a verdict this service is passing. The page offers to run
+ * the checks and show them; it does not stamp a mark on the post. A mark would
+ * say the platform vouches, and the whole argument is that nobody vouches.
+ */
+export function threadPage(params: {
+  chrome?: Chrome
+  mode?: Mode
+  release: ReleaseRow
+  verdicts: AcceptanceRow[]
+  /** Replies to verdicts, keyed by the acceptance CID each answers. */
+  replies: Map<string, DisputeRow[]>
+  handles: Map<string, string>
+  names?: Map<string, string>
+  now?: Date
+}) {
+  const r = params.release
+  const now = params.now ?? new Date()
+  const withheld = FIELDS.filter((f) => !f.public).length
+  const nameOf = (did: string) =>
+    params.names?.get(did) ?? params.handles.get(did) ?? short(did, 12)
+  const handleOf = (did: string) => params.handles.get(did) ?? short(did, 12)
+
+  return layout(
+    `${r.organizationName} · ${r.partNumber}`,
+    html`<article class="post">
+      <div class="who">
+        ${avatar(r.organizationName)}
+        <span class="ident">
+          <strong>${r.organizationName}</strong>
+          <span class="hnd">${handleOf(r.issuerDid)}</span>
+        </span>
+      </div>
+      <h1 class="pt">${r.description}</h1>
+      <div class="pmeta">
+        <a class="mono tag" href="/part/${encodeURIComponent(r.partNumber)}/${encodeURIComponent(r.serialNumber)}"
+          >${r.partNumber}</a>
+        · s/n <span class="mono">${r.serialNumber}</span>
+        · form <span class="mono">${r.formNumber}</span>
+      </div>
+      <div class="ptimes">
+        <div><span class="label">Completed (claimed)</span> ${fmt(r.completedAt)}</div>
+        <div><span class="label">First observed here</span> ${fmt(r.observedAt)}</div>
+      </div>
+      <div class="pactions">
+        <a class="act" href="/form?uri=${encodeURIComponent(r.uri)}">View as an 8130-3</a>
+        <a class="act" href="/verify">Check a document against it</a>
+      </div>
+      <div class="meta">
+        ${withheld} of ${FIELDS.length} blocks are committed but not published, so
+        this observer cannot say what was done to the part. Holding the bundle
+        opens them; this page never will.
+      </div>
+    </article>
+
+    <div class="replies">
+      ${params.verdicts.length === 0
+        ? html`<div class="card"><div class="empty">
+            No verdict has been published on this release yet. Whoever received
+            the part can publish one at any time, in their own repository.
+          </div></div>`
+        : params.verdicts.map((v) => {
+            const answers = params.replies.get(v.cid) ?? []
+            return html`<article class="event ${v.outcome} reply" data-cid="${v.cid}">
+              <div class="who">
+                ${avatar(nameOf(v.verifierDid), true)}
+                <strong>${nameOf(v.verifierDid)}</strong>
+                ${OUTCOME_WORD[v.outcome] ?? v.outcome} the part
+                <span class="when">${ago(v.receivedAt, now)}</span>
+              </div>
+              ${v.note ? html`<div class="note">&ldquo;${v.note}&rdquo;</div>` : ''}
+              <div class="meta">
+                in <span class="mono">${handleOf(v.verifierDid)}</span>&rsquo;s own
+                repository · observed here ${fmt(v.observedAt)}
+              </div>
+              ${answers.map(
+                (d) => html`<article class="event answer" data-cid="${d.cid}">
+                  <div class="who">
+                    ${avatar(nameOf(d.authorDid), true)}
+                    <strong>${nameOf(d.authorDid)}</strong> answered
+                    <span class="when">${ago(d.disputedAt, now)}</span>
+                  </div>
+                  <div class="note">&ldquo;${d.response}&rdquo;</div>
+                  <div class="meta">
+                    the reply is all they can publish — the verdict above is not
+                    theirs to remove
+                  </div>
+                </article>`,
+              )}
+            </article>`
+          })}
+    </div>`,
+    params.mode,
+    params.chrome,
+  )
 }
 
 export function feedPage(params: {
@@ -523,6 +663,10 @@ export function feedPage(params: {
   events: FeedEvent[]
   handles: Map<string, string>
   current?: string
+  /** Verdict counts by release CID, so a card can say a thread exists. */
+  replies?: Map<string, number>
+  /** Display names by DID, for reading rather than for identity. */
+  names?: Map<string, string>
   /** False when there is no index to read, which is a different empty. */
   hasIndex: boolean
   live: boolean
@@ -562,7 +706,9 @@ export function feedPage(params: {
       : ''}
 
     <div id="feed" class="feed">
-      ${params.events.map((e) => feedCard(e, params.handles, now, params.current))}
+      ${params.events.map((e) =>
+        feedCard(e, params.handles, now, params.current, params.replies, params.names),
+      )}
     </div>
 
     ${params.live

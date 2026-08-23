@@ -41,6 +41,7 @@ import type { Bundle } from '../bundle.js'
 
 export const ACCEPTANCE_NSID = 'dev.cldixon.f8130.acceptance'
 export const RELEASE_NSID = 'dev.cldixon.f8130.release'
+export const DISPUTE_NSID = 'dev.cldixon.f8130.dispute'
 
 type KeyEpoch = { key: SigningKey; from: Date }
 
@@ -244,6 +245,48 @@ export class MemoryNetwork implements IdentityResolver, RepoClient {
 
     return {
       uri: `at://${org.did}/${ACCEPTANCE_NSID}/${rkey}`,
+      cid: await cidForLex(record as any),
+    }
+  }
+
+  /**
+   * An issuer answering a verdict, in the issuer's own repository.
+   *
+   * The whole of what they can do. The verdict is a record in the verifier's
+   * repo signed by the verifier's key, so there is no operation available to
+   * an issuer that removes or amends it, and none is offered here.
+   */
+  async dispute(params: {
+    handle: string
+    subject: { uri: string; cid: any }
+    response: string
+    disputedAt?: string
+  }): Promise<{ uri: string; cid: any }> {
+    const org = this.org(params.handle)
+
+    const record: Record<string, unknown> = {
+      $type: DISPUTE_NSID,
+      subject: { uri: params.subject.uri, cid: params.subject.cid },
+      response: params.response,
+      disputedAt:
+        params.disputedAt ?? new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+    }
+
+    const rkey = TID.nextStr()
+    org.repo = await org.repo.applyWrites(
+      [
+        {
+          action: WriteOpAction.Create,
+          collection: DISPUTE_NSID as any,
+          rkey: rkey as any,
+          record: record as any,
+        },
+      ],
+      org.keypair,
+    )
+
+    return {
+      uri: `at://${org.did}/${DISPUTE_NSID}/${rkey}`,
       cid: await cidForLex(record as any),
     }
   }

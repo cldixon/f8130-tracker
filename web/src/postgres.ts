@@ -3,6 +3,7 @@ import { Pool } from 'pg'
 import type {
   FeedEvent,
   AcceptanceRow,
+  DisputeRow,
   IssuerStat,
   ReadIndex,
   ReleaseRow,
@@ -61,6 +62,19 @@ export class PostgresIndex implements ReadIndex {
       outcome: r.outcome,
       note: r.note,
       receivedAt: r.received_at,
+      observedAt: r.observed_at,
+    }
+  }
+
+  private static toDispute(r: Record<string, any>): DisputeRow {
+    return {
+      cid: r.cid,
+      uri: r.uri,
+      subjectUri: r.subject_uri,
+      subjectCid: r.subject_cid,
+      authorDid: r.author_did,
+      response: r.response,
+      disputedAt: r.disputed_at,
       observedAt: r.observed_at,
     }
   }
@@ -142,6 +156,20 @@ export class PostgresIndex implements ReadIndex {
       [cids],
     )
     return rows.map(PostgresIndex.toAcceptance)
+  }
+
+  async disputesForSubjects(cids: string[]): Promise<DisputeRow[]> {
+    if (cids.length === 0) return []
+    const { rows } = await this.pool.query(
+      `SELECT * FROM dispute WHERE subject_cid = ANY($1) ORDER BY disputed_at ASC`,
+      [cids],
+    )
+    return rows.map(PostgresIndex.toDispute)
+  }
+
+  async releaseByUri(uri: string): Promise<ReleaseRow | null> {
+    const { rows } = await this.pool.query(`SELECT * FROM release WHERE uri = $1`, [uri])
+    return rows[0] ? PostgresIndex.toRelease(rows[0]) : null
   }
 
   async issuerStats(): Promise<IssuerStat[]> {

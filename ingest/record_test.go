@@ -194,3 +194,54 @@ func TestDecodeReleaseWithPrev(t *testing.T) {
 		t.Error("prev uri missing — a bare CID cannot be located")
 	}
 }
+
+func TestDecodeDispute(t *testing.T) {
+	obj := map[string]any{
+		"$type":      DisputeNSID,
+		"subject":    map[string]any{"uri": "at://did:plc:op/x/1", "cid": "bafyacc"},
+		"response":   "Back-to-birth records were supplied at time of sale.",
+		"disputedAt": "2026-04-02T09:00:00Z",
+	}
+
+	r, err := DecodeRecord(DisputeNSID, encode(t, obj))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	d, ok := r.(*Dispute)
+	if !ok {
+		t.Fatalf("got %T, want *Dispute", r)
+	}
+	if d.Subject.CID != "bafyacc" {
+		t.Errorf("subject cid = %q", d.Subject.CID)
+	}
+	if d.Response != obj["response"] {
+		t.Errorf("response = %q", d.Response)
+	}
+	if d.DisputedAt.IsZero() {
+		t.Error("disputedAt did not decode")
+	}
+}
+
+// A dispute with no subject answers nothing, and would index as a reply to
+// nowhere. Better to drop it than to store a dangling one.
+func TestDecodeDisputeRequiresSubject(t *testing.T) {
+	obj := map[string]any{
+		"$type":      DisputeNSID,
+		"response":   "We stand by this release.",
+		"disputedAt": "2026-04-02T09:00:00Z",
+	}
+	if _, err := DecodeRecord(DisputeNSID, encode(t, obj)); err == nil {
+		t.Fatal("want error for a dispute with no subject")
+	}
+}
+
+func TestAuthorOf(t *testing.T) {
+	for _, tc := range []struct{ uri, want string }{
+		{"at://did:plc:abc/dev.cldixon.f8130.dispute/3k", "did:plc:abc"},
+		{"nonsense", ""},
+	} {
+		if got := authorOf(tc.uri); got != tc.want {
+			t.Errorf("authorOf(%q) = %q, want %q", tc.uri, got, tc.want)
+		}
+	}
+}

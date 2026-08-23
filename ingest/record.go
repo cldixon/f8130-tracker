@@ -56,6 +56,19 @@ type Acceptance struct {
 	Raw          map[string]any
 }
 
+// Dispute is a decoded dispute record: an issuer answering a verdict.
+//
+// There is no author field to check, unlike a release or an acceptance. A
+// dispute says only which verdict it answers and what the answer is, and the
+// author is the repository it was found in — which is the only claim about
+// authorship worth anything anyway.
+type Dispute struct {
+	Subject    StrongRef
+	Response   string
+	DisputedAt time.Time
+	Raw        map[string]any
+}
+
 // ErrNotOurs marks a record in a collection this AppView does not index. It is
 // an ordinary outcome, not a failure: the firehose carries everyone's data.
 var ErrNotOurs = fmt.Errorf("record is not an f8130 record")
@@ -77,6 +90,8 @@ func DecodeRecord(collection string, raw []byte) (any, error) {
 		return decodeRelease(obj)
 	case AcceptanceNSID:
 		return decodeAcceptance(obj)
+	case DisputeNSID:
+		return decodeDispute(obj)
 	default:
 		return nil, ErrNotOurs
 	}
@@ -252,4 +267,27 @@ func cidToString(v any) (string, error) {
 	default:
 		return "", fmt.Errorf("unrecognized CID representation %T", v)
 	}
+}
+
+func decodeDispute(obj map[string]any) (*Dispute, error) {
+	d := &Dispute{Raw: obj}
+	var err error
+
+	subject, err := optionalStrongRef(obj, "subject")
+	if err != nil {
+		return nil, err
+	}
+	if subject == nil {
+		return nil, fmt.Errorf("missing field: subject")
+	}
+	d.Subject = *subject
+
+	if d.Response, err = requireString(obj, "response"); err != nil {
+		return nil, err
+	}
+	if d.DisputedAt, err = requireTime(obj, "disputedAt"); err != nil {
+		return nil, err
+	}
+
+	return d, nil
 }

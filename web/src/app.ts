@@ -26,6 +26,7 @@ import {
 
 import type {
   AcceptanceRow,
+  DisputeRow,
   FeedEvent,
   ReadIndex,
   ReleaseRow,
@@ -40,11 +41,12 @@ import {
   formPage,
   issuePage,
   partPage,
+  threadPage,
   verifyPage,
   type FormFold,
 } from './views.js'
 import { PUBLIC_HANDLE, type NavKey } from './shell.js'
-import type { RecordWriter } from './writer.js'
+import { RELEASE_NSID, type RecordWriter } from './writer.js'
 
 const MAX_CHAIN_DEPTH = 100
 const MAX_BUNDLE_BYTES = 256 * 1024
@@ -108,6 +110,28 @@ export function createApp(deps: AppDeps) {
 
   const FEED_LIMIT = 40
 
+  /**
+   * Display names for the DIDs on screen.
+   *
+   * Kept separate from handles: the handle is the identity the viewpoint
+   * check compares against, the display name is only for reading. A verdict
+   * carries neither — the recipient's name is not a block on an 8130-3 — so
+   * it comes from the roster by way of the handle the index resolved.
+   */
+  function namesFor(handles: Map<string, string>): Map<string, string> {
+    const roster = new Map(
+      orgs(process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev').map(
+        (o) => [o.handle, o.displayName] as const,
+      ),
+    )
+    const out = new Map<string, string>()
+    for (const [did, handle] of handles) {
+      const display = roster.get(handle)
+      if (display) out.set(did, display)
+    }
+    return out
+  }
+
   /** Handles for the DIDs on screen, so a feed does not read as raw DIDs. */
   async function handlesFor(events: FeedEvent[]): Promise<Map<string, string>> {
     const dids = new Set<string>()
@@ -129,17 +153,85 @@ export function createApp(deps: AppDeps) {
     return out
   }
 
+  /** How many verdicts each release on screen has drawn. */
+  async function replyCounts(events: FeedEvent[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>()
+    if (!deps.index) return out
+    const cids = events.filter((e) => e.kind === 'release').map((e) => e.release.cid)
+    if (cids.length === 0) return out
+    for (const a of await deps.index.acceptancesForSubjects(cids)) {
+      out.set(a.subjectCid, (out.get(a.subjectCid) ?? 0) + 1)
+    }
+    return out
+  }
+
   app.get('/', async (c) => {
     const events = deps.index ? await deps.index.feed({ limit: FEED_LIMIT }) : []
+    const handles = await handlesFor(events)
     return c.html(
       feedPage({
         mode,
         chrome: chrome(c, 'home'),
         events,
-        handles: await handlesFor(events),
+        handles,
+        names: namesFor(handles),
+        replies: await replyCounts(events),
         current: currentActor(c),
         hasIndex: Boolean(deps.index),
         live: Boolean(deps.index),
+      }),
+    )
+  })
+
+  /**
+   * One release and its thread.
+   *
+   * Addressed the way atproto addresses it — repository plus record key —
+   * rather than by the CID this observer happens to have stored, so the URL
+   * survives this index being rebuilt.
+   */
+  app.get('/post/:did/:rkey', async (c) => {
+    if (!deps.index) return c.html(errorPage(503, 'No index is configured.'), 503)
+    const uri = `at://${c.req.param('did')}/${RELEASE_NSID}/${c.req.param('rkey')}`
+    const release = await deps.index.releaseByUri(uri)
+    if (!release) {
+      return c.html(
+        errorPage(404, 'This observer has not seen that release.'),
+        404,
+      )
+    }
+
+    const verdicts = await deps.index.acceptancesForSubjects([release.cid])
+    const answers = await deps.index.disputesForSubjects(verdicts.map((v) => v.cid))
+    const replies = new Map<string, DisputeRow[]>()
+    for (const d of answers) {
+      replies.set(d.subjectCid, [...(replies.get(d.subjectCid) ?? []), d])
+    }
+
+    const dids = new Set<string>([release.issuerDid])
+    for (const v of verdicts) {
+      dids.add(v.verifierDid)
+      dids.add(v.issuerDid)
+    }
+    for (const d of answers) dids.add(d.authorDid)
+    const handles = new Map<string, string>()
+    await Promise.all(
+      [...dids].map(async (did) => {
+        const h = await deps.index!.handleFor(did)
+        if (h) handles.set(did, h)
+      }),
+    )
+
+    return c.html(
+      threadPage({
+        mode,
+        chrome: chrome(c, 'home'),
+        release,
+        // Oldest first: a thread reads downward.
+        verdicts: [...verdicts].reverse(),
+        replies,
+        handles,
+        names: namesFor(handles),
       }),
     )
   })
@@ -185,7 +277,9 @@ export function createApp(deps: AppDeps) {
               // Oldest first, so prepending each one leaves the newest on top.
               const handles = await handlesFor(events)
               for (const e of [...events].reverse()) {
-                const markup = String(await feedCard(e, handles, new Date(), viewer))
+                const markup = String(
+                  await feedCard(e, handles, new Date(), viewer, undefined, namesFor(handles)),
+                )
                   .replace(/\s*\n\s*/g, ' ')
                 send(`event: event\ndata: ${markup}\n\n`)
               }

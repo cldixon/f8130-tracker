@@ -88,6 +88,84 @@ func acceptanceRec(cid, uri, issuer, verifier, outcome string) IndexedRecord {
 	}
 }
 
+func disputeRec(cid, uri, subjectCID string) IndexedRecord {
+	return IndexedRecord{
+		URI:        uri,
+		CID:        cid,
+		Collection: DisputeNSID,
+		Dispute: &Dispute{
+			Subject:    StrongRef{URI: "at://did:plc:op/x/y", CID: subjectCID},
+			Response:   "Back-to-birth records were supplied at time of sale.",
+			DisputedAt: time.Now().UTC().Truncate(time.Second),
+			Raw:        map[string]any{"$type": DisputeNSID},
+		},
+	}
+}
+
+// An issuer cannot remove a verdict against them. Indexing the reply is what
+// makes that limit visible in the thread instead of merely true underneath it.
+func TestApplyCommitStoresDispute(t *testing.T) {
+	s, ctx := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	acc := acceptanceRec("bafyacc", "at://"+cascadia+"/a/1", northwind, cascadia, "rejected")
+	dis := disputeRec("bafydis", "at://"+northwind+"/d/1", "bafyacc")
+
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{acc, dis}); err != nil {
+		t.Fatal(err)
+	}
+
+	var (
+		author   string
+		response string
+		subject  string
+	)
+	err := s.pool.QueryRow(ctx,
+		`SELECT author_did, response, subject_cid FROM dispute WHERE cid = $1`,
+		"bafydis",
+	).Scan(&author, &response, &subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The author is the repository it was found in, not a field it claimed.
+	if author != northwind {
+		t.Errorf("author = %q, want %q", author, northwind)
+	}
+	if subject != "bafyacc" {
+		t.Errorf("subject = %q, want the acceptance it answers", subject)
+	}
+	if response == "" {
+		t.Error("response did not store")
+	}
+}
+
+func TestDeleteRemovesDispute(t *testing.T) {
+	s, ctx := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	uri := "at://" + northwind + "/d/2"
+
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{
+		disputeRec("bafydel", uri, "bafyacc"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyCommit(ctx, 2, now, []IndexedRecord{
+		{URI: uri, Collection: DisputeNSID, Deleted: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var n int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM dispute WHERE uri = $1`, uri).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Error("dispute should be gone")
+	}
+}
+
 func TestCursorStartsUnset(t *testing.T) {
 	s, ctx := testStore(t)
 	seq, err := s.Cursor(ctx)

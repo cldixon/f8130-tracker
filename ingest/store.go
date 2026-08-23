@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -63,6 +64,7 @@ type IndexedRecord struct {
 	// Exactly one of these is set.
 	Release    *Release
 	Acceptance *Acceptance
+	Dispute    *Dispute
 	// Deletions carry only a URI.
 	Deleted bool
 }
@@ -101,6 +103,10 @@ func (s *Store) ApplyCommit(
 		case rec.Acceptance != nil:
 			if err := upsertAcceptance(ctx, tx, rec, seq, observedAt); err != nil {
 				return fmt.Errorf("upsert acceptance %s: %w", rec.URI, err)
+			}
+		case rec.Dispute != nil:
+			if err := upsertDispute(ctx, tx, rec, seq, observedAt); err != nil {
+				return fmt.Errorf("upsert dispute %s: %w", rec.URI, err)
 			}
 		}
 	}
@@ -195,6 +201,53 @@ func upsertAcceptance(
 	return err
 }
 
+// upsertDispute stores an issuer's answer to a verdict against them.
+//
+// The author is the repository the record was found in, which the consumer
+// carries on the URI, so there is no claimed author to reconcile.
+func upsertDispute(
+	ctx context.Context,
+	tx pgx.Tx,
+	rec IndexedRecord,
+	seq int64,
+	observedAt time.Time,
+) error {
+	d := rec.Dispute
+	raw, err := json.Marshal(jsonSafe(d.Raw))
+	if err != nil {
+		return err
+	}
+
+	author := authorOf(rec.URI)
+	if err := ensureActor(ctx, tx, author); err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO dispute (
+			cid, uri, subject_uri, subject_cid, author_did, response,
+			disputed_at, observed_at, seq, raw_record
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT (cid) DO UPDATE SET
+			uri = EXCLUDED.uri,
+			seq = EXCLUDED.seq
+	`,
+		rec.CID, rec.URI, d.Subject.URI, d.Subject.CID, author, d.Response,
+		d.DisputedAt, observedAt, seq, raw,
+	)
+	return err
+}
+
+// authorOf pulls the repository DID out of an at:// URI.
+func authorOf(uri string) string {
+	rest, ok := strings.CutPrefix(uri, "at://")
+	if !ok {
+		return ""
+	}
+	did, _, _ := strings.Cut(rest, "/")
+	return did
+}
+
 func ensureActor(ctx context.Context, tx pgx.Tx, did string) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO actor (did, handle) VALUES ($1, $1)
@@ -207,7 +260,10 @@ func deleteRecord(ctx context.Context, tx pgx.Tx, uri string) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM release WHERE uri = $1`, uri); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `DELETE FROM acceptance WHERE uri = $1`, uri)
+	if _, err := tx.Exec(ctx, `DELETE FROM acceptance WHERE uri = $1`, uri); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `DELETE FROM dispute WHERE uri = $1`, uri)
 	return err
 }
 
@@ -318,7 +374,7 @@ func (s *Store) Reset(ctx context.Context) error {
 	// source of truth, so there is nothing to lose by taking the tables with
 	// it.
 	if _, err := s.pool.Exec(ctx, `
-		DROP TABLE IF EXISTS release, acceptance, actor, ingest_cursor CASCADE
+		DROP TABLE IF EXISTS release, acceptance, dispute, actor, ingest_cursor CASCADE
 	`); err != nil {
 		return err
 	}

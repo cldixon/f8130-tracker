@@ -17,6 +17,7 @@ import { PUBLIC_FIELDS, type Bundle } from '@f8130/core'
 
 import type {
   AcceptanceRow,
+  DisputeRow,
   FeedEvent,
   IssuerStat,
   ReadIndex,
@@ -56,6 +57,7 @@ export function releaseRow(params: {
 export class MemoryIndex implements ReadIndex {
   private readonly releases: ReleaseRow[] = []
   private readonly verdicts: AcceptanceRow[] = []
+  private readonly disputes: DisputeRow[] = []
   private readonly handles = new Map<string, string>()
 
   addRelease(row: ReleaseRow): void {
@@ -68,13 +70,22 @@ export class MemoryIndex implements ReadIndex {
     this.verdicts.push(row)
   }
 
+  addDispute(row: DisputeRow): void {
+    if (this.disputes.some((d) => d.cid === row.cid)) return
+    this.disputes.push(row)
+  }
+
   setHandle(did: string, handle: string): void {
     this.handles.set(did, handle)
   }
 
   /** Every release, newest observation first. Used by tests and the dashboard. */
-  get size(): { releases: number; verdicts: number } {
-    return { releases: this.releases.length, verdicts: this.verdicts.length }
+  get size(): { releases: number; verdicts: number; disputes: number } {
+    return {
+      releases: this.releases.length,
+      verdicts: this.verdicts.length,
+      disputes: this.disputes.length,
+    }
   }
 
   async feed(params: { limit: number; since?: Date }): Promise<FeedEvent[]> {
@@ -120,6 +131,17 @@ export class MemoryIndex implements ReadIndex {
     return this.verdicts
       .filter((v) => wanted.has(v.subjectCid))
       .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime())
+  }
+
+  async disputesForSubjects(cids: string[]): Promise<DisputeRow[]> {
+    const wanted = new Set(cids)
+    return this.disputes
+      .filter((d) => wanted.has(d.subjectCid))
+      .sort((a, b) => a.disputedAt.getTime() - b.disputedAt.getTime())
+  }
+
+  async releaseByUri(uri: string): Promise<ReleaseRow | null> {
+    return this.releases.find((r) => r.uri === uri) ?? null
   }
 
   async issuerStats(): Promise<IssuerStat[]> {
