@@ -68,6 +68,14 @@ type Pending = {
   note: Promise<string | null> | null
   /** The operator the part went to. Not a field on the form — see below. */
   operatorHandle: string
+  /**
+   * The date the certificate claims it was signed.
+   *
+   * Carried because the receiving inspection is dated from it and not from
+   * the moment the generator gets round to publishing the verdict. Receipt is
+   * release plus shipping time, which is the gap that was missing.
+   */
+  completedAt: Date
   at: number
 }
 
@@ -114,6 +122,10 @@ export type ActivityOptions = {
   /** Milliseconds between events. Jittered between these. */
   minGap?: number
   maxGap?: number
+  /** Prior releases to write before the first live event. Zero disables it. */
+  backlogSize?: number
+  /** How many days back that backlog reaches. */
+  backlogDays?: number
   /**
    * How long the first viewer waits before anything happens.
    *
@@ -158,6 +170,20 @@ const DEFAULT_FIRST_GAP = 4_000
 const REJECTION_RATE = 0.18
 
 /**
+ * Where the tick splits between closing a part out and releasing a new one.
+ *
+ * Under a half, so releases lead. Every release eventually draws exactly one
+ * verdict, so an even split plus a standing backlog produced a feed that read
+ * as almost entirely acceptances — the releases were there, but each one was
+ * immediately buried by the verdict it caused. Leading with releases lets the
+ * queue carry stock, which is what a supply chain looks like.
+ */
+const VERDICT_ROLL = 0.42
+
+/** Below this a rejection gets its answer instead. */
+const DISPUTE_ROLL = 0.12
+
+/**
  * How often a release continues a part already in service rather than
  * beginning a new one.
  *
@@ -168,6 +194,50 @@ const CONTINUATION_RATE = 0.35
 
 /** A part's history stops growing here, as a real one eventually would. */
 const MAX_VISITS = 5
+
+/**
+ * The history that already exists when the first viewer arrives.
+ *
+ * Without it the only parts available to inspect were the ones this session
+ * had just released, so a verdict always landed seconds after the release it
+ * judged and both read as having happened at the same moment. A part crosses
+ * an ocean between those two events. The backlog is what gives an inspection
+ * something realistically old to be about.
+ *
+ * It also fixes the mix. Every release eventually draws a verdict, so a feed
+ * with no prior stock spends its whole life closing out parts it opened
+ * minutes ago, and reads as an inspection log rather than as a supply chain.
+ */
+const BACKLOG_SIZE = 34
+
+/** The far end of the window the backlog is spread across. */
+const BACKLOG_DAYS = 21
+
+/**
+ * The near end.
+ *
+ * Nothing in the backlog claims to be newer than this, and a live release
+ * claims today, so every historical card is dated older than every live one.
+ * That keeps the column monotonic: a reader scrolling down sees time recede
+ * instead of jumping about. Without the floor the two populations interleave
+ * by date while the ordering stays on the observer's clock, and the result
+ * looks like a bug even though every date on it is correct.
+ */
+const BACKLOG_MIN_DAYS = 4
+
+/** How much of that backlog has already been inspected on arrival. */
+const BACKLOG_SETTLED = 0.35
+
+/**
+ * Shipping time, in days, between a certificate being signed and the part
+ * reaching the operator's receiving dock.
+ *
+ * A component out of an overhaul shop is crated, booked onto a freight
+ * forwarder and cleared through customs. Two days is a domestic overnight
+ * with paperwork; nine is an ordinary international routing.
+ */
+const TRANSIT_MIN_DAYS = 2
+const TRANSIT_MAX_DAYS = 9
 
 const REJECTION_NOTES = [
   'Back-to-birth documentation could not be produced on request.',
@@ -202,6 +272,17 @@ export class ActivityGenerator {
   private answerable: Answerable[] = []
   private inService: InService[] = []
   private seq = 0
+  private seeded = false
+  /**
+   * Seeding is in flight.
+   *
+   * Part of `running` because the invariant that matters is "this generator is
+   * writing records", and it is writing them during the seed as much as during
+   * a tick. Reporting idle while twenty-six releases go out would make the one
+   * property the feed page promises — nothing accumulates unwatched — a
+   * statement the class could not actually back.
+   */
+  private seeding = false
 
   /** Counts, for the health endpoint and for tests. */
   readonly stats = { released: 0, verdicts: 0, disputes: 0, errors: 0 }
@@ -217,7 +298,7 @@ export class ActivityGenerator {
   }
 
   get running(): boolean {
-    return this.timer !== null
+    return this.timer !== null || this.seeding
   }
 
   get viewerCount(): number {
@@ -226,7 +307,23 @@ export class ActivityGenerator {
 
   viewerJoined(): void {
     this.viewers++
-    if (this.viewers === 1) this.schedule(this.opts.firstGap ?? DEFAULT_FIRST_GAP)
+    if (this.viewers !== 1) return
+    this.seeding = true
+
+    // The stock in transit has to exist before the first live event, or the
+    // first verdict has nothing to be about except a release from ten seconds
+    // ago. Seeding is not awaited by the caller — a visitor loading the page
+    // should not wait on twenty-six writes — but the first tick is scheduled
+    // behind it, so ordering holds.
+    void this.seedBacklog()
+      .catch((err) => {
+        this.stats.errors++
+        this.opts.onError?.(err)
+      })
+      .finally(() => {
+        this.seeding = false
+        this.schedule(this.opts.firstGap ?? DEFAULT_FIRST_GAP)
+      })
   }
 
   viewerLeft(): void {
@@ -237,6 +334,9 @@ export class ActivityGenerator {
   stop(): void {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
+    // A seed already in flight cannot be cancelled mid-write, but it checks
+    // for viewers between records and stops at the next one.
+    this.seeding = false
   }
 
   private schedule(fixedGap?: number): void {
@@ -279,6 +379,14 @@ export class ActivityGenerator {
     }
   }
 
+  /** Days in a crate, on a freight forwarder, through customs. */
+  private transitDays(): number {
+    return (
+      TRANSIT_MIN_DAYS +
+      Math.floor(this.rand() * (TRANSIT_MAX_DAYS - TRANSIT_MIN_DAYS + 1))
+    )
+  }
+
   private pickOne<T>(items: readonly T[]): T | undefined {
     if (items.length === 0) return undefined
     return items[Math.floor(this.rand() * items.length)]
@@ -297,7 +405,7 @@ export class ActivityGenerator {
 
       // Answer a rejection now and then. The issuer cannot delete the verdict;
       // replying is the whole of what they can do.
-      if (this.answerable.length > 0 && r < 0.15) {
+      if (this.answerable.length > 0 && r < DISPUTE_ROLL) {
         const target = this.answerable.shift()!
         if (this.known(target.issuerHandle)) {
           // The reply answers the objection that was actually raised, which
@@ -315,53 +423,13 @@ export class ActivityGenerator {
         }
       }
 
-      // Close out a release that is waiting on its operator.
-      if (this.pending.length > 0 && r < 0.55) {
+      // Close out a release that is waiting on its operator. The oldest one
+      // first, which with a backlog in place means a part that has genuinely
+      // been in transit for days rather than the one released a tick ago.
+      if (this.pending.length > 0 && r < VERDICT_ROLL) {
         const item = this.pending.shift()!
         if (this.known(item.operatorHandle)) {
-          const outcome = item.outcome
-          // Started a whole feed interval ago, so this has almost always
-          // resolved and awaiting it costs nothing. The canned list is still
-          // behind it for the case where it has not.
-          const note =
-            outcome === 'accepted'
-              ? undefined
-              : ((await item.note) ??
-                this.pickOne(
-                  outcome === 'rejected' ? REJECTION_NOTES : DISCREPANCY_NOTES,
-                ))
-
-          const written = await this.opts.writer.createAcceptance({
-            handle: item.operatorHandle,
-            subject: item.subject,
-            issuerDid: item.issuerDid,
-            partNumber: item.partNumber,
-            serialNumber: item.serialNumber,
-            outcome,
-            ...(note ? { note } : {}),
-          })
-          this.stats.verdicts++
-          this.opts.dock?.settle(item.subject.uri)
-
-          if (outcome !== 'accepted') {
-            this.answerable.push({
-              subject: { uri: written.uri, cid: written.cid },
-              issuerHandle: item.issuerHandle,
-              description: item.description,
-              note: note ?? '',
-              // Same trick: the reply starts now and is read a tick or more
-              // later, so the issuer's answer is off the publishing path too.
-              reply: note
-                ? this.start(() =>
-                    this.opts.narrator?.narrateDispute?.({
-                      verdictNote: note,
-                      description: item.description,
-                    }),
-                  )
-                : null,
-              at: this.now(),
-            })
-          }
+          await this.settle(item)
           return
         }
       }
@@ -373,8 +441,168 @@ export class ActivityGenerator {
     }
   }
 
+  /**
+   * The receiving inspection: an operator publishes what it found.
+   *
+   * Dated from the release rather than from the wall clock. The certificate
+   * was signed when the part left the shop; the inspection happens when it
+   * arrives, which is a shipping time later. Publishing the record now and
+   * dating it now was what made a release and its verdict read as though they
+   * had happened in the same second.
+   */
+  private async settle(item: Pending, receivedAtOverride?: Date): Promise<void> {
+    // The tick path has already taken it off the front; the backlog path
+    // reaches items by name and has not.
+    this.pending = this.pending.filter((p) => p !== item)
+    const outcome = item.outcome
+    // Started a whole feed interval ago, so this has almost always resolved
+    // and awaiting it costs nothing. The canned list is still behind it for
+    // the case where it has not.
+    const note =
+      outcome === 'accepted'
+        ? undefined
+        : ((await item.note) ??
+          this.pickOne(outcome === 'rejected' ? REJECTION_NOTES : DISCREPANCY_NOTES))
+
+    // Never later than now: an inspection cannot be in the future, however
+    // long the crate took.
+    const receivedAt =
+      receivedAtOverride ??
+      new Date(
+        Math.min(this.now(), item.completedAt.getTime() + this.transitDays() * 86_400_000),
+      )
+
+    const written = await this.opts.writer.createAcceptance({
+      handle: item.operatorHandle,
+      subject: item.subject,
+      issuerDid: item.issuerDid,
+      partNumber: item.partNumber,
+      serialNumber: item.serialNumber,
+      outcome,
+      receivedAt,
+      ...(note ? { note } : {}),
+    })
+    this.stats.verdicts++
+    this.opts.dock?.settle(item.subject.uri)
+
+    if (outcome !== 'accepted') {
+      this.answerable.push({
+        subject: { uri: written.uri, cid: written.cid },
+        issuerHandle: item.issuerHandle,
+        description: item.description,
+        note: note ?? '',
+        // Same trick: the reply starts now and is read a tick or more later,
+        // so the issuer's answer is off the publishing path too.
+        reply: note
+          ? this.start(() =>
+              this.opts.narrator?.narrateDispute?.({
+                verdictNote: note,
+                description: item.description,
+              }),
+            )
+          : null,
+        at: this.now(),
+      })
+    }
+  }
+
+  /**
+   * The stock of parts already moving through the world before anyone looked.
+   *
+   * Written oldest first, deliberately. The feed is ordered on this observer's
+   * clock, and these records all arrive within a second of each other, so the
+   * order they are written in is the order they will appear in. Writing them
+   * oldest first makes that order agree with the dates on the certificates,
+   * and a reader scrolling down sees history recede instead of jumping about.
+   *
+   * The catalogue writes these rather than the narrator. Twenty-six model
+   * calls would put a minute of latency in front of the first viewer and cost
+   * real money on every cold start, for prose that is scrolled past on the way
+   * to the live events. Narration is spent where it is read.
+   */
+  /**
+   * Why this runs on every process start rather than checking for history
+   * first.
+   *
+   * The instinct is to skip seeding when the index already holds releases,
+   * because every seeded record is a permanent write to a real repository.
+   * That guard was here and it was wrong, in the way that matters: it asks
+   * whether *records* exist when the thing that has to exist is *inspectable*
+   * stock, and inspectable is in-memory.
+   *
+   * A verdict needs to know which operator received the part, and that is not
+   * on the certificate — an 8130-3 names the issuer and never the recipient.
+   * So the generator can only inspect parts it handed over itself, in this
+   * process, and that queue is empty at boot however much history the database
+   * holds. Consulting the index meant that in the one deployment with real
+   * history — production — seeding was skipped, the queue stayed empty, and
+   * every verdict landed on a release from minutes earlier. Which is the
+   * complaint this whole mechanism exists to answer.
+   *
+   * The cost it was guarding against is not real at this scale. A watched feed
+   * writes a record every twelve to forty-five seconds, so a session produces
+   * a few hundred an hour; thirty-four at the start of one is noise. And
+   * seeding is behind `viewerJoined`, so a container that restarts with nobody
+   * watching writes nothing at all.
+   */
+  private async seedBacklog(): Promise<void> {
+    if (this.seeded) return
+    this.seeded = true
+
+    const size = this.opts.backlogSize ?? BACKLOG_SIZE
+    const span = this.opts.backlogDays ?? BACKLOG_DAYS
+    if (size <= 0) return
+
+    // The schedule first, then the writes in date order.
+    //
+    // Seeding releases in one pass and then settling a fraction in a second
+    // put every receipt above every release in the feed, because the feed
+    // orders on the observer's clock and the second pass was written second.
+    // The dates said one thing and the column said another. Planning both
+    // kinds together and running the plan oldest-first makes write order and
+    // claimed order the same order, which is the only reason the column reads
+    // as a timeline at all.
+    type Step = { agedDays: number; kind: 'release' | 'receipt'; n: number }
+    const steps: Step[] = []
+    for (let n = 0; n < size; n++) {
+      const agedDays =
+        BACKLOG_MIN_DAYS + Math.round(((span - BACKLOG_MIN_DAYS) * (size - n)) / size)
+      steps.push({ agedDays, kind: 'release', n })
+
+      // Some of this stock has already been through a receiving dock. Without
+      // it the feed opens as an unbroken wall of releases, which is the
+      // complaint the backlog exists to answer, pointed the other way.
+      if (this.rand() >= BACKLOG_SETTLED) continue
+      const arrived = agedDays - this.transitDays()
+      // A shipment that would land today or later belongs to the live feed,
+      // not to history.
+      if (arrived >= 1) steps.push({ agedDays: arrived, kind: 'receipt', n })
+    }
+    steps.sort((a, b) => b.agedDays - a.agedDays)
+
+    const issued = new Map<number, Pending>()
+    for (const step of steps) {
+      if (this.viewers === 0) return
+      try {
+        if (step.kind === 'release') {
+          const pending = await this.issue({ agedDays: step.agedDays, narrate: false })
+          if (pending) issued.set(step.n, pending)
+          continue
+        }
+        const item = issued.get(step.n)
+        if (!item || !this.known(item.operatorHandle)) continue
+        await this.settle(item, new Date(this.now() - step.agedDays * 86_400_000))
+      } catch (err) {
+        this.stats.errors++
+        this.opts.onError?.(err)
+      }
+    }
+  }
+
   /** A repair station or manufacturer releases a part to an operator. */
-  private async issue(): Promise<void> {
+  private async issue(
+    opts: { agedDays?: number; narrate?: boolean } = {},
+  ): Promise<Pending | null> {
     const cast = this.cast()
     const issuers = cast.filter(
       (o) => (o.kind === 'mro' || o.kind === 'oem') && this.known(o.handle),
@@ -384,7 +612,7 @@ export class ActivityGenerator {
     )
     const issuer = this.pickOne(issuers)
     const operator = this.pickOne(operators)
-    if (!issuer || !operator) return
+    if (!issuer || !operator) return null
 
     // Sometimes a part already in service comes back in for more work. An
     // OEM is not a candidate — a manufacturer certifies new manufacture under
@@ -399,7 +627,18 @@ export class ActivityGenerator {
     const form: RawForm = await narratedForm({
       org: issuer,
       seed: Math.floor(this.rand() * 1e9) ^ this.seq++,
-      narrator: this.opts.narrator ?? null,
+      // The generator's clock, not the wall clock. They are the same in
+      // production and were not in a test, which is how a certificate ended up
+      // signed after the inspection that received it — the injected clock is
+      // worthless if the one date that matters is built behind its back.
+      now: new Date(this.now()),
+      // A live release claims to have been signed today, because it is being
+      // published today. Only the backlog claims the past, and it says how
+      // far back rather than leaving it to a hash of the seed — an arbitrary
+      // date is what made a part released one minute ago quote as having been
+      // released sixty-eight days ago.
+      agedDays: opts.agedDays ?? 0,
+      narrator: opts.narrate === false ? null : (this.opts.narrator ?? null),
       ...(returning
         ? {
             continues: {
@@ -457,7 +696,7 @@ export class ActivityGenerator {
           ? ('discrepancy' as const)
           : ('accepted' as const)
 
-    this.pending.push({
+    const queued: Pending = {
       outcome,
       note:
         outcome === 'accepted'
@@ -484,10 +723,16 @@ export class ActivityGenerator {
       // right operator publish the verdict, which is how the protocol
       // expresses receipt.
       operatorHandle: operator.handle,
+      completedAt: new Date(String(form.completedAt)),
       at: this.now(),
-    })
+    }
+    this.pending.push(queued)
 
-    // Keep the backlog bounded; an unwatched demo should not accumulate one.
-    if (this.pending.length > 20) this.pending.shift()
+    // Bounded, but generously: the queue is stock in transit, and the seeded
+    // history is most of it. Trimming to twenty would throw away the aged
+    // parts that make an inspection read as an inspection.
+    if (this.pending.length > 80) this.pending.shift()
+
+    return queued
   }
 }

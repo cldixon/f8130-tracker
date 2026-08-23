@@ -29,6 +29,7 @@ import { Dock, type Arrival } from '../src/dock.js'
 import { MemoryIndex, releaseRow } from '../src/memory-index.js'
 import { MemoryRecordWriter, demoActors, type RecordWriter } from '../src/writer.js'
 import type { AcceptanceRow, DisputeRow, ReleaseRow } from '../src/index-port.js'
+import { postPath } from '../src/views.js'
 
 const DOMAIN = 'f8130.cldixon.dev'
 
@@ -239,12 +240,20 @@ describe('the feed page', () => {
     assert.match(body, /NT882104/)
   })
 
-  test('says how many blocks are committed but withheld', async () => {
-    const { app } = await feedApp((i) => i.addRelease(release()))
-    const body = await (await app.request('/')).text()
-    // Eight of seventeen, and the page has to say so: the interesting claim is
-    // that the index never held them, not that it chose not to render them.
-    assert.match(body, /8 of 17 blocks committed and withheld/)
+  test('the withheld count is stated on the record, not on every card', async () => {
+    const r = release()
+    const { app } = await feedApp((i) => i.addRelease(r))
+
+    // The claim still has to be made — the interesting thing is that the index
+    // never held those blocks, not that it declined to render them. But it is
+    // one fact about the design, not news about this particular part, and
+    // repeating it under every card in an infinite feed turned it into
+    // wallpaper. It belongs on the record it describes.
+    const feed = await (await app.request('/')).text()
+    assert.ok(!/blocks committed and withheld/.test(feed), 'boilerplate is back on the cards')
+
+    const post = await (await app.request(postPath(r.uri))).text()
+    assert.match(post, /8 of 17 blocks are withheld/)
   })
 
   test('a private block never reaches the page', async () => {
@@ -327,7 +336,7 @@ describe('threads', () => {
   test('offers to run the checks rather than stamping a mark', async () => {
     const { app } = await threaded()
     const body = await (await app.request(PERMALINK)).text()
-    assert.match(body, /Check a document against it/)
+    assert.match(body, /Check a document you hold/)
     assert.ok(!/verified.{0,20}✓|✓.{0,20}verified/i.test(body), 'a badge crept in')
   })
 
@@ -343,7 +352,7 @@ describe('threads', () => {
     for (const secret of ['REPAIRED', 'Metering valve wear', 'R. Inspector']) {
       assert.ok(!body.includes(secret), `${secret} leaked into the thread`)
     }
-    assert.match(body, /8 of 17 blocks are committed but not published/)
+    assert.match(body, /8 of 17 blocks are withheld/)
   })
 
   test('a release this observer has never seen is a 404, not an error', async () => {
@@ -409,8 +418,8 @@ describe('a part as a topic', () => {
 
     // A part holds no repository and signs nothing; the page has to say so
     // rather than dressing it up as a participant on the network.
-    assert.match(body, /Not an account/)
-    assert.match(body, /assembled by this observer/)
+    assert.match(body, /holds no repository and signs nothing/)
+    assert.match(body, /assembled from\s+records published independently/)
     assert.ok(!/follow/i.test(body), 'a part is not something you follow')
   })
 
@@ -708,9 +717,7 @@ describe('goods in', () => {
     ).text()
 
     assert.match(body, /This list is not from the network/)
-    assert.match(body, /no block for it/)
-    // And names what would change that, so the next version is legible.
-    assert.match(body, /disclosed only to named\s+parties/)
+    assert.match(body, /not from the network/)
   })
 
   test('shows only what was handed to the acting organization', async () => {
@@ -905,7 +912,7 @@ describe('the filing cabinet', () => {
     const body = await (await app.request('/cabinet')).text()
 
     assert.match(body, /not stored on this server/)
-    assert.match(body, /compelled to hand over/)
+    assert.match(body, /not stored on this server/)
     // The list is empty markup; only a browser can fill it in.
     assert.match(body, /id="cabinet"/)
     assert.match(body, /Reading this browser/)
@@ -939,15 +946,65 @@ describe('the shape on a phone', () => {
     const { app } = await feedApp((i) => i.addRelease(release()))
     const body = await (await app.request('/')).text()
 
-    // A rail says "Check a document"; a tab bar under a thumb says "Verify".
-    assert.match(body, /<span class="full">Check a document<\/span><span class="tab">Verify<\/span>/)
-    assert.match(body, /<span class="full">Your documents<\/span><span class="tab">Docs<\/span>/)
+    // A rail has room for a word a tab bar under a thumb does not.
+    assert.match(body, /<span class="full">Documents<\/span><span class="tab">Docs<\/span>/)
+    assert.match(body, /<span class="full">Issuers<\/span><span class="tab">Issuers<\/span>/)
 
     // Both are in the markup rather than one being derived, so a screen
     // reader gets a real label at either breakpoint.
     const full = (body.match(/class="full"/g) ?? []).length
     const tab = (body.match(/class="tab"/g) ?? []).length
     assert.equal(full, tab, 'every long label needs a short one')
+  })
+
+  test('checking a document is not offered as a thing that gets used up', async () => {
+    const r = release()
+    const { app } = await feedApp((i) => {
+      i.addRelease(r)
+      i.addVerdict(verdict({ subjectUri: r.uri, subjectCid: r.cid, outcome: 'accepted' }))
+    })
+    const body = await (await app.request(postPath(r.uri))).text()
+
+    // A release with a verdict on it still offers the check, and has to. The
+    // two answer different questions: a verdict is a party's account of the
+    // part they received, while checking asks whether a copy in someone's
+    // hands still matches what was signed. A part accepted by one operator can
+    // travel on with a forged certificate, so the check is never spent — and
+    // the page says which is which, because sitting next to a list of verdicts
+    // it reads as "add another one".
+    assert.match(body, /Check a document you hold/)
+    assert.match(body, /a verdict below is a party&rsquo;s\s+account of the part itself/i)
+  })
+
+  test('a part is written the way the trade writes it', async () => {
+    const { app } = await feedApp((i) => i.addRelease(release()))
+    const body = await (await app.request('/')).text()
+
+    // P/N and S/N, labelled. It used to be name · number · s/n number, which
+    // is three strings and a punctuation mark rather than the plate every
+    // form, purchase order and receiving inspection in the industry repeats.
+    assert.match(body, /<dt>P\/N<\/dt>/)
+    assert.match(body, /<dt>S\/N<\/dt>/)
+    assert.ok(!/· s\/n <span class="mono">/.test(body), 'the run-on line is back')
+  })
+
+  test('the account switcher can be dismissed without choosing anything', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const app = createApp({
+      resolver: net,
+      repo: net,
+      index,
+      writer: new MemoryRecordWriter(net, index, demoActors(DOMAIN)),
+    })
+    const body = await (await app.request('/')).text()
+
+    // `details` is the right markup and does not close on an outside click,
+    // because nothing in its contract says it should. Every menu a visitor has
+    // used does, so the gap reads as a bug rather than as a difference.
+    assert.match(body, /details class="me"/)
+    assert.match(body, /!me\.contains\(e\.target\)/)
+    assert.match(body, /e\.key === 'Escape'/)
   })
 
   test('the compose button degrades to a symbol without losing its name', async () => {
@@ -1138,6 +1195,9 @@ describe('the synthetic generator', () => {
       writer,
       domain: DOMAIN,
       now: () => 1_700_000_000_000,
+      // Off unless a test asks for it. The backlog is history, and a test
+      // about one tick should not have thirty-four writes in front of it.
+      backlogSize: 0,
       // Scripted, then an unremarkable 0.5 once the script runs out — a test
       // should have to spell out only the rolls it actually cares about.
       random: () => (i < rolls.length ? rolls[i++]! : 0.5),
@@ -1145,6 +1205,106 @@ describe('the synthetic generator', () => {
     })
     return { g, calls, writer }
   }
+
+  test('a receiving inspection is dated from the release, not from the clock', async () => {
+    const NOW = 1_700_000_000_000
+    const { writer, calls } = recorder()
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => NOW,
+      random: WALK_THE_THREAD,
+      backlogSize: 4,
+      backlogDays: 20,
+    })
+
+    g.viewerJoined()
+    await new Promise((r) => setTimeout(r, 50))
+    g.viewerLeft()
+
+    const releases = calls.filter((c) => c.kind === 'release')
+    const verdicts = calls.filter((c) => c.kind === 'acceptance')
+    assert.ok(releases.length >= 4, 'the backlog was not written')
+    assert.ok(verdicts.length >= 1, 'nothing was inspected')
+
+    // The part shipped. A verdict published now describes an arrival that
+    // happened a transit time after the certificate was signed — which is the
+    // gap that was missing when both records were simply dated "now" and the
+    // feed showed a release and its verdict as the same moment.
+    for (const v of verdicts) {
+      const subject = releases.find((r) => r.uri === v.subject.uri)
+      assert.ok(subject, 'a verdict on a release nobody issued')
+      const signed = new Date(String(subject.form.completedAt)).getTime()
+      const received = v.receivedAt.getTime()
+      assert.ok(received > signed, 'received before it was signed')
+      assert.ok(received <= NOW, 'received in the future')
+      const days = (received - signed) / 86_400_000
+      assert.ok(days >= 2, `transit of ${days.toFixed(1)}d is not a shipment`)
+    }
+  })
+
+  test('the backlog is written oldest first, so the column stays monotonic', async () => {
+    const { writer, calls } = recorder()
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => 1_700_000_000_000,
+      random: ALWAYS_ISSUE,
+      backlogSize: 8,
+      backlogDays: 20,
+    })
+
+    g.viewerJoined()
+    await new Promise((r) => setTimeout(r, 50))
+    g.viewerLeft()
+
+    // The feed orders on the observer's clock and these all arrive within a
+    // second of each other, so write order is display order. Writing oldest
+    // first is what makes that order agree with the dates on the paper.
+    const dates = calls
+      .filter((c) => c.kind === 'release')
+      .map((c) => new Date(String(c.form.completedAt)).getTime())
+    assert.ok(dates.length >= 8)
+    for (let i = 1; i < dates.length; i++) {
+      assert.ok(dates[i]! >= dates[i - 1]!, `entry ${i} is older than the one before it`)
+    }
+  })
+
+  test('a verdict never has to fall back to a part released moments ago', async () => {
+    const NOW = 1_700_000_000_000
+    const { writer, calls } = recorder()
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => NOW,
+      random: WALK_THE_THREAD,
+      backlogSize: 6,
+      backlogDays: 20,
+    })
+
+    g.viewerJoined()
+    await new Promise((r) => setTimeout(r, 50))
+    // Several live ticks on top of the seeded stock.
+    for (let i = 0; i < 6; i++) await g.tick()
+    g.viewerLeft()
+
+    // The queue is a queue: the oldest waiting part is inspected first, so as
+    // long as aged stock is there, a verdict is never about the release from
+    // the tick before. This is the property the seeding exists for, and it
+    // held only because the seeding actually runs — an earlier version skipped
+    // it whenever the index already held records, which is exactly the case in
+    // the one deployment that has any.
+    const byUri = new Map(calls.filter((c) => c.kind === 'release').map((c) => [c.uri, c]))
+    const verdicts = calls.filter((c) => c.kind === 'acceptance')
+    assert.ok(verdicts.length >= 2, 'nothing was inspected')
+
+    for (const v of verdicts) {
+      const subject = byUri.get(v.subject.uri)!
+      const signed = new Date(String(subject.form.completedAt)).getTime()
+      const ageDays = (NOW - signed) / 86_400_000
+      assert.ok(ageDays >= 2, `inspected a part signed ${ageDays.toFixed(2)}d ago`)
+    }
+  })
 
   test('writes nothing until somebody is watching', () => {
     const { g } = gen([], { random: ALWAYS_ISSUE })
@@ -1397,6 +1557,6 @@ describe('the synthetic generator', () => {
     assert.equal(index.size.releases, 1)
     const body = await (await app.request('/')).text()
     assert.match(body, /issued a release certificate/)
-    assert.match(body, /SYNTHETIC/)
+    assert.match(body, /synthetic data/)
   })
 })

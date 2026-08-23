@@ -381,8 +381,7 @@ export function createApp(deps: AppDeps) {
     if (!deps.index) {
       return c.html(
         dashboardPage({
-          chrome: chrome(c, 'parts'),
-          recent: [],
+          chrome: chrome(c, 'issuers'),
           issuers: [],
           handles: new Map(),
           indexAvailable: false,
@@ -390,18 +389,11 @@ export function createApp(deps: AppDeps) {
         }),
       )
     }
-    const [recent, issuers] = await Promise.all([
-      deps.index.recentReleases(25),
-      deps.index.issuerStats(),
-    ])
-    const handles = await resolveHandles(deps.index, [
-      ...recent.map((r) => r.issuerDid),
-      ...issuers.map((i) => i.did),
-    ])
+    const issuers = await deps.index.issuerStats()
+    const handles = await resolveHandles(deps.index, issuers.map((i) => i.did))
     return c.html(
       dashboardPage({
-        chrome: chrome(c, 'parts'),
-        recent,
+        chrome: chrome(c, 'issuers'),
         issuers,
         handles,
         indexAvailable: true,
@@ -421,7 +413,7 @@ export function createApp(deps: AppDeps) {
     if (releases.length === 0) {
       return c.html(
         partPage({
-          chrome: chrome(c, 'parts'),
+          chrome: chrome(c),
           partNumber,
           serialNumber,
           chain: [],
@@ -477,7 +469,7 @@ export function createApp(deps: AppDeps) {
 
     return c.html(
       partPage({
-        chrome: chrome(c, 'parts'),
+        chrome: chrome(c),
         partNumber,
         serialNumber,
         chain,
@@ -497,10 +489,10 @@ export function createApp(deps: AppDeps) {
 
   // --------------------------------------------------------------- verify
   app.get('/cabinet', (c) =>
-    c.html(cabinetPage({ mode, chrome: chrome(c, 'cabinet') })),
+    c.html(cabinetPage({ mode, chrome: chrome(c, 'docs') })),
   )
 
-  app.get('/verify', (c) => c.html(verifyPage(mode, undefined, undefined, chrome(c, 'verify'))))
+  app.get('/verify', (c) => c.html(verifyPage(mode, undefined, undefined, chrome(c, 'docs'))))
 
   app.post('/verify', async (c) => {
     const form = await c.req.parseBody()
@@ -512,7 +504,7 @@ export function createApp(deps: AppDeps) {
       parsed = JSON.parse(raw)
     } catch {
       return c.html(
-        verifyPage(mode, undefined, 'That is not valid JSON.', chrome(c, 'verify')),
+        verifyPage(mode, undefined, 'That is not valid JSON.', chrome(c, 'docs')),
         400,
       )
     }
@@ -525,9 +517,9 @@ export function createApp(deps: AppDeps) {
         resolver: deps.resolver,
         repo: deps.repo,
       })
-      return c.html(verifyPage(mode, report, undefined, chrome(c, 'verify')))
+      return c.html(verifyPage(mode, report, undefined, chrome(c, 'docs')))
     } catch (err) {
-      return c.html(verifyPage(mode, undefined, describe(err), chrome(c, 'verify')), 400)
+      return c.html(verifyPage(mode, undefined, describe(err), chrome(c, 'docs')), 400)
     }
   })
 
@@ -571,7 +563,7 @@ export function createApp(deps: AppDeps) {
 
   // ------------------------------------------------- selective disclosure
   app.get('/disclose', (c) =>
-    c.html(disclosePage({ mode, chrome: chrome(c), fields: FIELD_ORDER })),
+    c.html(disclosePage({ mode, chrome: chrome(c, 'docs'), fields: FIELD_ORDER })),
   )
 
   app.post('/disclose', async (c) => {

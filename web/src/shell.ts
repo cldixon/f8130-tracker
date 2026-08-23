@@ -72,7 +72,6 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
 .event .dot.accepted { background: var(--pass); }
 .event .dot.rejected { background: var(--fail); }
 .event .dot.discrepancy { background: var(--warn); }
-.event .what { margin-top: .25rem; font-size: .9rem; }
 .event .mine {
   font-size: .64rem; text-transform: uppercase; letter-spacing: .06em;
   color: var(--accent); border: 1px solid var(--accent); border-radius: 3px;
@@ -408,8 +407,35 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
 .quoted .qwho .when {
   margin-left: auto; color: var(--muted); font-size: .72rem; white-space: nowrap;
 }
-.quoted .qwhat { margin-top: .2rem; font-size: .84rem; color: var(--muted); }
-.quoted .unseen { font-style: italic; }
+.quoted .unseen { font-style: italic; font-size: .78rem; color: var(--muted); margin-top: .3rem; }
+
+/* The dataplate.
+   A component carries a stamped plate with its nomenclature and two labelled
+   numbers, and every document about it repeats that shape. Rendering it as a
+   run-on line of punctuation-separated strings threw away a convention the
+   reader already knows. The labels are two characters and buy recognition. */
+.plate { margin-top: .45rem; }
+.plate .nomen { font-size: .95rem; font-weight: 600; line-height: 1.3; }
+.plate .nomen a { color: inherit; text-decoration: none; }
+.plate .nomen a:hover { text-decoration: underline; }
+.ids {
+  display: flex; flex-wrap: wrap; gap: .2rem .9rem; margin: .25rem 0 0;
+}
+.ids > div { display: flex; align-items: baseline; gap: .35rem; }
+.ids dt {
+  font-size: .62rem; font-weight: 700; letter-spacing: .08em;
+  color: var(--muted); text-transform: uppercase;
+}
+.ids dd { margin: 0; font-size: .85rem; }
+.ids dd a { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--line); }
+.ids dd a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+/* Inside a quote the plate is the whole content, so it sheds its top margin. */
+.plate.sm { margin-top: .3rem; }
+.plate.sm .nomen { font-size: .86rem; font-weight: 500; }
+.plate.sm .ids dd { font-size: .78rem; }
+/* On a part page the two numbers are the subject of the page, not a caption. */
+.ids.big { gap: .3rem 1.4rem; margin-top: .4rem; }
+.ids.big dd { font-size: 1rem; }
 .event .who .ico, .event .av { align-self: center; }
 /* The DID beside a name. Present because it is the thing that is actually
    cryptographically meaningful, quiet because it is not what anyone reads. */
@@ -451,8 +477,6 @@ a.tag:hover { border-bottom-color: var(--accent); }
 /* a part, as a topic */
 .topic { padding: .5rem 0 1.25rem; }
 .topic .tname { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
-.topic .tname .hash { color: var(--muted); font-weight: 400; margin-right: .1rem; }
-.topic .tsub { font-size: .92rem; color: var(--muted); margin-top: .15rem; }
 .topic .tnote {
   font-size: .82rem; color: var(--muted); margin: .7rem 0 0; max-width: 34rem;
 }
@@ -581,7 +605,7 @@ button.ghost:hover { background: var(--skip-bg); }
 export type Mode = 'demo' | 'live'
 
 /** Which rail entry is lit. */
-export type NavKey = 'home' | 'inbox' | 'parts' | 'verify' | 'cabinet' | null
+export type NavKey = 'home' | 'inbox' | 'issuers' | 'docs' | null
 
 /**
  * The one piece of per-request state every page shares: who the visitor is
@@ -733,6 +757,36 @@ const COMPOSER_SCRIPT = `
  * An issuer can reopen a form they issued because *they hold the nonces*, not
  * because they are signed in. Nobody can grant that, and nobody can revoke it.
  */
+/**
+ * Dismissing the account switcher.
+ *
+ * It is a `details` element, which is the right markup — it works with
+ * scripting off, it is a disclosure, and the browser handles the toggle. What
+ * `details` does not do is close when you click away from it, because nothing
+ * in the element's contract says it should. Every menu a visitor has ever used
+ * does, so the absence reads as a bug rather than as a difference.
+ *
+ * Two ways out, matching what a menu normally offers: a click anywhere outside
+ * and the Escape key. Escape returns focus to the summary, because a keyboard
+ * user who dismisses a menu has otherwise lost their place in the page.
+ */
+const SWITCHER_SCRIPT = `
+(function () {
+  var me = document.querySelector('details.me')
+  if (!me) return
+  document.addEventListener('click', function (e) {
+    if (me.open && !me.contains(e.target)) me.open = false
+  })
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && me.open) {
+      me.open = false
+      var s = me.querySelector('summary')
+      if (s) s.focus()
+    }
+  })
+})()
+`
+
 const CABINET_SCRIPT = `
 (function () {
   var KEY = 'f8130.bundles'
@@ -801,19 +855,27 @@ export function layout(
 </head>
 <body>
 <div class="marker">
-  <strong>SYNTHETIC DATA</strong> — fictional organizations, invented part
-  numbers, nothing here is airworthiness evidence.${mode === 'demo'
-    ? html` <strong>Demo instance</strong> — an in-memory network: real keys
-        and real proofs, simulated hosting.
-        <a href="/demo/bundles.json">Sample documents</a>.`
+  <strong>Note:</strong> This is a prototype for demonstration purposes only
+  and is built with synthetic data.${mode === 'demo'
+    ? html` <strong>Demo instance</strong> —
+        <a href="/demo/bundles.json">sample documents</a>.`
     : ''}
 </div>
 <div class="app">
   <aside class="rail">
     <div class="brand">f8130<br><span>release certificates on atproto</span></div>
-    <!-- Two labels per entry, because a rail and a tab bar want different
-         words. "Check a document" is right beside a page; "Verify" is right
-         under a thumb. Both are in the markup rather than one being derived,
+    <!-- Four destinations, and each answers a different question. Home: what
+         is happening. Goods in: what is waiting on me. Issuers: who is
+         publishing, and whose paperwork other parties reject. Documents: what
+         I am holding, and the things I can do with it.
+
+         Checking a document and proving one field used to be nav entries of
+         their own. Both are operations on a bundle you hold, so they belong
+         where the bundles are rather than beside them — and one of the two was
+         not in the nav at all, which is how an entire page went unreachable.
+
+         Two labels per entry, because a rail and a tab bar want different
+         words. Both are in the markup rather than one derived from the other,
          so a screen reader gets a real label either way. -->
     <nav>
       <a href="/" class="${on('home')}"><span class="ico">◎</span>
@@ -824,12 +886,10 @@ export function layout(
             ${chrome?.waiting ? html`<span class="badge">${chrome.waiting}</span>` : ''}
           </a>`
         : ''}
-      <a href="/parts" class="${on('parts')}"><span class="ico">▤</span>
-        <span class="full">Parts</span><span class="tab">Parts</span></a>
-      <a href="/verify" class="${on('verify')}"><span class="ico">✓</span>
-        <span class="full">Check a document</span><span class="tab">Verify</span></a>
-      <a href="/cabinet" class="${on('cabinet')}"><span class="ico">▣</span>
-        <span class="full">Your documents</span><span class="tab">Docs</span></a>
+      <a href="/parts" class="${on('issuers')}"><span class="ico">▤</span>
+        <span class="full">Issuers</span><span class="tab">Issuers</span></a>
+      <a href="/cabinet" class="${on('docs')}"><span class="ico">▣</span>
+        <span class="full">Documents</span><span class="tab">Docs</span></a>
     </nav>
     ${actors.length > 0
       ? me
@@ -849,6 +909,7 @@ export function layout(
 ${withComposer ? composer(me) : ''}
 ${withComposer ? html`${raw(`<script>${COMPOSER_SCRIPT}</script>`)}` : ''}
 ${raw(`<script>${CABINET_SCRIPT}</script>`)}
+${actors.length > 0 ? html`${raw(`<script>${SWITCHER_SCRIPT}</script>`)}` : ''}
 </body>
 </html>`
 }

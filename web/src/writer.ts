@@ -55,6 +55,17 @@ export interface RecordWriter {
     serialNumber: string
     outcome: 'accepted' | 'rejected' | 'discrepancy'
     note?: string
+    /**
+     * When the part was received, if that is not now.
+     *
+     * A receiving inspection happens when the part arrives, which is days
+     * after the release certificate was signed and the part left the shop.
+     * Defaulting to now is right for a person clicking the button and wrong
+     * for anything reconstructing a sequence, where the gap between the two
+     * dates is the shipping time and is the whole reason the sequence reads
+     * as a supply chain.
+     */
+    receivedAt?: Date
   }): Promise<Written>
   createDispute(params: {
     handle: string
@@ -155,6 +166,7 @@ export class AtpRecordWriter implements RecordWriter {
     serialNumber: string
     outcome: 'accepted' | 'rejected' | 'discrepancy'
     note?: string
+    receivedAt?: Date
   }): Promise<Written> {
     const agent = await this.session(params.handle)
     const did = agent.session!.did
@@ -171,7 +183,9 @@ export class AtpRecordWriter implements RecordWriter {
         serialNumber: params.serialNumber,
         outcome: params.outcome,
         ...(params.note ? { note: params.note } : {}),
-        receivedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+        receivedAt: (params.receivedAt ?? new Date())
+          .toISOString()
+          .replace(/\.\d+Z$/, 'Z'),
       },
     })
     return { uri: res.data.uri, cid: res.data.cid }
@@ -246,6 +260,7 @@ export class MemoryRecordWriter implements RecordWriter {
         serialNumber: string
         outcome: 'accepted' | 'rejected' | 'discrepancy'
         note?: string
+        receivedAt?: string
       }): Promise<{ uri: string; cid: unknown }>
       dispute(p: {
         handle: string
@@ -310,8 +325,15 @@ export class MemoryRecordWriter implements RecordWriter {
     serialNumber: string
     outcome: 'accepted' | 'rejected' | 'discrepancy'
     note?: string
+    receivedAt?: Date
   }): Promise<Written> {
-    const written = await this.net.accept(params)
+    const { receivedAt, ...rest } = params
+    const written = await this.net.accept({
+      ...rest,
+      ...(receivedAt
+        ? { receivedAt: receivedAt.toISOString().replace(/\.\d+Z$/, 'Z') }
+        : {}),
+    })
     const did = written.uri.split('/')[2]!
     const now = new Date()
     this.index.setHandle(did, params.handle)
@@ -327,7 +349,7 @@ export class MemoryRecordWriter implements RecordWriter {
       serialNumber: params.serialNumber,
       outcome: params.outcome,
       note: params.note ?? null,
-      receivedAt: now,
+      receivedAt: receivedAt ?? now,
       observedAt: now,
     })
     return { uri: written.uri, cid: String(written.cid) }

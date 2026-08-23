@@ -69,8 +69,8 @@ export function verifyPage(
       'Verify',
       html`<h1>Verify a release certificate</h1>
       <p class="sub">
-        Checks a document against the commitment its issuer published in their
-        own repository. No account required, and nothing you paste is stored.
+        Checks a document against the commitment its issuer published. Nothing
+        you paste is stored.
       </p>
       ${error ? html`<div class="verdict no"><h2>Could not read that bundle</h2><p>${error}</p></div>` : ''}
       <div class="card" style="padding:1.15rem">${form}</div>`,
@@ -184,14 +184,14 @@ export function partPage(params: {
     params.names?.get(did) ?? handles.get(did) ?? short(did, 12)
 
   const head = html`<div class="topic">
-    <div class="tname"><span class="hash">#</span>${params.partNumber}</div>
-    <div class="tsub">
-      serial <span class="mono">${params.serialNumber}</span>
-      ${chain[0] ? html` · ${chain[0].description}` : ''}
-    </div>
+    <div class="tname">${chain[0]?.description ?? 'Unknown component'}</div>
+    <dl class="ids big">
+      <div><dt>P/N</dt><dd class="mono">${params.partNumber}</dd></div>
+      <div><dt>S/N</dt><dd class="mono">${params.serialNumber}</dd></div>
+    </dl>
     <p class="tnote">
-      Not an account — a part holds no repository and signs nothing. This page
-      is assembled by this observer out of records published independently by
+      A part holds no repository and signs nothing. This page is assembled from
+      records published independently by
       ${new Set(chain.map((r) => r.issuerDid)).size || 'no'}
       organization${new Set(chain.map((r) => r.issuerDid)).size === 1 ? '' : 's'}.
     </p>
@@ -314,7 +314,6 @@ export function partPage(params: {
 
 export function dashboardPage(params: {
   chrome?: Chrome
-  recent: ReleaseRow[]
   issuers: IssuerStat[]
   handles: Map<string, string>
   indexAvailable: boolean
@@ -322,8 +321,8 @@ export function dashboardPage(params: {
 }) {
   if (!params.indexAvailable) {
     return layout(
-      'Dashboard',
-      html`<h1>Dashboard</h1>
+      'Issuers',
+      html`<h1>Issuers</h1>
       <p class="sub">Browsing is unavailable; verification is not.</p>
       <div class="card"><div class="empty">
         No index is configured, so there is nothing to browse. Note that
@@ -337,32 +336,14 @@ export function dashboardPage(params: {
   }
 
   return layout(
-    'Dashboard',
-    html`<h1>Release certificates observed</h1>
+    'Issuers',
+    html`<h1>Issuers</h1>
     <p class="sub">
-      Everything below was read from independent repositories over the
-      firehose and verified against its issuer's signing key.
+      Every organization this observer has seen publish, verified against the
+      issuer&rsquo;s own signing key.
     </p>
 
-    <h2>Recent releases</h2>
-    <div class="card scroll">
-      ${params.recent.length === 0
-        ? html`<div class="empty">Nothing observed yet.</div>`
-        : html`<table>
-            <tr><th>Part</th><th>Serial</th><th>Status</th><th>Issuer</th><th>Observed</th></tr>
-            ${params.recent.map(
-              (r) => html`<tr>
-                <td><a href="/part/${encodeURIComponent(r.partNumber)}/${encodeURIComponent(r.serialNumber)}">${r.partNumber}</a></td>
-                <td class="mono">${r.serialNumber}</td>
-                <td><a href="/form?uri=${encodeURIComponent(r.uri)}">${r.description}</a></td>
-                <td>${params.handles.get(r.issuerDid) ?? short(r.issuerDid)}</td>
-                <td>${fmt(r.observedAt)}</td>
-              </tr>`,
-            )}
-          </table>`}
-    </div>
-
-    <h2>Issuers</h2>
+    <h2>Who is publishing</h2>
     <div class="card scroll">
       ${params.issuers.length === 0
         ? html`<div class="empty">No issuers observed yet.</div>`
@@ -421,11 +402,9 @@ export function disclosePage(params: {
 
   const intro = html`<h1>Prove one field, reveal nothing else</h1>
     <p class="sub">
-      A lessor auditing maintenance spend needs the cost figure and has no
-      business seeing the findings, the customer, or the workscope. Hand over
-      the whole bundle and they hold a competitor's cost structure forever.
-      A disclosure proves the chosen fields against the commitment the issuer
-      already published — no new signature, and no cooperation from anyone.
+      Proves the fields you choose against the commitment the issuer already
+      published, and reveals nothing else. No new signature, and no cooperation
+      from the issuer.
     </p>`
 
   if (!params.disclosure) {
@@ -477,9 +456,8 @@ export function disclosePage(params: {
       <div class="empty">
         ${(r?.withheld ?? []).map(fieldLabel).join(' · ')}
         <p style="margin:.6rem 0 0">
-          The verifier is told which fields exist and were not shown. A verifier
-          who could not tell the difference could be handed a flattering subset
-          and told it was the whole form.
+          The verifier is told which fields exist and were not shown, so a
+          flattering subset cannot pass as the whole form.
         </p>
       </div>
     </div>
@@ -488,9 +466,8 @@ export function disclosePage(params: {
     <div class="card">
       <div class="empty">
         ${params.exposed?.length ?? 0} sibling hashes travel with the proof —
-        unavoidable, since they are how the root is recomputed. Each covers a
-        field salted with 32 random bytes, so a status with five possible values
-        still cannot be recovered from one.
+        they are how the root is recomputed. Each covers a field salted with 32
+        random bytes, so none can be reversed.
         <div class="evidence mono" style="margin-top:.5rem">
           ${(params.exposed ?? []).map((h) => `${h.slice(0, 16)}…`).join('  ')}
         </div>
@@ -530,19 +507,61 @@ const ago = (at: Date, now: Date) => {
   return `${Math.round(s / 86400)}d ago`
 }
 
-/**
- * One event, as a card.
- *
- * Exported because the live stream sends the same markup rather than a second
- * client-side template: one renderer means a streamed card and a reloaded card
- * cannot drift apart.
- */
 /** at://did/collection/rkey → the permalink this app serves it at. */
 export function postPath(uri: string): string {
   const parts = uri.split('/')
   const did = parts[2] ?? ''
   const rkey = parts[4] ?? ''
   return `/post/${encodeURIComponent(did)}/${encodeURIComponent(rkey)}`
+}
+
+/**
+ * A part's identity, the way the industry writes it.
+ *
+ * It used to be a run-on line — name · number · s/n number — which read as
+ * three unrelated strings separated by punctuation and tied to nothing. A part
+ * is not identified that way anywhere in the trade. It is identified by its
+ * nomenclature and then by two labelled numbers, P/N and S/N, which is what is
+ * stamped on the component's own dataplate and what every form, every purchase
+ * order and every receiving inspection repeats.
+ *
+ * So the labels come back. They are two characters each, they cost almost no
+ * room, and they are the difference between a reader parsing a sentence and a
+ * reader recognising a plate they have seen ten thousand times.
+ *
+ * The part number links to the part's history and the nomenclature to the
+ * record, because those are two different questions — "what else happened to
+ * this part" and "what does this document say" — and a reader arrives with one
+ * or the other.
+ */
+export function dataplate(params: {
+  description: string
+  partNumber: string
+  serialNumber: string
+  /** Where the nomenclature points. Omitted on a card that is itself a link. */
+  href?: string
+  /** Suppresses the part-history link, for use inside another anchor. */
+  flat?: boolean
+  small?: boolean
+}) {
+  const { description, partNumber, serialNumber } = params
+  const partHref = `/part/${encodeURIComponent(partNumber)}/${encodeURIComponent(serialNumber)}`
+
+  return html`<div class="plate ${params.small ? 'sm' : ''}">
+    <div class="nomen">
+      ${params.href && !params.flat
+        ? html`<a href="${params.href}">${description}</a>`
+        : description}
+    </div>
+    <dl class="ids">
+      <div><dt>P/N</dt><dd class="mono">
+        ${params.flat
+          ? partNumber
+          : html`<a href="${partHref}">${partNumber}</a>`}
+      </dd></div>
+      <div><dt>S/N</dt><dd class="mono">${serialNumber}</dd></div>
+    </dl>
+  </div>`
 }
 
 /**
@@ -588,28 +607,25 @@ export function feedCard(
 
   if (event.kind === 'release') {
     const r = event.release
-    const withheld = FIELDS.filter((f) => !f.public).length
     const n = replies?.get(r.cid) ?? 0
     return html`<article class="event" data-cid="${r.cid}">
       <div class="who">
         ${avatar(r.organizationName, true)}
         <strong title="${r.issuerDid}">${r.organizationName}</strong>${yours(r.issuerDid)}
         issued a release certificate
-        <span class="when"><a href="${postPath(r.uri)}">${ago(event.at, now)}</a></span>
+        <span class="when"><a href="${postPath(r.uri)}"
+          >${ago(r.completedAt, now)}</a></span>
       </div>
-      <div class="what">
-        <a href="${postPath(r.uri)}">${r.description}</a>
-        · <a class="mono tag" href="/part/${encodeURIComponent(r.partNumber)}/${encodeURIComponent(r.serialNumber)}"
-          >${r.partNumber}</a>
-        · s/n <span class="mono">${r.serialNumber}</span>
-      </div>
-      <div class="meta">
-        ${withheld} of ${FIELDS.length} blocks committed and withheld ·
-        form <span class="mono">${r.formNumber}</span>
-        ${n > 0
-          ? html` · <a href="${postPath(r.uri)}">${n} ${n === 1 ? 'verdict' : 'verdicts'}</a>`
-          : ''}
-      </div>
+      ${dataplate({
+        description: r.description,
+        partNumber: r.partNumber,
+        serialNumber: r.serialNumber,
+        href: postPath(r.uri),
+      })}
+      ${n > 0
+        ? html`<div class="meta"><a href="${postPath(r.uri)}"
+            >${n} ${n === 1 ? 'verdict' : 'verdicts'}</a></div>`
+        : ''}
     </article>`
   }
 
@@ -629,7 +645,8 @@ export function feedCard(
     <div class="who">
       ${avatar(nameOf(v.verifierDid), true)}
       ${byline(v.verifierDid)} ${OUTCOME_WORD[v.outcome] ?? v.outcome}
-      <span class="when"><a href="${postPath(v.subjectUri)}">${ago(event.at, now)}</a></span>
+      <span class="when"><a href="${postPath(v.subjectUri)}"
+        >${ago(v.receivedAt, now)}</a></span>
     </div>
 
     ${v.note ? html`<div class="note">&ldquo;${v.note}&rdquo;</div>` : ''}
@@ -638,23 +655,27 @@ export function feedCard(
       <div class="qwho">
         ${avatar(subject?.organizationName ?? nameOf(v.issuerDid), true)}
         <strong>${subject?.organizationName ?? nameOf(v.issuerDid)}</strong>
-        <span class="when">${subject ? ago(subject.observedAt, now) : 'released'}</span>
+        <span class="when">
+          ${subject ? html`released ${ago(subject.completedAt, now)}` : 'released'}
+        </span>
       </div>
-      <div class="qwhat">
-        ${subject
-          ? html`${subject.description} ·
-              <span class="mono">${subject.partNumber}</span> ·
-              s/n <span class="mono">${subject.serialNumber}</span>`
-          : html`<span class="mono">${v.partNumber}</span> ·
-              s/n <span class="mono">${v.serialNumber}</span>
-              <span class="unseen">— this observer has not seen the release itself</span>`}
-      </div>
+      ${subject
+        ? dataplate({
+            description: subject.description,
+            partNumber: subject.partNumber,
+            serialNumber: subject.serialNumber,
+            flat: true,
+            small: true,
+          })
+        : html`${dataplate({
+              description: 'Not seen by this observer',
+              partNumber: v.partNumber,
+              serialNumber: v.serialNumber,
+              flat: true,
+              small: true,
+            })}
+            <div class="unseen">this observer has not seen the release itself</div>`}
     </a>
-
-    <div class="meta">
-      published in ${nameOf(v.verifierDid)}&rsquo;s own repository — the issuer
-      cannot remove it
-    </div>
   </article>`
 }
 
@@ -702,25 +723,24 @@ export function threadPage(params: {
           <span class="hnd mono" title="${r.issuerDid}">${short(r.issuerDid, 14)}</span>
         </span>
       </div>
-      <h1 class="pt">${r.description}</h1>
-      <div class="pmeta">
-        <a class="mono tag" href="/part/${encodeURIComponent(r.partNumber)}/${encodeURIComponent(r.serialNumber)}"
-          >${r.partNumber}</a>
-        · s/n <span class="mono">${r.serialNumber}</span>
-        · form <span class="mono">${r.formNumber}</span>
-      </div>
+      ${dataplate({
+        description: r.description,
+        partNumber: r.partNumber,
+        serialNumber: r.serialNumber,
+      })}
+      <div class="pmeta">form <span class="mono">${r.formNumber}</span></div>
       <div class="ptimes">
         <div><span class="label">Completed (claimed)</span> ${fmt(r.completedAt)}</div>
         <div><span class="label">First observed here</span> ${fmt(r.observedAt)}</div>
       </div>
       <div class="pactions">
         <a class="act" href="/form?uri=${encodeURIComponent(r.uri)}">View as an 8130-3</a>
-        <a class="act" href="/verify">Check a document against it</a>
+        <a class="act" href="/verify">Check a document you hold</a>
       </div>
       <div class="meta">
-        ${withheld} of ${FIELDS.length} blocks are committed but not published, so
-        this observer cannot say what was done to the part. Holding the bundle
-        opens them; this page never will.
+        ${withheld} of ${FIELDS.length} blocks are withheld. Checking compares a
+        copy you hold against this record; a verdict below is a party&rsquo;s
+        account of the part itself.
       </div>
     </article>
 
@@ -806,13 +826,8 @@ export function inboxPage(params: {
 
       <div class="seam">
         <strong>This list is not from the network.</strong> An 8130-3 names who
-        issued a release, not who received it — there is no block for it, and
-        adding one would publish which shop works for which operator. So the
-        public record cannot say what is waiting for you. This stands in for
-        your goods-in process: a crate arrived, and here it is.
-        <span class="v2">Under a scheme for fields disclosed only to named
-        parties, the recipient could travel with the record and this list could
-        come off the wire.</span>
+        issued a release, not who received it, so this stands in for your
+        goods-in process.
       </div>
 
       ${params.arrivals.length === 0
@@ -876,22 +891,29 @@ export function cabinetPage(params: { chrome?: Chrome; mode?: Mode }) {
     'Your documents',
     html`<h1>Your documents</h1>
     <p class="sub">
-      Bundles this browser is holding. A bundle carries every nonce, so it opens
-      every withheld block on the record it belongs to.
+      Bundles this browser is holding. A bundle opens every withheld block on
+      the record it belongs to.
     </p>
 
     <div class="seam">
       <strong>These are not stored on this server.</strong> They are in your
-      browser, and the service has never held a copy — a bundle it stored would
-      be a bundle it could be compelled to hand over, which would put back the
-      trusted intermediary this whole design exists to remove.
-      <span class="v2">Clearing your site data deletes them, and no one can
-      reissue them: the nonces are not recoverable from the commitment.</span>
+      browser only. Clearing your site data deletes them, and they cannot be
+      reissued.
     </div>
 
     <div class="card" id="cabinet">
       <div class="empty">Reading this browser&rsquo;s storage&hellip;</div>
-    </div>`,
+    </div>
+
+    <h2>What you can do with one</h2>
+    <div class="pactions">
+      <a class="act" href="/verify">Check a document</a>
+      <a class="act" href="/disclose">Prove one field</a>
+    </div>
+    <p class="sub">
+      Checking works on any bundle, including one somebody else handed you.
+      Proving one field builds a redacted copy that opens a single block.
+    </p>`,
     params.mode,
     params.chrome,
   )
@@ -919,9 +941,8 @@ export function feedPage(params: {
   const body = html`
     <h1>Activity</h1>
     <p class="sub">
-      Every release and every verdict this observer has seen, newest first,
-      ordered by when <em>it</em> saw them rather than by any time an issuer
-      claimed.
+      Every release and every verdict this observer has seen. Dates are what
+      the document claims; the order is this observer&rsquo;s own clock.
       ${params.live
         ? html`<span class="pulse" id="pulse">live</span>`
         : ''}
@@ -1059,10 +1080,9 @@ export function issuePage(params: {
     'Issue a release',
     html`<h1>Issue a release certificate</h1>
     <p class="sub">
-      Fields marked private never appear on the public record — only inside the
-      commitment. This service builds the record and hands it to
-      ${actor?.displayName ?? 'the issuer'}'s own server to sign; it holds no
-      signing key of its own.
+      Fields marked private never appear on the public record. Signing is done
+      by ${actor?.displayName ?? 'the issuer'}&rsquo;s own server; this service
+      holds no key.
     </p>
 
     ${signingAs(actor)}
@@ -1137,9 +1157,8 @@ export function acceptPage(params: {
     'Record a verdict',
     html`<h1>Record a verdict on a part you received</h1>
     <p class="sub">
-      This verdict is published in <em>your</em> repository, not the issuer's.
-      They cannot delete it, and no service sits in between with the power to
-      suppress it. They can only answer it.
+      Published in <em>your</em> repository, not the issuer&rsquo;s. They
+      cannot delete it — only answer it.
     </p>
 
     ${signingAs(actor)}
@@ -1176,7 +1195,7 @@ export function acceptPage(params: {
     <h2>Right of reply</h2>
     <p class="sub">
       For an issuer answering a verdict against them. It cannot remove the
-      verdict — only respond to it, publicly and under their own signature.
+      verdict, only respond to it.
     </p>
     <div class="card" style="padding:1.15rem">
       <form method="post" action="/dispute">
