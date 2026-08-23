@@ -397,6 +397,35 @@ a.tag:hover { border-bottom-color: var(--accent); }
 .event .when a { color: inherit; text-decoration: none; }
 .event .when a:hover { text-decoration: underline; }
 
+/* a part, as a topic */
+.topic { padding: .5rem 0 1.25rem; }
+.topic .tname { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
+.topic .tname .hash { color: var(--muted); font-weight: 400; margin-right: .1rem; }
+.topic .tsub { font-size: .92rem; color: var(--muted); margin-top: .15rem; }
+.topic .tnote {
+  font-size: .82rem; color: var(--muted); margin: .7rem 0 0; max-width: 34rem;
+}
+
+/* the two histories, side by side */
+.compare {
+  display: grid; grid-template-columns: 1fr 1fr; gap: .9rem;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: .9rem 1rem; font-size: .88rem;
+}
+.compare.differ { border-color: var(--fail); background: var(--fail-bg); }
+.compare .label {
+  display: block; font-size: .64rem; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--muted); margin-bottom: .15rem;
+}
+.compare .cnote {
+  grid-column: 1 / -1; margin: .2rem 0 0; font-size: .82rem; color: var(--muted);
+  border-top: 1px solid var(--line); padding-top: .6rem;
+}
+.compare.differ .cnote strong { color: var(--fail); }
+@media (max-width: 40rem) { .compare { grid-template-columns: 1fr; } }
+
+.link .title { display: flex; align-items: center; gap: .45rem; }
+
 /* composer */
 dialog#composer {
   width: min(38rem, calc(100vw - 2rem)); max-height: 86vh; padding: 0;

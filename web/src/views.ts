@@ -3,6 +3,7 @@ import type { HtmlEscapedString } from 'hono/utils/html'
 
 import { FIELDS, FIELD_ORDER, PUBLIC_FIELDS } from '@f8130/core'
 import type {
+  ChainTrace,
   Disclosure,
   DisclosureResult,
   Stage,
@@ -147,6 +148,23 @@ export function verifyPage(
   )
 }
 
+/**
+ * A part, as a topic rather than as an account.
+ *
+ * The distinction earns its keep. A part has no repository, no key and no DID;
+ * it cannot sign and it cannot post. Drawing it as a profile would say it is a
+ * participant on the network, which is exactly the claim a central parts
+ * registry makes and this design does not. What it is instead is an identifier
+ * that many independent records happen to name — a topic — and its history is
+ * something an observer assembles rather than something anyone holds.
+ *
+ * Which is why the page shows two histories and not one. On the left, what
+ * this AppView indexed from the firehose. On the right, what the issuers' own
+ * servers say right now, walked live. They usually agree. When they do not,
+ * the network is right and the index is stale, and a buyer deciding whether to
+ * pay for a part is exactly the reader who needs to be told which they are
+ * looking at.
+ */
 export function partPage(params: {
   chrome?: Chrome
   partNumber: string
@@ -154,16 +172,34 @@ export function partPage(params: {
   chain: ReleaseRow[]
   acceptances: Map<string, AcceptanceRow[]>
   handles: Map<string, string>
+  names?: Map<string, string>
   reachedBirth: boolean
+  /** The live walk, when one was run. Absent means it was not attempted. */
+  trace?: ChainTrace | null
   mode?: Mode
 }) {
   const { chain, acceptances, handles } = params
+  const nameOf = (did: string) =>
+    params.names?.get(did) ?? handles.get(did) ?? short(did, 12)
+
+  const head = html`<div class="topic">
+    <div class="tname"><span class="hash">#</span>${params.partNumber}</div>
+    <div class="tsub">
+      serial <span class="mono">${params.serialNumber}</span>
+      ${chain[0] ? html` · ${chain[0].description}` : ''}
+    </div>
+    <p class="tnote">
+      Not an account — a part holds no repository and signs nothing. This page
+      is assembled by this observer out of records published independently by
+      ${new Set(chain.map((r) => r.issuerDid)).size || 'no'}
+      organization${new Set(chain.map((r) => r.issuerDid)).size === 1 ? '' : 's'}.
+    </p>
+  </div>`
 
   if (chain.length === 0) {
     return layout(
       `${params.partNumber} / ${params.serialNumber}`,
-      html`<h1>${params.partNumber} / ${params.serialNumber}</h1>
-      <p class="sub">No records for this part have been observed.</p>
+      html`${head}
       <div class="card"><div class="empty">
         This observer has never seen a release certificate for this part.
         That is not proof none exists — only that none has passed through here.
@@ -173,15 +209,55 @@ export function partPage(params: {
     )
   }
 
+  const t = params.trace
+  const agree =
+    t && !t.headError
+      ? t.links.length === chain.length && t.reachedBirth === params.reachedBirth
+      : null
+
   return layout(
     `${params.partNumber} / ${params.serialNumber}`,
-    html`<h1>${params.partNumber} / ${params.serialNumber}</h1>
-    <p class="sub">
-      ${chain.length} shop visit${chain.length === 1 ? '' : 's'} observed,
-      newest first. Claimed times come from the issuer; observed times come
-      from this service watching the firehose.
-    </p>
+    html`${head}
 
+    ${t
+      ? html`<div class="compare ${agree === false ? 'differ' : ''}">
+          <div>
+            <span class="label">This observer indexed</span>
+            <b>${chain.length} shop visit${chain.length === 1 ? '' : 's'}</b>,
+            ${params.reachedBirth ? 'reaching birth' : 'stopping short of birth'}
+          </div>
+          <div>
+            <span class="label">The issuers&rsquo; servers say, just now</span>
+            ${t.headError
+              ? html`<b class="flagged">could not be walked</b> — ${t.headError}`
+              : html`<b>${t.links.length} shop visit${t.links.length === 1 ? '' : 's'}</b>,
+                  ${t.reachedBirth ? 'reaching birth' : 'stopping short of birth'}`}
+          </div>
+          <p class="cnote">
+            ${agree === true
+              ? html`The two agree. The right-hand answer is the one that counts —
+                  it was walked over the network just now, verifying each hop
+                  against its own issuer&rsquo;s key, and it consulted no database.`
+              : agree === false
+                ? html`<strong>They disagree.</strong> The network is right and this
+                    index is stale or incomplete. Nothing below is evidence; the
+                    live walk is.`
+                : html`The live walk did not complete, so only this observer&rsquo;s
+                    stored view is shown. Treat it as a lead, not as evidence.`}
+          </p>
+        </div>`
+      : ''}
+
+    ${t && !t.headError && t.reason
+      ? html`<div class="gap">
+          <strong>The live history stops short.</strong> ${t.reason}
+          ${t.missing
+            ? html`<br>Missing: <span class="mono">${short(t.missing, 28)}</span>`
+            : ''}
+        </div>`
+      : ''}
+
+    <h2>Shop visits, newest first</h2>
     <div class="card">
       ${chain.map((r, i) => {
         const verdicts = acceptances.get(r.cid) ?? []
@@ -189,11 +265,11 @@ export function partPage(params: {
           <div class="rail"><div class="dot"></div>${i < chain.length - 1 ? html`<div class="line"></div>` : ''}</div>
           <div class="body" style="flex:1">
             <div class="title">
-              <a href="/form?uri=${encodeURIComponent(r.uri)}">${r.organizationName}</a>
+              ${avatar(r.organizationName, true)}
+              <a href="${postPath(r.uri)}">${r.organizationName}</a>
             </div>
             <div class="detail">
-              ${handles.get(r.issuerDid) ?? r.issuerDid}
-              · form <span class="mono">${r.formNumber}</span>
+              ${nameOf(r.issuerDid)} · form <span class="mono">${r.formNumber}</span>
             </div>
             <div class="detail muted">
               work performed is committed but not published —
@@ -206,10 +282,10 @@ export function partPage(params: {
             ${verdicts.length > 0
               ? html`<div class="times">
                   <div>
-                    <div class="label">Operator verdicts</div>
+                    <div class="label">Verdicts</div>
                     ${verdicts.map(
                       (v) => html`<span class="${v.outcome === 'rejected' ? 'flagged' : ''}">
-                        ${v.outcome} by ${handles.get(v.verifierDid) ?? short(v.verifierDid)}
+                        ${v.outcome} by ${nameOf(v.verifierDid)}
                       </span><br>`,
                     )}
                   </div>
@@ -230,6 +306,8 @@ export function partPage(params: {
             : ''}
           that this observer has never seen.
         </div>`}`,
+    params.mode,
+    params.chrome,
   )
 }
 

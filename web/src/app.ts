@@ -17,9 +17,11 @@ import {
   proofForField,
   syntheticForm,
   toHex,
+  traceChain,
   verifyBundle,
   verifyDisclosure,
   type Bundle,
+  type ChainTrace,
   type IdentityResolver,
   type RepoClient,
 } from '@f8130/core'
@@ -398,6 +400,26 @@ export function createApp(deps: AppDeps) {
       ...verdicts.map((v) => v.verifierDid),
     ])
 
+    // The same history, walked live over the issuers' own servers rather than
+    // read out of here. It needs no bundle and no account, which is the point:
+    // a buyer holding nothing can still ask whether a part traces to birth,
+    // and get an answer this AppView had no part in. If the walk fails the
+    // page says so and falls back to the stored view, labelled as such.
+    let trace: ChainTrace | null = null
+    try {
+      trace = await traceChain({
+        uri: releases[0]!.uri,
+        resolver: deps.resolver,
+        repo: deps.repo,
+      })
+    } catch (err) {
+      trace = {
+        links: [],
+        reachedBirth: false,
+        headError: describe(err),
+      }
+    }
+
     return c.html(
       partPage({
         chrome: chrome(c, 'parts'),
@@ -406,7 +428,9 @@ export function createApp(deps: AppDeps) {
         chain,
         acceptances,
         handles,
+        names: namesFor(handles),
         reachedBirth,
+        trace,
         mode,
       }),
     )

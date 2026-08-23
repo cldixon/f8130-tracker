@@ -19,7 +19,7 @@ import { demoNetwork, orgs, FIELDS } from '@f8130/core'
 
 import { ActivityGenerator } from '../src/activity.js'
 import { createApp } from '../src/app.js'
-import { MemoryIndex } from '../src/memory-index.js'
+import { MemoryIndex, releaseRow } from '../src/memory-index.js'
 import { MemoryRecordWriter, demoActors, type RecordWriter } from '../src/writer.js'
 import type { AcceptanceRow, DisputeRow, ReleaseRow } from '../src/index-port.js'
 
@@ -277,6 +277,132 @@ describe('threads', () => {
     const body = await (await app.request(PERMALINK)).text()
     assert.match(body, /Fuel control unit/)
     assert.ok(!body.includes('bafyrel'), 'the URL should not depend on the CID')
+  })
+})
+
+describe('a part as a topic', () => {
+  /**
+   * The demonstration network really has a two-visit chain, so the page can be
+   * asked to walk it live rather than being handed a stub.
+   */
+  async function partApp(seed?: (i: MemoryIndex) => void) {
+    const { net, birth, overhaul } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const seen = new Date('2026-02-01T00:00:00Z')
+    for (const [handle, issued, prev] of [
+      [`northwind-turbine.${DOMAIN}`, birth, undefined],
+      [
+        `cascadia-mro.${DOMAIN}`,
+        overhaul,
+        { uri: birth.uri, cid: String(birth.cid) },
+      ],
+    ] as const) {
+      index.setHandle(issued.uri.split('/')[2]!, handle)
+      index.addRelease(
+        releaseRow({
+          uri: issued.uri,
+          cid: String(issued.cid),
+          bundle: issued.bundle,
+          prev,
+          observedAt: seen,
+        }),
+      )
+    }
+    seed?.(index)
+    const app = createApp({ resolver: net, repo: net, index, mode: 'live' })
+    const part = issued0(overhaul)
+    return { app, index, net, part }
+  }
+
+  const issued0 = (o: { bundle: { values: Record<string, unknown> } }) => ({
+    pn: String(o.bundle.values.partNumber),
+    sn: String(o.bundle.values.serialNumber),
+  })
+
+  test('is a topic, not a profile', async () => {
+    const { app, part } = await partApp()
+    const body = await (
+      await app.request(`/part/${encodeURIComponent(part.pn)}/${encodeURIComponent(part.sn)}`)
+    ).text()
+
+    // A part holds no repository and signs nothing; the page has to say so
+    // rather than dressing it up as a participant on the network.
+    assert.match(body, /Not an account/)
+    assert.match(body, /assembled by this observer/)
+    assert.ok(!/follow/i.test(body), 'a part is not something you follow')
+  })
+
+  test('walks the history live and says the two agree', async () => {
+    const { app, part } = await partApp()
+    const body = await (
+      await app.request(`/part/${encodeURIComponent(part.pn)}/${encodeURIComponent(part.sn)}`)
+    ).text()
+
+    assert.match(body, /This observer indexed/)
+    assert.match(body, /The issuers&rsquo; servers say, just now/)
+    assert.match(body, /The two agree/)
+    assert.match(body, /consulted no database/)
+    assert.ok(!body.includes('class="compare differ"'))
+  })
+
+  /**
+   * The case the whole two-column arrangement exists for. A stale index is not
+   * a hypothetical — it is the ordinary state of an AppView that missed a
+   * firehose window — and a buyer has to be told which of the two answers is
+   * evidence.
+   */
+  test('when the index disagrees with the network, it says the network wins', async () => {
+    // An index that never saw the birth record: one visit stored, two live.
+    const { net, birth, overhaul } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    index.setHandle(overhaul.uri.split('/')[2]!, `cascadia-mro.${DOMAIN}`)
+    index.addRelease(
+      releaseRow({
+        uri: overhaul.uri,
+        cid: String(overhaul.cid),
+        bundle: overhaul.bundle,
+        // The predecessor is referenced but was never indexed, which is what a
+        // missed firehose window actually looks like — not a row that forgot
+        // it had a parent.
+        prev: { uri: birth.uri, cid: String(birth.cid) },
+        observedAt: new Date('2026-02-01T00:00:00Z'),
+      }),
+    )
+    const app = createApp({ resolver: net, repo: net, index, mode: 'live' })
+    const pn = String(overhaul.bundle.values.partNumber)
+    const sn = String(overhaul.bundle.values.serialNumber)
+
+    const body = await (
+      await app.request(`/part/${encodeURIComponent(pn)}/${encodeURIComponent(sn)}`)
+    ).text()
+
+    assert.match(body, /class="compare differ"/)
+    assert.match(body, /They disagree/)
+    // The stale side knows it is short: it holds a prev_cid whose row it never
+    // saw, which is what a missed firehose window looks like.
+    assert.match(body, /1 shop visit<\/b>,\s*stopping short of birth/)
+    assert.match(body, /2 shop visits<\/b>,\s*reaching birth/)
+    assert.match(body, /Nothing below is evidence;\s+the\s+live walk is/)
+  })
+
+  test('a part nobody has published is a 404 that does not overclaim', async () => {
+    const { app } = await partApp()
+    const res = await app.request('/part/NOSUCH/NOSUCH')
+    assert.equal(res.status, 404)
+    const body = await res.text()
+    assert.match(body, /never seen a release certificate for this part/)
+    // Absence from one observer is not absence from the network.
+    assert.match(body, /not proof none exists/)
+  })
+
+  test('the work performed stays withheld on a part page', async () => {
+    const { app, part } = await partApp()
+    const body = await (
+      await app.request(`/part/${encodeURIComponent(part.pn)}/${encodeURIComponent(part.sn)}`)
+    ).text()
+    for (const secret of ['Metering valve wear', 'R. Inspector']) {
+      assert.ok(!body.includes(secret), `${secret} leaked onto the part page`)
+    }
   })
 })
 
