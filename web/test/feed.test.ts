@@ -887,6 +887,55 @@ describe('the filing cabinet', () => {
   })
 })
 
+describe('the shape on a phone', () => {
+  /**
+   * Five nav links in a row measured 527px against a 390px viewport, so the
+   * page scrolled sideways and every link wrapped its own text onto two
+   * lines — which is also why the banner stopped short of the right edge.
+   *
+   * A rail is a desktop idea. These assert the markup a phone layout needs is
+   * present; the widths themselves are checked by rendering, which a unit
+   * test cannot do.
+   */
+  test('every nav entry carries a short label as well as a long one', async () => {
+    const { app } = await feedApp((i) => i.addRelease(release()))
+    const body = await (await app.request('/')).text()
+
+    // A rail says "Check a document"; a tab bar under a thumb says "Verify".
+    assert.match(body, /<span class="full">Check a document<\/span><span class="tab">Verify<\/span>/)
+    assert.match(body, /<span class="full">Your documents<\/span><span class="tab">Docs<\/span>/)
+
+    // Both are in the markup rather than one being derived, so a screen
+    // reader gets a real label at either breakpoint.
+    const full = (body.match(/class="full"/g) ?? []).length
+    const tab = (body.match(/class="tab"/g) ?? []).length
+    assert.equal(full, tab, 'every long label needs a short one')
+  })
+
+  test('the compose button degrades to a symbol without losing its name', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
+    const body = await (await app.request('/')).text()
+
+    // A circle has room for a plus and not for two words, but the control
+    // still has to announce itself.
+    assert.match(body, /aria-label="New release"/)
+    assert.match(body, /<span class="tab">\+<\/span>/)
+  })
+
+  test('the phone layout is a breakpoint, not a second page', async () => {
+    const { app } = await feedApp((i) => i.addRelease(release()))
+    const body = await (await app.request('/')).text()
+    // One nav, restyled — not a duplicate set of links for a screen size,
+    // which would be two things to keep in step.
+    assert.equal((body.match(/<nav>/g) ?? []).length, 1)
+    assert.match(body, /@media \(max-width: 60rem\)/)
+    assert.match(body, /position: fixed; left: 0; right: 0; bottom: 0/)
+  })
+})
+
 describe('the standing admonition', () => {
   test('appears once per page rather than three or four times', async () => {
     const { app } = await feedApp()
