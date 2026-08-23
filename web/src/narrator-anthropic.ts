@@ -17,13 +17,22 @@
 import Anthropic from '@anthropic-ai/sdk'
 
 import {
+  DISPUTE_SYSTEM,
+  DISPUTE_TOOL,
+  disputePrompt,
   NARRATION_SYSTEM,
   NARRATION_TOOL,
   narrationPrompt,
   validateNarration,
+  validateNote,
+  VERDICT_SYSTEM,
+  VERDICT_TOOL,
+  verdictPrompt,
+  type DisputeBrief,
   type Narration,
   type NarrationBrief,
   type Narrator,
+  type VerdictBrief,
 } from '@f8130/core'
 
 /**
@@ -122,6 +131,61 @@ export class AnthropicNarrator implements Narrator {
 
       this.stats.narrated++
       return checked.narration
+    } catch (err) {
+      this.stats.failed++
+      this.onError?.(describe(err))
+      return null
+    }
+  }
+
+  async narrateVerdict(brief: VerdictBrief): Promise<string | null> {
+    return this.note(VERDICT_SYSTEM, VERDICT_TOOL, verdictPrompt(brief), 'note')
+  }
+
+  async narrateDispute(brief: DisputeBrief): Promise<string | null> {
+    return this.note(DISPUTE_SYSTEM, DISPUTE_TOOL, disputePrompt(brief), 'response')
+  }
+
+  /** One constrained sentence or two, for the two reply kinds. */
+  private async note(
+    system: string,
+    tool: typeof VERDICT_TOOL,
+    prompt: string,
+    key: string,
+  ): Promise<string | null> {
+    this.stats.asked++
+    try {
+      const response = await this.client.messages.create(
+        {
+          model: MODEL,
+          max_tokens: 512,
+          system,
+          tools: [tool],
+          tool_choice: { type: 'tool', name: tool.name },
+          messages: [{ role: 'user', content: prompt }],
+        },
+        { timeout: this.timeoutMs },
+      )
+
+      if (response.stop_reason === 'refusal') {
+        this.stats.refused++
+        return null
+      }
+      const call = response.content.find((b) => b.type === 'tool_use')
+      if (!call || call.type !== 'tool_use') {
+        this.stats.rejected++
+        return null
+      }
+
+      const checked = validateNote(call.input, key)
+      if (!checked.ok) {
+        this.stats.rejected++
+        this.onError?.(new Error(`${key} rejected: ${checked.reason}`))
+        return null
+      }
+
+      this.stats.narrated++
+      return checked.note
     } catch (err) {
       this.stats.failed++
       this.onError?.(describe(err))

@@ -15,7 +15,13 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { demoNetwork, orgs, FIELDS, type Narrator } from '@f8130/core'
+import {
+  demoNetwork,
+  orgs,
+  FIELDS,
+  REJECTION_ANGLES,
+  type Narrator,
+} from '@f8130/core'
 
 import { ActivityGenerator } from '../src/activity.js'
 import { createApp } from '../src/app.js'
@@ -1106,6 +1112,154 @@ describe('the synthetic generator', () => {
     assert.equal(reply.kind, 'dispute')
     assert.equal(reply.subject.uri, rejection.uri)
     assert.equal(reply.handle, calls[0].handle, 'only the issuer may answer')
+  })
+
+  /**
+   * Every generated release used to be a birth, so a part page built from
+   * live activity always showed one shop visit and the back-to-birth view had
+   * nothing to trace.
+   */
+  test('a part comes back in for more work, and the chain says so', async () => {
+    const { writer, calls } = recorder()
+    let i = 0
+    // Tick one: 0.9 issues, then issuer, operator and seed. Nothing is in
+    // service yet, so the continuation check short-circuits without rolling.
+    // Tick two: 0.9 issues, issuer and operator, then 0.1 is under the
+    // continuation rate — so this release continues the first.
+    const rolls = [0.9, 0.5, 0.5, 0.5, 0.9, 0.5, 0.5, 0.1]
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => 1_700_000_000_000,
+      random: () => (i < rolls.length ? rolls[i++]! : 0.9),
+    })
+    await g.tick()
+    await g.tick()
+
+    const [first, second] = calls
+    assert.equal(second.kind, 'release')
+    assert.ok(second.prev, 'the second release does not reference the first')
+    assert.equal(second.prev.uri, first.uri)
+
+    // A component does not change its name or its number between visits.
+    assert.equal(second.form.partNumber, first.form.partNumber)
+    assert.equal(second.form.serialNumber, first.form.serialNumber)
+    assert.equal(second.form.description, first.form.description)
+    // But the work is new.
+    assert.notEqual(second.form.formNumber, first.form.formNumber)
+  })
+
+  test('a manufacturer never continues somebody else\'s part', async () => {
+    const { writer, calls } = recorder()
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => 1_700_000_000_000,
+      // Always continue, if the issuer is eligible.
+      random: () => 0.01,
+    })
+    for (let n = 0; n < 6; n++) await g.tick()
+
+    // New manufacture is certified under Block 13, and a part already
+    // released is not new. So no OEM release may carry a prev.
+    for (const c of calls.filter((x) => x.kind === 'release')) {
+      const org = orgs(DOMAIN).find((o) => o.handle === c.handle)!
+      if (org.kind === 'oem') assert.ok(!c.prev, 'an OEM continued a part')
+    }
+  })
+
+  test('a narrated verdict is briefed on the part but never on Block 12', async () => {
+    const seen: unknown[] = []
+    const { writer, calls } = recorder()
+    const narrator: Narrator = {
+      narrate: async () => ({
+        description: 'Bleed air valve',
+        remarks: 'PRIVATE-BLOCK-12-CONTENT that must not travel.',
+      }),
+      narrateVerdict: async (b) => {
+        seen.push(b)
+        return 'Valve seat leakage found on receiving test.'
+      },
+    }
+    let i = 0
+    const rolls = [0.9, 0.5, 0.5, 0.5, 0.3, 0.05]
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      narrator,
+      now: () => 1_700_000_000_000,
+      random: () => (i < rolls.length ? rolls[i++]! : 0.5),
+    })
+    await g.tick()
+    await g.tick()
+
+    assert.equal(seen.length, 1)
+    const brief = seen[0] as Record<string, unknown>
+    assert.equal(brief.description, 'Bleed air valve')
+    assert.equal(brief.outcome, 'rejected')
+    // An angle, chosen here rather than by the model. Asked for a rejection
+    // reason with nothing else to go on it returned the same sentence four
+    // times out of four — the one the system prompt used as its example.
+    assert.ok(
+      REJECTION_ANGLES.includes(brief.angle as never),
+      'no angle was supplied',
+    )
+    // The operator holds the paper form, but the note they publish does not.
+    // Briefing a model on the withheld block is how it ends up quoted in the
+    // reply to it.
+    assert.ok(!('remarks' in brief), 'Block 12 reached the verdict brief')
+    assert.equal(calls[1].note, 'Valve seat leakage found on receiving test.')
+  })
+
+  test('a narrated reply answers the objection that was actually raised', async () => {
+    const seen: any[] = []
+    const { writer, calls } = recorder()
+    const narrator: Narrator = {
+      narrate: async () => ({ description: 'Oil cooler', remarks: 'Overhauled per CMM.' }),
+      narrateVerdict: async () => 'Back-to-birth documentation was not supplied.',
+      narrateDispute: async (b) => {
+        seen.push(b)
+        return 'Back-to-birth records were provided to the purchaser at sale.'
+      },
+    }
+    let i = 0
+    // Tick one issues (issuer, operator, seed). Tick two closes it out —
+    // 0.3 lands in the verdict band, 0.05 rejects, 0.1 picks the angle.
+    // Tick three opens with 0.1, inside the band where an issuer may answer.
+    const rolls = [0.9, 0.5, 0.5, 0.5, 0.3, 0.05, 0.1, 0.1]
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      narrator,
+      now: () => 1_700_000_000_000,
+      random: () => (i < rolls.length ? rolls[i++]! : 0.5),
+    })
+    await g.tick()
+    await g.tick()
+    await g.tick()
+
+    assert.equal(seen.length, 1)
+    assert.equal(seen[0].verdictNote, 'Back-to-birth documentation was not supplied.')
+    assert.equal(calls[2].kind, 'dispute')
+    assert.match(calls[2].response, /Back-to-birth records were provided/)
+  })
+
+  test('a narrator with no verdict method falls back to the canned list', async () => {
+    const { writer, calls } = recorder()
+    let i = 0
+    const rolls = [0.9, 0.5, 0.5, 0.5, 0.3, 0.05]
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      // Releases only — a valid narrator, and the rest degrades.
+      narrator: { narrate: async () => ({ description: 'Oil cooler', remarks: 'Per CMM.' }) },
+      now: () => 1_700_000_000_000,
+      random: () => (i < rolls.length ? rolls[i++]! : 0.5),
+    })
+    await g.tick()
+    await g.tick()
+    assert.equal(calls[1].kind, 'acceptance')
+    assert.ok(calls[1].note, 'a rejection with no stated reason is an accusation')
   })
 
   test('a write that fails is counted rather than thrown', async () => {
