@@ -19,6 +19,7 @@ import { demoNetwork, orgs, FIELDS } from '@f8130/core'
 
 import { ActivityGenerator } from '../src/activity.js'
 import { createApp } from '../src/app.js'
+import { Dock, type Arrival } from '../src/dock.js'
 import { MemoryIndex, releaseRow } from '../src/memory-index.js'
 import { MemoryRecordWriter, demoActors, type RecordWriter } from '../src/writer.js'
 import type { AcceptanceRow, DisputeRow, ReleaseRow } from '../src/index-port.js'
@@ -587,6 +588,152 @@ describe('the viewpoint control', () => {
 
     const asPublic = await (await app.request('/', { headers: { cookie: PUBLIC } })).text()
     assert.ok(!asPublic.includes('class="mine"'), 'the public is party to nothing')
+  })
+})
+
+describe('goods in', () => {
+  async function dockApp() {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const dock = new Dock()
+    const app = createApp({ resolver: net, repo: net, index, writer, dock, mode: 'live' })
+    return { app, dock, writer, index, net }
+  }
+
+  const arrival = (over: Partial<Arrival> = {}): Arrival => ({
+    subject: { uri: 'at://did:plc:issuer/dev.cldixon.f8130.release/3a', cid: 'bafyrel' },
+    issuerDid: 'did:plc:issuer',
+    issuerName: 'Cascadia MRO',
+    partNumber: 'NT882104',
+    serialNumber: 'SN000417',
+    description: 'Fuel control unit',
+    at: new Date('2026-02-01T00:00:00Z'),
+    ...over,
+  })
+
+  const AS_OPERATOR = `f8130_actor=example-air.${DOMAIN}`
+
+  /**
+   * The honest part. An 8130-3 names the issuer and not the recipient, so no
+   * index built from the public record can answer "what is waiting for me".
+   * The page has to say that rather than implying the network told it.
+   */
+  test('says the list is not from the network', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    const body = await (
+      await app.request('/inbox', { headers: { cookie: AS_OPERATOR } })
+    ).text()
+
+    assert.match(body, /This list is not from the network/)
+    assert.match(body, /no block for it/)
+    // And names what would change that, so the next version is legible.
+    assert.match(body, /disclosed only to named\s+parties/)
+  })
+
+  test('shows only what was handed to the acting organization', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    dock.handOver(`southpoint-air.${DOMAIN}`, arrival({
+      subject: { uri: 'at://did:plc:other/dev.cldixon.f8130.release/3z', cid: 'bafyz' },
+      partNumber: 'ZZ-0001',
+    }))
+
+    const mine = await (
+      await app.request('/inbox', { headers: { cookie: AS_OPERATOR } })
+    ).text()
+    assert.match(mine, /NT882104/)
+    assert.ok(!mine.includes('ZZ-0001'), 'another operator\'s crate showed up')
+  })
+
+  test('the public receives nothing', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    const body = await (
+      await app.request('/inbox', { headers: { cookie: PUBLIC } })
+    ).text()
+    assert.match(body, /watching as the public, which receives nothing/)
+    assert.ok(!body.includes('NT882104'))
+  })
+
+  test('the rail carries the count for the acting organization', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    dock.handOver(`example-air.${DOMAIN}`, arrival({
+      subject: { uri: 'at://did:plc:issuer/dev.cldixon.f8130.release/3b', cid: 'bafy2' },
+    }))
+    const body = await (await app.request('/', { headers: { cookie: AS_OPERATOR } })).text()
+    assert.match(body, /<span class="badge">2<\/span>/)
+  })
+
+  test('an answered part comes off the dock', async () => {
+    const { dock } = await dockApp()
+    const handle = `example-air.${DOMAIN}`
+    dock.handOver(handle, arrival())
+    assert.equal(dock.count(handle), 1)
+    dock.settle('at://did:plc:issuer/dev.cldixon.f8130.release/3a')
+    assert.equal(dock.count(handle), 0)
+  })
+
+  test('the same part handed over twice is one crate', async () => {
+    const { dock } = await dockApp()
+    const handle = `example-air.${DOMAIN}`
+    dock.handOver(handle, arrival())
+    dock.handOver(handle, arrival())
+    assert.equal(dock.count(handle), 1)
+  })
+
+  test('the generator records who it handed each part to', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const dock = new Dock()
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      dock,
+      now: () => 1_700_000_000_000,
+      random: () => 0.9,
+    })
+    await g.tick()
+
+    // Exactly one operator is holding exactly one crate.
+    const holders = orgs(DOMAIN).filter((o) => dock.count(o.handle) > 0)
+    assert.equal(holders.length, 1)
+    assert.ok(['operator', 'lessor'].includes(holders[0]!.kind))
+  })
+})
+
+describe('the filing cabinet', () => {
+  /**
+   * The rule this page exists to respect: a bundle carries every nonce, so a
+   * service that stored one could be compelled to hand over every withheld
+   * block on the record. It must never hold one, not even helpfully.
+   */
+  test('is the browser, and the page says the server holds nothing', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const app = createApp({ resolver: net, repo: net, mode: 'live' })
+    const body = await (await app.request('/cabinet')).text()
+
+    assert.match(body, /not stored on this server/)
+    assert.match(body, /compelled to hand over/)
+    // The list is empty markup; only a browser can fill it in.
+    assert.match(body, /id="cabinet"/)
+    assert.match(body, /Reading this browser/)
+  })
+
+  test('a record page offers to open itself with a bundle the browser holds', async () => {
+    const { net, overhaul } = await demoNetwork(DOMAIN)
+    const app = createApp({ resolver: net, repo: net, mode: 'live' })
+    const body = await (
+      await app.request(`/form?uri=${encodeURIComponent(overhaul.uri)}`)
+    ).text()
+
+    assert.match(body, /id="opener"/)
+    assert.match(body, /id="openWith"/)
+    // Nothing is pre-filled: the server has no bundle to pre-fill it with.
+    assert.match(body, /<input type="hidden" name="bundle" value="">/)
   })
 })
 

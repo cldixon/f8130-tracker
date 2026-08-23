@@ -397,6 +397,31 @@ a.tag:hover { border-bottom-color: var(--accent); }
 .event .when a { color: inherit; text-decoration: none; }
 .event .when a:hover { text-decoration: underline; }
 
+/* inbox */
+.seam {
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 6px; padding: .75rem .9rem; font-size: .85rem;
+  color: var(--muted); margin-bottom: 1.1rem;
+}
+.seam strong { color: var(--fg); }
+.seam .v2 {
+  display: block; margin-top: .45rem; padding-top: .45rem;
+  border-top: 1px dashed var(--line); font-style: italic;
+}
+.verdict-row {
+  display: flex; gap: .45rem; align-items: center; flex-wrap: wrap;
+  margin-top: .6rem;
+}
+.verdict-row select { width: auto; min-width: 8rem; }
+.verdict-row input[type=text] { flex: 1; min-width: 12rem; max-width: none; }
+.verdict-row button { margin-top: 0; padding: .4rem .8rem; font-size: .85rem; }
+
+.rail nav a .badge {
+  margin-left: auto; font-size: .68rem; font-weight: 700;
+  background: var(--accent); color: #fff; border-radius: 999px;
+  padding: 0 .35rem; min-width: 1.15rem; text-align: center;
+}
+
 /* a part, as a topic */
 .topic { padding: .5rem 0 1.25rem; }
 .topic .tname { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
@@ -474,7 +499,7 @@ button.ghost:hover { background: var(--skip-bg); }
 export type Mode = 'demo' | 'live'
 
 /** Which rail entry is lit. */
-export type NavKey = 'home' | 'parts' | 'verify' | null
+export type NavKey = 'home' | 'inbox' | 'parts' | 'verify' | 'cabinet' | null
 
 /**
  * The one piece of per-request state every page shares: who the visitor is
@@ -492,6 +517,8 @@ export type Chrome = {
   /** Handle in play, or undefined for the public. */
   current?: string
   active?: NavKey
+  /** Parts waiting on the acting organization, for the rail's badge. */
+  waiting?: number
   /**
    * Whether to hang the composer off this page. Off for `/issue`, where the
    * page already *is* the composer — two copies of a seventeen-block form in
@@ -610,6 +637,67 @@ const COMPOSER_SCRIPT = `
 })()
 `
 
+/**
+ * The filing cabinet, which is the visitor's browser and not this server.
+ *
+ * A bundle carries every nonce, so it opens every withheld block on the
+ * record it belongs to. This service must therefore never store one — not to
+ * be helpful, not for a moment. The rule holds here: bundles are written to
+ * localStorage by the browser that was handed them, read back by the same
+ * browser, and never sent anywhere except transiently to the /form endpoint
+ * that folds the tree and returns the page.
+ *
+ * That is also a more honest demonstration than a server-side store would be.
+ * An issuer can reopen a form they issued because *they hold the nonces*, not
+ * because they are signed in. Nobody can grant that, and nobody can revoke it.
+ */
+const CABINET_SCRIPT = `
+(function () {
+  var KEY = 'f8130.bundles'
+  function read() {
+    try { return JSON.parse(localStorage.getItem(KEY) || '{}') } catch (e) { return {} }
+  }
+  function write(all) {
+    try { localStorage.setItem(KEY, JSON.stringify(all)) } catch (e) {}
+  }
+
+  // Keep a bundle the moment it is handed over. It cannot be reconstructed.
+  var out = document.getElementById('out')
+  if (out && out.dataset.uri) {
+    var all = read()
+    all[out.dataset.uri] = out.value
+    write(all)
+    var kept = document.getElementById('kept')
+    if (kept) kept.hidden = false
+  }
+
+  // On a record page, open it if this browser happens to hold its bundle.
+  var opener = document.getElementById('opener')
+  if (opener && !opener.dataset.open) {
+    var held = read()[opener.dataset.uri]
+    if (held) {
+      var f = document.getElementById('openWith')
+      if (f) { f.elements['bundle'].value = held; f.submit() }
+    }
+  }
+
+  var list = document.getElementById('cabinet')
+  if (list) {
+    var all2 = read()
+    var uris = Object.keys(all2)
+    if (uris.length === 0) { list.innerHTML = '<div class="empty">This browser is holding no documents.</div>'; return }
+    list.innerHTML = uris.map(function (uri) {
+      var parts = uri.split('/')
+      var href = '/form?uri=' + encodeURIComponent(uri)
+      return '<div class="link"><div class="body" style="flex:1">' +
+        '<div class="title"><a href="' + href + '">' + parts[4] + '</a></div>' +
+        '<div class="detail mono" style="word-break:break-all">' + uri + '</div>' +
+        '</div></div>'
+    }).join('')
+  }
+})()
+`
+
 export function layout(
   title: string,
   body: HtmlEscapedString | Promise<HtmlEscapedString>,
@@ -643,8 +731,15 @@ export function layout(
     <div class="brand">f8130<br><span>release certificates on atproto</span></div>
     <nav>
       <a href="/" class="${on('home')}"><span class="ico">◎</span> Home</a>
+      ${me
+        ? html`<a href="/inbox" class="${on('inbox')}">
+            <span class="ico">▼</span> Goods in
+            ${chrome?.waiting ? html`<span class="badge">${chrome.waiting}</span>` : ''}
+          </a>`
+        : ''}
       <a href="/parts" class="${on('parts')}"><span class="ico">▤</span> Parts</a>
       <a href="/verify" class="${on('verify')}"><span class="ico">✓</span> Check a document</a>
+      <a href="/cabinet" class="${on('cabinet')}"><span class="ico">▣</span> Your documents</a>
     </nav>
     ${actors.length > 0
       ? me
@@ -660,6 +755,7 @@ export function layout(
 </div>
 ${withComposer ? composer(me) : ''}
 ${withComposer ? html`${raw(`<script>${COMPOSER_SCRIPT}</script>`)}` : ''}
+${raw(`<script>${CABINET_SCRIPT}</script>`)}
 </body>
 </html>`
 }

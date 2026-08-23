@@ -20,6 +20,7 @@ import {
 } from '@f8130/core'
 
 import { ActivityGenerator } from './activity.js'
+import { Dock } from './dock.js'
 import { createApp } from './app.js'
 import { describeConfig, loadConfig } from './config.js'
 import { MemoryIndex, releaseRow } from './memory-index.js'
@@ -123,11 +124,16 @@ async function main() {
       ? false
       : config.mode === 'demo' || process.env.F8130_ACTIVITY === '1'
 
+  // Stands in for a goods-in process. Not derived from the index and not
+  // derivable from it: an 8130-3 names the issuer, never the recipient.
+  const dock = new Dock()
+
   const activity =
     wantActivity && writer
       ? new ActivityGenerator({
           writer,
           domain,
+          dock,
           onError: (err) => console.warn('activity generator:', describe(err)),
         })
       : null
@@ -143,6 +149,7 @@ async function main() {
     mode: config.mode,
     writer,
     activity,
+    dock,
   })
 
   // Plenty of containers and CI runners have no IPv6 at all, and a hard-coded

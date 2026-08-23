@@ -71,6 +71,25 @@ export type ActivityOptions = {
   now?: () => number
   random?: () => number
   onError?: (err: unknown) => void
+  /**
+   * Where to record that a part was handed to somebody.
+   *
+   * Optional, because the generator's job is to publish records and the dock
+   * is not one — it stands in for a goods-in process, which is exactly the
+   * thing the public record cannot carry.
+   */
+  dock?: {
+    handOver(toHandle: string, arrival: {
+      subject: StrongRef
+      issuerDid: string
+      issuerName: string
+      partNumber: string
+      serialNumber: string
+      description: string
+      at: Date
+    }): void
+    settle(releaseUri: string): void
+  }
 }
 
 // Paced for someone who is actually looking. A visitor spends well under a
@@ -231,6 +250,7 @@ export class ActivityGenerator {
             ...(note ? { note } : {}),
           })
           this.stats.verdicts++
+          this.opts.dock?.settle(item.subject.uri)
 
           if (outcome !== 'accepted') {
             this.answerable.push({
@@ -273,6 +293,16 @@ export class ActivityGenerator {
       form,
     })
     this.stats.released++
+
+    this.opts.dock?.handOver(operator.handle, {
+      subject: { uri: written.uri, cid: written.cid },
+      issuerDid: written.uri.split('/')[2] ?? '',
+      issuerName: issuer.displayName,
+      partNumber: String(form.partNumber),
+      serialNumber: String(form.serialNumber),
+      description: String(form.description ?? ''),
+      at: new Date(this.now()),
+    })
 
     this.pending.push({
       subject: { uri: written.uri, cid: written.cid },
