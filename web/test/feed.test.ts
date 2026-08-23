@@ -1028,6 +1028,22 @@ describe('the synthetic generator', () => {
     return { writer, calls }
   }
 
+  /**
+   * A constant die, which is position-independent.
+   *
+   * Scripted roll arrays pinned the exact order the generator consumes
+   * randomness in, so adding one roll anywhere broke six tests that cared
+   * about none of it. A constant picks the same branch however many times it
+   * is asked:
+   *
+   *   0.9   never below any band  -> every tick issues
+   *   0.05  below every band      -> issue, then verdict (rejected), then
+   *                                 dispute, because each branch only opens
+   *                                 once its queue is non-empty
+   */
+  const ALWAYS_ISSUE = () => 0.9
+  const WALK_THE_THREAD = () => 0.05
+
   const gen = (rolls: number[], over: Partial<ConstructorParameters<typeof ActivityGenerator>[0]> = {}) => {
     const { writer, calls } = recorder()
     let i = 0
@@ -1044,7 +1060,7 @@ describe('the synthetic generator', () => {
   }
 
   test('writes nothing until somebody is watching', () => {
-    const { g } = gen([0.9])
+    const { g } = gen([], { random: ALWAYS_ISSUE })
     assert.equal(g.running, false)
     g.viewerJoined()
     assert.equal(g.running, true)
@@ -1053,7 +1069,7 @@ describe('the synthetic generator', () => {
   })
 
   test('keeps running while any viewer remains', () => {
-    const { g } = gen([0.9])
+    const { g } = gen([], { random: ALWAYS_ISSUE })
     g.viewerJoined()
     g.viewerJoined()
     g.viewerLeft()
@@ -1063,7 +1079,7 @@ describe('the synthetic generator', () => {
   })
 
   test('the first event is a release from a shop to an operator', async () => {
-    const { g, calls } = gen([0.9])
+    const { g, calls } = gen([], { random: ALWAYS_ISSUE })
     await g.tick()
     assert.equal(calls.length, 1)
     assert.equal(calls[0].kind, 'release')
@@ -1077,9 +1093,7 @@ describe('the synthetic generator', () => {
   })
 
   test('a release is later answered by the operator who received it', async () => {
-    // Tick one: 0.9 issues, and the three rolls after it pick the parties and
-    // the part. Tick two: 0.3 falls in the close-out band and 0.9 accepts.
-    const { g, calls } = gen([0.9, 0.5, 0.5, 0.5, 0.3, 0.9])
+    const { g, calls } = gen([], { random: WALK_THE_THREAD })
     await g.tick()
     await g.tick()
 
@@ -1097,10 +1111,7 @@ describe('the synthetic generator', () => {
   })
 
   test('a rejection carries a stated reason and can be answered', async () => {
-    // Same shape as above, but 0.05 is under the rejection rate. The roll
-    // after it picks the stated reason, and tick three then opens with 0.1 —
-    // inside the band where an issuer may answer.
-    const { g, calls } = gen([0.9, 0.5, 0.5, 0.5, 0.3, 0.05, 0.5, 0.1])
+    const { g, calls } = gen([], { random: WALK_THE_THREAD })
     await g.tick()
     await g.tick()
     const rejection = calls[1]
@@ -1119,34 +1130,44 @@ describe('the synthetic generator', () => {
    * live activity always showed one shop visit and the back-to-birth view had
    * nothing to trace.
    */
+  /**
+   * Driven by a seeded generator over many ticks rather than a scripted roll
+   * array, because what matters is the property and not the arithmetic. A
+   * scripted array pins the exact order randomness is consumed in, which is
+   * implementation detail and broke every time a roll was added.
+   */
+  const mulberry = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) >>> 0
+    let t = seed
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+
   test('a part comes back in for more work, and the chain says so', async () => {
     const { writer, calls } = recorder()
-    let i = 0
-    // Tick one: 0.9 issues, then issuer, operator and seed. Nothing is in
-    // service yet, so the continuation check short-circuits without rolling.
-    // Tick two: 0.9 issues, issuer and operator, then 0.1 is under the
-    // continuation rate — so this release continues the first.
-    const rolls = [0.9, 0.5, 0.5, 0.5, 0.9, 0.5, 0.5, 0.1]
     const g = new ActivityGenerator({
       writer,
       domain: DOMAIN,
       now: () => 1_700_000_000_000,
-      random: () => (i < rolls.length ? rolls[i++]! : 0.9),
+      random: mulberry(7),
     })
-    await g.tick()
-    await g.tick()
+    for (let n = 0; n < 40; n++) await g.tick()
 
-    const [first, second] = calls
-    assert.equal(second.kind, 'release')
-    assert.ok(second.prev, 'the second release does not reference the first')
-    assert.equal(second.prev.uri, first.uri)
+    const releases = calls.filter((c: any) => c.kind === 'release')
+    const continued = releases.filter((c: any) => c.prev)
+    assert.ok(continued.length > 0, 'no release ever continued a part')
 
     // A component does not change its name or its number between visits.
-    assert.equal(second.form.partNumber, first.form.partNumber)
-    assert.equal(second.form.serialNumber, first.form.serialNumber)
-    assert.equal(second.form.description, first.form.description)
-    // But the work is new.
-    assert.notEqual(second.form.formNumber, first.form.formNumber)
+    for (const c of continued) {
+      const parent = releases.find((r: any) => r.uri === c.prev.uri)
+      assert.ok(parent, 'a continuation points at a release that was never made')
+      assert.equal(c.form.partNumber, parent.form.partNumber)
+      assert.equal(c.form.serialNumber, parent.form.serialNumber)
+      assert.equal(c.form.description, parent.form.description)
+      // But the work is new.
+      assert.notEqual(c.form.formNumber, parent.form.formNumber)
+    }
   })
 
   test('a manufacturer never continues somebody else\'s part', async () => {
@@ -1181,14 +1202,12 @@ describe('the synthetic generator', () => {
         return 'Valve seat leakage found on receiving test.'
       },
     }
-    let i = 0
-    const rolls = [0.9, 0.5, 0.5, 0.5, 0.3, 0.05]
     const g = new ActivityGenerator({
       writer,
       domain: DOMAIN,
       narrator,
       now: () => 1_700_000_000_000,
-      random: () => (i < rolls.length ? rolls[i++]! : 0.5),
+      random: () => 0.05,
     })
     await g.tick()
     await g.tick()
@@ -1222,17 +1241,12 @@ describe('the synthetic generator', () => {
         return 'Back-to-birth records were provided to the purchaser at sale.'
       },
     }
-    let i = 0
-    // Tick one issues (issuer, operator, seed). Tick two closes it out —
-    // 0.3 lands in the verdict band, 0.05 rejects, 0.1 picks the angle.
-    // Tick three opens with 0.1, inside the band where an issuer may answer.
-    const rolls = [0.9, 0.5, 0.5, 0.5, 0.3, 0.05, 0.1, 0.1]
     const g = new ActivityGenerator({
       writer,
       domain: DOMAIN,
       narrator,
       now: () => 1_700_000_000_000,
-      random: () => (i < rolls.length ? rolls[i++]! : 0.5),
+      random: () => 0.05,
     })
     await g.tick()
     await g.tick()
@@ -1246,15 +1260,13 @@ describe('the synthetic generator', () => {
 
   test('a narrator with no verdict method falls back to the canned list', async () => {
     const { writer, calls } = recorder()
-    let i = 0
-    const rolls = [0.9, 0.5, 0.5, 0.5, 0.3, 0.05]
     const g = new ActivityGenerator({
       writer,
       domain: DOMAIN,
       // Releases only — a valid narrator, and the rest degrades.
       narrator: { narrate: async () => ({ description: 'Oil cooler', remarks: 'Per CMM.' }) },
       now: () => 1_700_000_000_000,
-      random: () => (i < rolls.length ? rolls[i++]! : 0.5),
+      random: () => 0.05,
     })
     await g.tick()
     await g.tick()
@@ -1264,7 +1276,8 @@ describe('the synthetic generator', () => {
 
   test('a write that fails is counted rather than thrown', async () => {
     const errors: unknown[] = []
-    const { g } = gen([0.9], {
+    const { g } = gen([], {
+      random: ALWAYS_ISSUE,
       writer: {
         actors: () => demoActors(DOMAIN),
         createRelease: async () => {

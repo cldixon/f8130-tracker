@@ -45,6 +45,27 @@ type Pending = {
   serialNumber: string
   /** Block 7, which is public — see VerdictBrief on why Block 12 is not. */
   description: string
+  /**
+   * How this will go, decided when the part ships rather than when it is
+   * looked at.
+   *
+   * Nothing about the outcome depends on the moment of inspection — a part
+   * either arrives damaged or it does not — so rolling it early costs nothing
+   * and is arguably the more honest model. What it buys is a whole feed
+   * interval of warning, which is what the note below needs.
+   */
+  outcome: 'accepted' | 'rejected' | 'discrepancy'
+  /**
+   * The stated reason, started at ship time and awaited at inspection time.
+   *
+   * This is the fix for notes falling back to the canned list. The narration
+   * is not slow — p50 four seconds — but it used to run on the publishing
+   * path, where a bad minute on the API meant a canned string. Started here,
+   * it has twelve to forty-five seconds to arrive and by then has almost
+   * always resolved, so awaiting it costs nothing and a slow call is a slower
+   * reply rather than a worse one.
+   */
+  note: Promise<string | null> | null
   /** The operator the part went to. Not a field on the form — see below. */
   operatorHandle: string
   at: number
@@ -56,6 +77,8 @@ type Answerable = {
   issuerHandle: string
   description: string
   note: string
+  /** Started the moment the verdict is published, for the same reason. */
+  reply: Promise<string | null> | null
   at: number
 }
 
@@ -236,6 +259,26 @@ export class ActivityGenerator {
     return this.opts.writer.actors().some((a) => a.handle === handle)
   }
 
+  /**
+   * Starts work now to be read later, and never lets it reject.
+   *
+   * A floating promise that throws is an unhandled rejection, and an
+   * unhandled rejection in a generator nobody is watching takes the process
+   * with it on some Node versions. Everything that can go wrong becomes null,
+   * which is what the caller already handles.
+   */
+  private start(fn: () => Promise<string | null> | undefined): Promise<string | null> {
+    try {
+      return Promise.resolve(fn() ?? null).catch((err) => {
+        this.opts.onError?.(err)
+        return null
+      })
+    } catch (err) {
+      this.opts.onError?.(err)
+      return Promise.resolve(null)
+    }
+  }
+
   private pickOne<T>(items: readonly T[]): T | undefined {
     if (items.length === 0) return undefined
     return items[Math.floor(this.rand() * items.length)]
@@ -260,13 +303,7 @@ export class ActivityGenerator {
           // The reply answers the objection that was actually raised, which
           // is the whole interest of a right of reply. The canned list cannot
           // do that — it answers whatever it always answers.
-          const response =
-            (target.note
-              ? await this.opts.narrator?.narrateDispute?.({
-                  verdictNote: target.note,
-                  description: target.description,
-                })
-              : null) ?? this.pickOne(DISPUTE_REPLIES)!
+          const response = (await target.reply) ?? this.pickOne(DISPUTE_REPLIES)!
 
           await this.opts.writer.createDispute({
             handle: target.issuerHandle,
@@ -282,28 +319,14 @@ export class ActivityGenerator {
       if (this.pending.length > 0 && r < 0.55) {
         const item = this.pending.shift()!
         if (this.known(item.operatorHandle)) {
-          const roll = this.rand()
-          const outcome =
-            roll < REJECTION_RATE
-              ? 'rejected'
-              : roll < REJECTION_RATE + 0.08
-                ? 'discrepancy'
-                : 'accepted'
-          // Narrated when there is a narrator, canned when there is not or
-          // when the call fails. A rejection is the most repeated text in the
-          // feed — four fixed strings become obvious long before the release
-          // prose does — and it is also the text that most wants to be about
-          // the specific part.
+          const outcome = item.outcome
+          // Started a whole feed interval ago, so this has almost always
+          // resolved and awaiting it costs nothing. The canned list is still
+          // behind it for the case where it has not.
           const note =
             outcome === 'accepted'
               ? undefined
-              : ((await this.opts.narrator?.narrateVerdict?.({
-                  outcome,
-                  description: item.description,
-                  angle: this.pickOne(
-                    outcome === 'rejected' ? REJECTION_ANGLES : DISCREPANCY_ANGLES,
-                  )!,
-                })) ??
+              : ((await item.note) ??
                 this.pickOne(
                   outcome === 'rejected' ? REJECTION_NOTES : DISCREPANCY_NOTES,
                 ))
@@ -326,6 +349,16 @@ export class ActivityGenerator {
               issuerHandle: item.issuerHandle,
               description: item.description,
               note: note ?? '',
+              // Same trick: the reply starts now and is read a tick or more
+              // later, so the issuer's answer is off the publishing path too.
+              reply: note
+                ? this.start(() =>
+                    this.opts.narrator?.narrateDispute?.({
+                      verdictNote: note,
+                      description: item.description,
+                    }),
+                  )
+                : null,
               at: this.now(),
             })
           }
@@ -416,7 +449,28 @@ export class ActivityGenerator {
       at: new Date(this.now()),
     })
 
+    const roll = this.rand()
+    const outcome =
+      roll < REJECTION_RATE
+        ? ('rejected' as const)
+        : roll < REJECTION_RATE + 0.08
+          ? ('discrepancy' as const)
+          : ('accepted' as const)
+
     this.pending.push({
+      outcome,
+      note:
+        outcome === 'accepted'
+          ? null
+          : this.start(() =>
+              this.opts.narrator?.narrateVerdict?.({
+                outcome,
+                description: String(form.description ?? ''),
+                angle: this.pickOne(
+                  outcome === 'rejected' ? REJECTION_ANGLES : DISCREPANCY_ANGLES,
+                )!,
+              }),
+            ),
       subject: { uri: written.uri, cid: written.cid },
       // at://<did>/<collection>/<rkey> — the only place the write hands back
       // the issuer's DID, which the verdict has to name.
