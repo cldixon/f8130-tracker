@@ -151,6 +151,13 @@ export class MemoryIndex implements ReadIndex {
     return this.releases.find((r) => r.uri === uri) ?? null
   }
 
+  async releasesByUris(uris: string[]): Promise<Map<string, ReleaseRow>> {
+    const wanted = new Set(uris)
+    const out = new Map<string, ReleaseRow>()
+    for (const r of this.releases) if (wanted.has(r.uri)) out.set(r.uri, r)
+    return out
+  }
+
   async issuerStats(): Promise<IssuerStat[]> {
     const dids = new Set([
       ...this.releases.map((r) => r.issuerDid),

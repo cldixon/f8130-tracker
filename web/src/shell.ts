@@ -394,7 +394,22 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
   content: ''; position: absolute; left: -.8rem; top: -.6rem; bottom: 50%;
   width: 1px; background: var(--line);
 }
-.event .replying { font-size: .76rem; color: var(--muted); margin-bottom: .25rem; }
+/* A quoted release, inside the verdict that judges it. The border is what
+   says "this is somebody else's record" — the same thing a quote-post does. */
+.quoted {
+  display: block; margin-top: .55rem; padding: .5rem .65rem;
+  border: 1px solid var(--line); border-radius: 8px;
+  text-decoration: none; color: inherit; background: var(--bg);
+}
+.quoted:hover { border-color: var(--accent); }
+.quoted .qwho {
+  display: flex; align-items: center; gap: .4rem; font-size: .85rem;
+}
+.quoted .qwho .when {
+  margin-left: auto; color: var(--muted); font-size: .72rem; white-space: nowrap;
+}
+.quoted .qwhat { margin-top: .2rem; font-size: .84rem; color: var(--muted); }
+.quoted .unseen { font-style: italic; }
 .event .who .ico, .event .av { align-self: center; }
 /* The DID beside a name. Present because it is the thing that is actually
    cryptographically meaningful, quiet because it is not what anyone reads. */
@@ -490,20 +505,76 @@ button.ghost:hover { background: var(--skip-bg); }
 }
 .compose-row:hover { border-color: var(--accent); }
 
+/* Desktop shows the long label; the tab bar's short one stays out of the way. */
+.rail nav a .tab, .rail .newpost .tab { display: none; }
+
+/*
+ * Phones get a different shape, not a squeezed version of this one.
+ *
+ * Five links in a row measured 527px against a 390px viewport, so the page
+ * scrolled sideways and every link wrapped its own text onto two lines — which
+ * is also why the banner stopped short of the right edge. A rail is a desktop
+ * idea. On a phone the navigation goes where a thumb is, which is the bottom.
+ */
 @media (max-width: 60rem) {
   .app { grid-template-columns: minmax(0, 1fr); gap: 0; }
+
+  /* The rail becomes a top bar holding only identity. */
   .rail {
     position: static; height: auto; flex-direction: row; align-items: center;
-    gap: .5rem; padding: .6rem 0; border-bottom: 1px solid var(--line);
-    flex-wrap: wrap;
+    gap: .5rem; padding: .55rem 0; border-bottom: 1px solid var(--line);
   }
-  .rail nav { flex-direction: row; }
-  .rail .brand { padding: 0 .5rem 0 0; }
-  .rail .brand span { display: none; }
-  .rail .newpost { margin: 0 0 0 auto; padding: .4rem .9rem; }
-  .me { margin-top: 0; position: relative; }
-  .me .who { display: none; }
-  .switcher { position: absolute; right: 0; z-index: 5; width: 15rem; }
+  .rail .brand { padding: 0; font-size: 1.05rem; }
+  .rail .brand br, .rail .brand span { display: none; }
+
+  /* And the links become a tab bar pinned to the bottom of the viewport. */
+  .rail nav {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    flex-direction: row; justify-content: space-around; gap: 0;
+    background: var(--card); border-top: 1px solid var(--line);
+    padding: .3rem .2rem calc(.3rem + env(safe-area-inset-bottom, 0px));
+  }
+  .rail nav a {
+    flex: 1 1 0; min-width: 0; flex-direction: column; align-items: center;
+    gap: .1rem; padding: .3rem .15rem; border-radius: 0;
+    font-size: .62rem; line-height: 1.2; text-align: center;
+  }
+  .rail nav a:hover { background: none; }
+  .rail nav a.on { color: var(--accent); }
+  .rail nav a .ico { font-size: 1.05rem; opacity: 1; width: auto; }
+  .rail nav a .full { display: none; }
+  .rail nav a .tab { display: block; }
+
+  /* The count rides on the icon rather than pushing the label sideways. */
+  .rail nav a { position: relative; }
+  .rail nav a .badge {
+    position: absolute; top: .05rem; left: 50%; margin-left: .25rem;
+    padding: 0 .3rem; font-size: .6rem;
+  }
+
+  /* Compose floats clear of the tab bar, the way a social client does it. */
+  .rail .newpost {
+    position: fixed; right: 1rem; z-index: 21; margin: 0; padding: 0;
+    bottom: calc(4.1rem + env(safe-area-inset-bottom, 0px));
+    width: 3.4rem; height: 3.4rem; border-radius: 999px;
+    display: grid; place-items: center; font-size: 1.6rem; font-weight: 400;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, .28);
+  }
+  .rail .newpost .full { display: none; }
+  .rail .newpost .tab { display: block; line-height: 1; }
+  .rail .newpost.off { box-shadow: none; }
+
+  /* Identity sits at the top right, and its menu drops from there. */
+  .me { margin: 0 0 0 auto; position: relative; }
+  .me > summary { padding: .25rem .3rem; }
+  .me .who b { max-width: 8.5rem; }
+  .switcher {
+    position: absolute; right: 0; z-index: 22; width: 15rem;
+    max-height: 60vh; box-shadow: 0 4px 16px rgba(0, 0, 0, .18);
+  }
+
+  /* Clear the tab bar and the floating button. */
+  main { padding-bottom: 7rem; }
 }
 `
 
@@ -740,22 +811,33 @@ export function layout(
 <div class="app">
   <aside class="rail">
     <div class="brand">f8130<br><span>release certificates on atproto</span></div>
+    <!-- Two labels per entry, because a rail and a tab bar want different
+         words. "Check a document" is right beside a page; "Verify" is right
+         under a thumb. Both are in the markup rather than one being derived,
+         so a screen reader gets a real label either way. -->
     <nav>
-      <a href="/" class="${on('home')}"><span class="ico">◎</span> Home</a>
+      <a href="/" class="${on('home')}"><span class="ico">◎</span>
+        <span class="full">Home</span><span class="tab">Home</span></a>
       ${me
-        ? html`<a href="/inbox" class="${on('inbox')}">
-            <span class="ico">▼</span> Goods in
+        ? html`<a href="/inbox" class="${on('inbox')}"><span class="ico">▼</span>
+            <span class="full">Goods in</span><span class="tab">Goods</span>
             ${chrome?.waiting ? html`<span class="badge">${chrome.waiting}</span>` : ''}
           </a>`
         : ''}
-      <a href="/parts" class="${on('parts')}"><span class="ico">▤</span> Parts</a>
-      <a href="/verify" class="${on('verify')}"><span class="ico">✓</span> Check a document</a>
-      <a href="/cabinet" class="${on('cabinet')}"><span class="ico">▣</span> Your documents</a>
+      <a href="/parts" class="${on('parts')}"><span class="ico">▤</span>
+        <span class="full">Parts</span><span class="tab">Parts</span></a>
+      <a href="/verify" class="${on('verify')}"><span class="ico">✓</span>
+        <span class="full">Check a document</span><span class="tab">Verify</span></a>
+      <a href="/cabinet" class="${on('cabinet')}"><span class="ico">▣</span>
+        <span class="full">Your documents</span><span class="tab">Docs</span></a>
     </nav>
     ${actors.length > 0
       ? me
-        ? html`<a href="/issue" class="newpost" ${withComposer ? 'data-compose' : ''}>New release</a>`
-        : html`<span class="newpost off" title="The public cannot sign">New release</span>`
+        ? html`<a href="/issue" class="newpost" ${withComposer ? 'data-compose' : ''}
+            aria-label="New release"><span class="full">New release</span
+            ><span class="tab">+</span></a>`
+        : html`<span class="newpost off" title="The public cannot sign"
+            ><span class="full">New release</span><span class="tab">+</span></span>`
       : ''}
     ${actors.length > 0 ? identity(chrome!) : ''}
   </aside>
