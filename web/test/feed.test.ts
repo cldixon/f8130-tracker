@@ -154,12 +154,11 @@ describe('the feed page', () => {
   })
 
   /**
-   * Names are what people read; the DID is what is cryptographically
-   * meaningful. Both are shown, in that order of prominence, and the same way
-   * on a release as on a verdict — they used to disagree, because a release
-   * carries Block 4 and a verdict carries no name at all.
+   * Names are what people read. The DID is what is cryptographically
+   * meaningful and also nine characters of base32 nobody reads, so it stays
+   * available on hover and on the record's own page, and out of the sentence.
    */
-  test('a name leads and the DID follows it, on both kinds of event', async () => {
+  test('a byline is a name, with the DID only in reach', async () => {
     const { app } = await feedApp((i) => {
       i.addRelease(release())
       i.addVerdict(verdict())
@@ -168,10 +167,10 @@ describe('the feed page', () => {
     })
     const body = await (await app.request('/')).text()
 
-    // Two events, and every byline carries a quiet DID beside the name.
-    assert.ok((body.match(/class="did"/g) ?? []).length >= 3, 'DIDs are missing')
-    assert.match(body, /<strong>Example Air<\/strong><span class="did"/)
-    assert.match(body, /<strong>Cascadia MRO<\/strong><span class="did"/)
+    assert.match(body, /title="did:plc:issuer">Cascadia MRO/)
+    assert.match(body, /title="did:plc:operator">Example Air/)
+    // Not rendered into the line itself any more.
+    assert.ok(!body.includes('class="did"'), 'a DID is back in the content')
   })
 
   /**
@@ -189,16 +188,55 @@ describe('the feed page', () => {
     assert.match(body, /did%3Aplc%3Aissuer|did:plc:operator/)
   })
 
-  test('a verdict card says which release it answers', async () => {
+  /**
+   * A verdict is a record about another record, which is a quote rather than
+   * a reply. It used to say "replying to X's release" above the card and "a
+   * part from X" inside it — naming the same organization twice and still not
+   * telling the reader what the part was.
+   */
+  test('a verdict quotes the release it judges instead of restating it', async () => {
     const { app } = await feedApp((i) => {
+      i.addRelease(release())
       i.addVerdict(verdict())
       i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
       i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
     })
     const body = await (await app.request('/')).text()
-    assert.match(body, /replying to/)
-    // Points at the release's permalink, not the verdict's own.
+
+    // The quoted release carries what the verdict cannot: what the part is.
+    assert.match(body, /class="quoted"/)
+    assert.match(body, /Fuel control unit/)
     assert.match(body, /href="\/post\/did%3Aplc%3Aissuer\/3a"/)
+
+    assert.ok(!body.includes('replying to'), 'the old reply line is still there')
+    assert.ok(!/a part from/.test(body), 'the issuer is still named twice')
+
+    // Scoped to the verdict's own card: the release has a card of its own and
+    // naming the issuer there is not redundancy. Within one verdict, the
+    // issuer should appear once, inside the quote.
+    const card = body.slice(
+      body.indexOf('data-cid="bafyacc"'),
+      body.indexOf('</article>', body.indexOf('data-cid="bafyacc"')),
+    )
+    assert.ok(card.length > 0, 'no verdict card was rendered')
+    assert.equal((card.match(/Cascadia MRO/g) ?? []).length, 1)
+    assert.match(card, /class="quoted"/)
+  })
+
+  /**
+   * An observer can see a verdict on a release it never saw. That is a fact
+   * about this observer rather than an error, and the card says so instead of
+   * rendering an empty quote.
+   */
+  test('a verdict on an unseen release says the release is unseen', async () => {
+    const { app } = await feedApp((i) => {
+      i.addVerdict(verdict())
+      i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
+    })
+    const body = await (await app.request('/')).text()
+    assert.match(body, /has not seen the release itself/)
+    // It still knows the part, because the verdict record carries it.
+    assert.match(body, /NT882104/)
   })
 
   test('says how many blocks are committed but withheld', async () => {

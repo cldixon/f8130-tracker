@@ -394,7 +394,22 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
   content: ''; position: absolute; left: -.8rem; top: -.6rem; bottom: 50%;
   width: 1px; background: var(--line);
 }
-.event .replying { font-size: .76rem; color: var(--muted); margin-bottom: .25rem; }
+/* A quoted release, inside the verdict that judges it. The border is what
+   says "this is somebody else's record" — the same thing a quote-post does. */
+.quoted {
+  display: block; margin-top: .55rem; padding: .5rem .65rem;
+  border: 1px solid var(--line); border-radius: 8px;
+  text-decoration: none; color: inherit; background: var(--bg);
+}
+.quoted:hover { border-color: var(--accent); }
+.quoted .qwho {
+  display: flex; align-items: center; gap: .4rem; font-size: .85rem;
+}
+.quoted .qwho .when {
+  margin-left: auto; color: var(--muted); font-size: .72rem; white-space: nowrap;
+}
+.quoted .qwhat { margin-top: .2rem; font-size: .84rem; color: var(--muted); }
+.quoted .unseen { font-style: italic; }
 .event .who .ico, .event .av { align-self: center; }
 /* The DID beside a name. Present because it is the thing that is actually
    cryptographically meaningful, quiet because it is not what anyone reads. */

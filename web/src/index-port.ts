@@ -125,6 +125,15 @@ export interface ReadIndex {
   disputesForSubjects(cids: string[]): Promise<DisputeRow[]>
   /** One release by its at:// URI, which is what a permalink can rebuild. */
   releaseByUri(uri: string): Promise<ReleaseRow | null>
+  /**
+   * The releases a set of verdicts are about, keyed by URI.
+   *
+   * A verdict card shows the release it judges rather than restating it, so
+   * the feed needs the subject of everything on screen in one go. Missing
+   * URIs are simply absent: an observer can see a verdict on a release it
+   * never saw, and that is a fact about the feed rather than an error.
+   */
+  releasesByUris(uris: string[]): Promise<Map<string, ReleaseRow>>
   issuerStats(): Promise<IssuerStat[]>
   handleFor(did: string): Promise<string | null>
   /** Profiles for the DIDs on screen. Missing DIDs are simply absent. */

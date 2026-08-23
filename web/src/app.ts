@@ -182,6 +182,22 @@ export function createApp(deps: AppDeps) {
     return out
   }
 
+  /**
+   * The releases the verdicts on screen are about.
+   *
+   * A verdict card quotes its subject rather than restating it, which needs
+   * the release itself. One lookup for the whole page rather than one per
+   * card.
+   */
+  async function subjectsFor(events: FeedEvent[]): Promise<Map<string, ReleaseRow>> {
+    if (!deps.index) return new Map()
+    const uris = events
+      .filter((e) => e.kind === 'verdict')
+      .map((e) => (e as { verdict: AcceptanceRow }).verdict.subjectUri)
+    if (uris.length === 0) return new Map()
+    return deps.index.releasesByUris([...new Set(uris)])
+  }
+
   /** How many verdicts each release on screen has drawn. */
   async function replyCounts(events: FeedEvent[]): Promise<Map<string, number>> {
     const out = new Map<string, number>()
@@ -204,6 +220,7 @@ export function createApp(deps: AppDeps) {
         events,
         handles,
         names: await namesFor(didsIn(events)),
+        subjects: await subjectsFor(events),
         replies: await replyCounts(events),
         current: currentActor(c),
         hasIndex: Boolean(deps.index),
@@ -314,8 +331,11 @@ export function createApp(deps: AppDeps) {
               const handles = await handlesFor(events)
               for (const e of [...events].reverse()) {
                 const names = await namesFor(didsIn(events))
+                const subjects = await subjectsFor(events)
                 const markup = String(
-                  await feedCard(e, handles, new Date(), viewer, undefined, names),
+                  await feedCard(
+                    e, handles, new Date(), viewer, undefined, names, subjects,
+                  ),
                 )
                   .replace(/\s*\n\s*/g, ' ')
                 send(`event: event\ndata: ${markup}\n\n`)

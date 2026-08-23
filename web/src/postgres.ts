@@ -173,6 +173,17 @@ export class PostgresIndex implements ReadIndex {
     return rows[0] ? PostgresIndex.toRelease(rows[0]) : null
   }
 
+  async releasesByUris(uris: string[]): Promise<Map<string, ReleaseRow>> {
+    const out = new Map<string, ReleaseRow>()
+    if (uris.length === 0) return out
+    const { rows } = await this.pool.query(
+      `SELECT * FROM release WHERE uri = ANY($1)`,
+      [uris],
+    )
+    for (const r of rows) out.set(r.uri, PostgresIndex.toRelease(r))
+    return out
+  }
+
   async issuerStats(): Promise<IssuerStat[]> {
     const { rows } = await this.pool.query(
       `SELECT a.did,

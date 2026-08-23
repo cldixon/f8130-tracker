@@ -565,18 +565,11 @@ export function feedCard(
    * the viewpoint check compares against, while these are only for reading.
    */
   names?: Map<string, string>,
+  /** The releases verdicts are about, keyed by URI. */
+  subjects?: Map<string, ReleaseRow>,
 ): HtmlEscapedString | Promise<HtmlEscapedString> {
-  // Name first, always. A DID is an identifier, not a name, and a feed that
-  // shows one where a social client would show a person reads as a database
-  // dump. The DID is still there, rendered small beside the name, because it
-  // is the thing that is actually cryptographically meaningful — and because
-  // an organization with no published profile has nothing else to show.
   const nameOf = (did: string) => names?.get(did) ?? short(did, 10)
-  const who = (did: string) =>
-    names?.get(did)
-      ? html`<strong>${names.get(did)}</strong><span class="did"
-          title="${did}">${short(did, 10)}</span>`
-      : html`<strong class="mono">${short(did, 10)}</strong>`
+
   // What the viewpoint control changes, and all it changes: which events are
   // marked as involving you. It grants no extra visibility — the withheld
   // blocks stay withheld whoever is looking, because the index never held
@@ -586,6 +579,13 @@ export function feedCard(
       ? html`<span class="mine">you</span>`
       : ''
 
+  // The DID rides in a title rather than on the line. It is the thing that is
+  // actually cryptographically meaningful, and it is also nine characters of
+  // base32 that nobody reads — so it stays available on hover and on the
+  // record's own page, and out of the way of the sentence.
+  const byline = (did: string) =>
+    html`<strong title="${did}">${nameOf(did)}</strong>${yours(did)}`
+
   if (event.kind === 'release') {
     const r = event.release
     const withheld = FIELDS.filter((f) => !f.public).length
@@ -593,8 +593,7 @@ export function feedCard(
     return html`<article class="event" data-cid="${r.cid}">
       <div class="who">
         ${avatar(r.organizationName, true)}
-        <strong>${r.organizationName}</strong><span class="did"
-          title="${r.issuerDid}">${short(r.issuerDid, 10)}</span>${yours(r.issuerDid)}
+        <strong title="${r.issuerDid}">${r.organizationName}</strong>${yours(r.issuerDid)}
         issued a release certificate
         <span class="when"><a href="${postPath(r.uri)}">${ago(event.at, now)}</a></span>
       </div>
@@ -614,28 +613,47 @@ export function feedCard(
     </article>`
   }
 
+  /*
+   * A verdict quotes the release it judges rather than describing it.
+   *
+   * It used to say "replying to X's release" above the card and "a part from
+   * X" inside it, which named the same organization twice and still left the
+   * reader without the one thing they wanted — what the part actually was.
+   * Showing the release itself, embedded, says all of it once. It is also the
+   * more faithful shape: a verdict is a record about another record, which is
+   * a quote rather than a reply.
+   */
   const v = event.verdict
-  const verifier = nameOf(v.verifierDid)
-  const issuer = nameOf(v.issuerDid)
+  const subject = subjects?.get(v.subjectUri)
   return html`<article class="event ${v.outcome}" data-cid="${v.cid}">
-    <div class="replying">
-      replying to <a href="${postPath(v.subjectUri)}">${issuer}&rsquo;s release</a>
-    </div>
     <div class="who">
-      ${avatar(verifier, true)}
-      ${who(v.verifierDid)}${yours(v.verifierDid)}
-      ${OUTCOME_WORD[v.outcome] ?? v.outcome}
-      a part from ${who(v.issuerDid)}${yours(v.issuerDid)}
+      ${avatar(nameOf(v.verifierDid), true)}
+      ${byline(v.verifierDid)} ${OUTCOME_WORD[v.outcome] ?? v.outcome}
       <span class="when"><a href="${postPath(v.subjectUri)}">${ago(event.at, now)}</a></span>
     </div>
-    <div class="what">
-      <a class="mono tag" href="/part/${encodeURIComponent(v.partNumber)}/${encodeURIComponent(v.serialNumber)}">
-        ${v.partNumber}
-      </a> · s/n <span class="mono">${v.serialNumber}</span>
-    </div>
+
     ${v.note ? html`<div class="note">&ldquo;${v.note}&rdquo;</div>` : ''}
+
+    <a class="quoted" href="${postPath(v.subjectUri)}">
+      <div class="qwho">
+        ${avatar(subject?.organizationName ?? nameOf(v.issuerDid), true)}
+        <strong>${subject?.organizationName ?? nameOf(v.issuerDid)}</strong>
+        <span class="when">${subject ? ago(subject.observedAt, now) : 'released'}</span>
+      </div>
+      <div class="qwhat">
+        ${subject
+          ? html`${subject.description} ·
+              <span class="mono">${subject.partNumber}</span> ·
+              s/n <span class="mono">${subject.serialNumber}</span>`
+          : html`<span class="mono">${v.partNumber}</span> ·
+              s/n <span class="mono">${v.serialNumber}</span>
+              <span class="unseen">— this observer has not seen the release itself</span>`}
+      </div>
+    </a>
+
     <div class="meta">
-      published in ${verifier}&rsquo;s own repository — the issuer cannot remove it
+      published in ${nameOf(v.verifierDid)}&rsquo;s own repository — the issuer
+      cannot remove it
     </div>
   </article>`
 }
@@ -889,6 +907,8 @@ export function feedPage(params: {
   replies?: Map<string, number>
   /** Display names by DID, for reading rather than for identity. */
   names?: Map<string, string>
+  /** The releases verdicts are about, so a verdict can quote rather than restate. */
+  subjects?: Map<string, ReleaseRow>
   /** False when there is no index to read, which is a different empty. */
   hasIndex: boolean
   live: boolean
@@ -929,7 +949,10 @@ export function feedPage(params: {
 
     <div id="feed" class="feed">
       ${params.events.map((e) =>
-        feedCard(e, params.handles, now, params.current, params.replies, params.names),
+        feedCard(
+          e, params.handles, now, params.current, params.replies,
+          params.names, params.subjects,
+        ),
       )}
     </div>
 
