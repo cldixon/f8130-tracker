@@ -789,7 +789,11 @@ const SWITCHER_SCRIPT = `
 
 const CABINET_SCRIPT = `
 (function () {
-  var KEY = 'f8130.bundles'
+  // Not renamed with the app. This key addresses documents already sitting in
+  // people's browsers, and a bundle cannot be reissued — the nonces are not
+  // recoverable from the commitment — so changing it would silently orphan
+  // every document anyone is holding.
+  var KEY = 'f8130.bundles' 
   function read() {
     try { return JSON.parse(localStorage.getItem(KEY) || '{}') } catch (e) { return {} }
   }
@@ -850,7 +854,7 @@ export function layout(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title} · f8130</title>
+<title>${title} · OffWing</title>
 <style>${raw(STYLES)}</style>
 </head>
 <body>
@@ -863,7 +867,7 @@ export function layout(
 </div>
 <div class="app">
   <aside class="rail">
-    <div class="brand">f8130<br><span>release certificates on atproto</span></div>
+    <div class="brand">OffWing<br><span>FAA 8130-3 certificates on atproto</span></div>
     <!-- Four destinations, and each answers a different question. Home: what
          is happening. Goods in: what is waiting on me. Issuers: who is
          publishing, and whose paperwork other parties reject. Documents: what
