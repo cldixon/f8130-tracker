@@ -1178,6 +1178,9 @@ describe('the synthetic generator', () => {
       writer,
       domain: DOMAIN,
       now: () => 1_700_000_000_000,
+      // Off unless a test asks for it. The backlog is history, and a test
+      // about one tick should not have thirty-four writes in front of it.
+      backlogSize: 0,
       // Scripted, then an unremarkable 0.5 once the script runs out — a test
       // should have to spell out only the rolls it actually cares about.
       random: () => (i < rolls.length ? rolls[i++]! : 0.5),
@@ -1185,6 +1188,92 @@ describe('the synthetic generator', () => {
     })
     return { g, calls, writer }
   }
+
+  test('a receiving inspection is dated from the release, not from the clock', async () => {
+    const NOW = 1_700_000_000_000
+    const { writer, calls } = recorder()
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => NOW,
+      random: WALK_THE_THREAD,
+      backlogSize: 4,
+      backlogDays: 20,
+    })
+
+    g.viewerJoined()
+    await new Promise((r) => setTimeout(r, 50))
+    g.viewerLeft()
+
+    const releases = calls.filter((c) => c.kind === 'release')
+    const verdicts = calls.filter((c) => c.kind === 'acceptance')
+    assert.ok(releases.length >= 4, 'the backlog was not written')
+    assert.ok(verdicts.length >= 1, 'nothing was inspected')
+
+    // The part shipped. A verdict published now describes an arrival that
+    // happened a transit time after the certificate was signed — which is the
+    // gap that was missing when both records were simply dated "now" and the
+    // feed showed a release and its verdict as the same moment.
+    for (const v of verdicts) {
+      const subject = releases.find((r) => r.uri === v.subject.uri)
+      assert.ok(subject, 'a verdict on a release nobody issued')
+      const signed = new Date(String(subject.form.completedAt)).getTime()
+      const received = v.receivedAt.getTime()
+      assert.ok(received > signed, 'received before it was signed')
+      assert.ok(received <= NOW, 'received in the future')
+      const days = (received - signed) / 86_400_000
+      assert.ok(days >= 2, `transit of ${days.toFixed(1)}d is not a shipment`)
+    }
+  })
+
+  test('the backlog is written oldest first, so the column stays monotonic', async () => {
+    const { writer, calls } = recorder()
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => 1_700_000_000_000,
+      random: ALWAYS_ISSUE,
+      backlogSize: 8,
+      backlogDays: 20,
+    })
+
+    g.viewerJoined()
+    await new Promise((r) => setTimeout(r, 50))
+    g.viewerLeft()
+
+    // The feed orders on the observer's clock and these all arrive within a
+    // second of each other, so write order is display order. Writing oldest
+    // first is what makes that order agree with the dates on the paper.
+    const dates = calls
+      .filter((c) => c.kind === 'release')
+      .map((c) => new Date(String(c.form.completedAt)).getTime())
+    assert.ok(dates.length >= 8)
+    for (let i = 1; i < dates.length; i++) {
+      assert.ok(dates[i]! >= dates[i - 1]!, `entry ${i} is older than the one before it`)
+    }
+  })
+
+  test('a deployment that already has history does not lay down another one', async () => {
+    const { writer, calls } = recorder()
+    const g = new ActivityGenerator({
+      writer,
+      domain: DOMAIN,
+      now: () => 1_700_000_000_000,
+      random: ALWAYS_ISSUE,
+      backlogSize: 6,
+      // Every seeded record is a permanent write to a real repository, so a
+      // restart has to inherit what it published rather than stack a second
+      // backlog on top — which over a few deploys is how a demonstration ends
+      // up with a thousand parts nobody issued.
+      history: async () => 6,
+    })
+
+    g.viewerJoined()
+    await new Promise((r) => setTimeout(r, 50))
+    g.viewerLeft()
+
+    assert.equal(calls.filter((c) => c.kind === 'release').length, 0)
+  })
 
   test('writes nothing until somebody is watching', () => {
     const { g } = gen([], { random: ALWAYS_ISSUE })

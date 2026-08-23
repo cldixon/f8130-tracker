@@ -582,6 +582,17 @@ export async function narratedForm(params: {
   narrator?: Narrator | null
   now?: Date
   /**
+   * How many days before `now` the certificate claims to have been signed.
+   *
+   * Defaults to a spread over the last ninety days, which is right for a
+   * one-off example and wrong for anything choreographed. A caller building a
+   * sequence of events needs to say when each one happened, because the gap
+   * between a release and the receipt of the part it covers is the shipping
+   * time, and shipping time is the thing that makes the sequence read as a
+   * supply chain rather than as two records written in the same second.
+   */
+  agedDays?: number
+  /**
    * The part this form continues, when it is a later visit rather than a
    * birth.
    *
@@ -594,7 +605,12 @@ export async function narratedForm(params: {
 }): Promise<RawForm> {
   const { org, seed } = params
   const fallback = (): RawForm => {
-    const form = syntheticForm({ org, seed, now: params.now })
+    const form = syntheticForm({
+      org,
+      seed,
+      now: params.now,
+      ...(params.agedDays === undefined ? {} : { agedDays: params.agedDays }),
+    })
     return params.continues ? { ...form, ...params.continues } : form
   }
 
@@ -609,7 +625,9 @@ export async function narratedForm(params: {
   const status = statuses[mix(seed, 2) % statuses.length]!
 
   const now = params.now ?? new Date()
-  const completed = new Date(now.getTime() - (mix(seed, 3) % 90) * 86_400_000)
+  const completed = new Date(
+    now.getTime() - (params.agedDays ?? mix(seed, 3) % 90) * 86_400_000,
+  )
   completed.setUTCSeconds(0, 0)
 
   const brief: NarrationBrief = {

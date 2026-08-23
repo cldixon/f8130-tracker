@@ -202,6 +202,17 @@ export function syntheticForm(params: {
   seed: number
   /** Anchors `completedAt`. Injected so the output can be pinned in tests. */
   now?: Date
+  /**
+   * How many days before `now` the certificate claims to have been signed.
+   *
+   * Defaults to a spread over the last ninety days, which is right for a
+   * one-off example and wrong for anything choreographed. A caller building a
+   * sequence of events needs to say when each one happened, because the gap
+   * between a release and the receipt of the part it covers is the shipping
+   * time, and shipping time is the thing that makes the sequence read as a
+   * supply chain rather than as two records written in the same second.
+   */
+  agedDays?: number
 }): RawForm {
   const { org, seed } = params
   const part = pick(PARTS, seed, 1)
@@ -214,8 +225,9 @@ export function syntheticForm(params: {
   const status = pick(statuses, seed, 2)
 
   const now = params.now ?? new Date()
-  // Somewhere in the last ninety days, on a whole minute.
-  const daysAgo = mix(seed, 3) % 90
+  // The caller's figure when it has one, otherwise somewhere in the last
+  // ninety days. On a whole minute either way.
+  const daysAgo = params.agedDays ?? mix(seed, 3) % 90
   const completed = new Date(now.getTime() - daysAgo * 86_400_000)
   completed.setUTCSeconds(0, 0)
 

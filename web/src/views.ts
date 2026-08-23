@@ -618,7 +618,8 @@ export function feedCard(
         ${avatar(r.organizationName, true)}
         <strong title="${r.issuerDid}">${r.organizationName}</strong>${yours(r.issuerDid)}
         issued a release certificate
-        <span class="when"><a href="${postPath(r.uri)}">${ago(event.at, now)}</a></span>
+        <span class="when"><a href="${postPath(r.uri)}"
+          >${ago(r.completedAt, now)}</a></span>
       </div>
       ${dataplate({
         description: r.description,
@@ -649,7 +650,8 @@ export function feedCard(
     <div class="who">
       ${avatar(nameOf(v.verifierDid), true)}
       ${byline(v.verifierDid)} ${OUTCOME_WORD[v.outcome] ?? v.outcome}
-      <span class="when"><a href="${postPath(v.subjectUri)}">${ago(event.at, now)}</a></span>
+      <span class="when"><a href="${postPath(v.subjectUri)}"
+        >${ago(v.receivedAt, now)}</a></span>
     </div>
 
     ${v.note ? html`<div class="note">&ldquo;${v.note}&rdquo;</div>` : ''}
@@ -954,9 +956,11 @@ export function feedPage(params: {
   const body = html`
     <h1>Activity</h1>
     <p class="sub">
-      Every release and every verdict this observer has seen, newest first,
-      ordered by when <em>it</em> saw them rather than by any time an issuer
-      claimed.
+      Every release and every verdict this observer has seen, newest first.
+      The date on a card is the one the document claims — signed, or received.
+      The <em>order</em> is this observer&rsquo;s own clock, so a backdated
+      certificate can say what it likes and still cannot choose where it
+      appears.
       ${params.live
         ? html`<span class="pulse" id="pulse">live</span>`
         : ''}
