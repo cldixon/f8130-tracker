@@ -69,8 +69,8 @@ export function verifyPage(
       'Verify',
       html`<h1>Verify a release certificate</h1>
       <p class="sub">
-        Checks a document against the commitment its issuer published in their
-        own repository. No account required, and nothing you paste is stored.
+        Checks a document against the commitment its issuer published. Nothing
+        you paste is stored.
       </p>
       ${error ? html`<div class="verdict no"><h2>Could not read that bundle</h2><p>${error}</p></div>` : ''}
       <div class="card" style="padding:1.15rem">${form}</div>`,
@@ -190,8 +190,8 @@ export function partPage(params: {
       <div><dt>S/N</dt><dd class="mono">${params.serialNumber}</dd></div>
     </dl>
     <p class="tnote">
-      Not an account — a part holds no repository and signs nothing. This page
-      is assembled by this observer out of records published independently by
+      A part holds no repository and signs nothing. This page is assembled from
+      records published independently by
       ${new Set(chain.map((r) => r.issuerDid)).size || 'no'}
       organization${new Set(chain.map((r) => r.issuerDid)).size === 1 ? '' : 's'}.
     </p>
@@ -339,9 +339,8 @@ export function dashboardPage(params: {
     'Issuers',
     html`<h1>Issuers</h1>
     <p class="sub">
-      Every organization this observer has seen publish, read from independent
-      repositories over the firehose and verified against the issuer's own
-      signing key.
+      Every organization this observer has seen publish, verified against the
+      issuer&rsquo;s own signing key.
     </p>
 
     <h2>Who is publishing</h2>
@@ -403,11 +402,9 @@ export function disclosePage(params: {
 
   const intro = html`<h1>Prove one field, reveal nothing else</h1>
     <p class="sub">
-      A lessor auditing maintenance spend needs the cost figure and has no
-      business seeing the findings, the customer, or the workscope. Hand over
-      the whole bundle and they hold a competitor's cost structure forever.
-      A disclosure proves the chosen fields against the commitment the issuer
-      already published — no new signature, and no cooperation from anyone.
+      Proves the fields you choose against the commitment the issuer already
+      published, and reveals nothing else. No new signature, and no cooperation
+      from the issuer.
     </p>`
 
   if (!params.disclosure) {
@@ -459,9 +456,8 @@ export function disclosePage(params: {
       <div class="empty">
         ${(r?.withheld ?? []).map(fieldLabel).join(' · ')}
         <p style="margin:.6rem 0 0">
-          The verifier is told which fields exist and were not shown. A verifier
-          who could not tell the difference could be handed a flattering subset
-          and told it was the whole form.
+          The verifier is told which fields exist and were not shown, so a
+          flattering subset cannot pass as the whole form.
         </p>
       </div>
     </div>
@@ -470,9 +466,8 @@ export function disclosePage(params: {
     <div class="card">
       <div class="empty">
         ${params.exposed?.length ?? 0} sibling hashes travel with the proof —
-        unavoidable, since they are how the root is recomputed. Each covers a
-        field salted with 32 random bytes, so a status with five possible values
-        still cannot be recovered from one.
+        they are how the root is recomputed. Each covers a field salted with 32
+        random bytes, so none can be reversed.
         <div class="evidence mono" style="margin-top:.5rem">
           ${(params.exposed ?? []).map((h) => `${h.slice(0, 16)}…`).join('  ')}
         </div>
@@ -743,17 +738,9 @@ export function threadPage(params: {
         <a class="act" href="/verify">Check a document you hold</a>
       </div>
       <div class="meta">
-        ${withheld} of ${FIELDS.length} blocks are committed but not published, so
-        this observer cannot say what was done to the part. Holding the bundle
-        opens them; this page never will.
-      </div>
-      <div class="meta">
-        A verdict below is somebody&rsquo;s account of the part they received,
-        and each party who receives it publishes their own. Checking a document
-        asks something else, and it is never settled: whether a copy in
-        <em>your</em> hands still matches what was signed here. A part can be
-        accepted by one operator and travel on with a forged certificate, so
-        anyone holding a copy can ask, as often as they like.
+        ${withheld} of ${FIELDS.length} blocks are withheld. Checking compares a
+        copy you hold against this record; a verdict below is a party&rsquo;s
+        account of the part itself.
       </div>
     </article>
 
@@ -839,13 +826,8 @@ export function inboxPage(params: {
 
       <div class="seam">
         <strong>This list is not from the network.</strong> An 8130-3 names who
-        issued a release, not who received it — there is no block for it, and
-        adding one would publish which shop works for which operator. So the
-        public record cannot say what is waiting for you. This stands in for
-        your goods-in process: a crate arrived, and here it is.
-        <span class="v2">Under a scheme for fields disclosed only to named
-        parties, the recipient could travel with the record and this list could
-        come off the wire.</span>
+        issued a release, not who received it, so this stands in for your
+        goods-in process.
       </div>
 
       ${params.arrivals.length === 0
@@ -909,17 +891,14 @@ export function cabinetPage(params: { chrome?: Chrome; mode?: Mode }) {
     'Your documents',
     html`<h1>Your documents</h1>
     <p class="sub">
-      Bundles this browser is holding. A bundle carries every nonce, so it opens
-      every withheld block on the record it belongs to.
+      Bundles this browser is holding. A bundle opens every withheld block on
+      the record it belongs to.
     </p>
 
     <div class="seam">
       <strong>These are not stored on this server.</strong> They are in your
-      browser, and the service has never held a copy — a bundle it stored would
-      be a bundle it could be compelled to hand over, which would put back the
-      trusted intermediary this whole design exists to remove.
-      <span class="v2">Clearing your site data deletes them, and no one can
-      reissue them: the nonces are not recoverable from the commitment.</span>
+      browser only. Clearing your site data deletes them, and they cannot be
+      reissued.
     </div>
 
     <div class="card" id="cabinet">
@@ -932,10 +911,8 @@ export function cabinetPage(params: { chrome?: Chrome; mode?: Mode }) {
       <a class="act" href="/disclose">Prove one field</a>
     </div>
     <p class="sub">
-      Checking works on any bundle, including one somebody else handed you —
-      it reads the signed records from the issuer&rsquo;s own repository and
-      never consults this service&rsquo;s database. Proving one field builds a
-      redacted document that opens a single block and keeps the rest shut.
+      Checking works on any bundle, including one somebody else handed you.
+      Proving one field builds a redacted copy that opens a single block.
     </p>`,
     params.mode,
     params.chrome,
@@ -964,11 +941,8 @@ export function feedPage(params: {
   const body = html`
     <h1>Activity</h1>
     <p class="sub">
-      Every release and every verdict this observer has seen, newest first.
-      The date on a card is the one the document claims — signed, or received.
-      The <em>order</em> is this observer&rsquo;s own clock, so a backdated
-      certificate can say what it likes and still cannot choose where it
-      appears.
+      Every release and every verdict this observer has seen. Dates are what
+      the document claims; the order is this observer&rsquo;s own clock.
       ${params.live
         ? html`<span class="pulse" id="pulse">live</span>`
         : ''}
@@ -1106,10 +1080,9 @@ export function issuePage(params: {
     'Issue a release',
     html`<h1>Issue a release certificate</h1>
     <p class="sub">
-      Fields marked private never appear on the public record — only inside the
-      commitment. This service builds the record and hands it to
-      ${actor?.displayName ?? 'the issuer'}'s own server to sign; it holds no
-      signing key of its own.
+      Fields marked private never appear on the public record. Signing is done
+      by ${actor?.displayName ?? 'the issuer'}&rsquo;s own server; this service
+      holds no key.
     </p>
 
     ${signingAs(actor)}
@@ -1184,9 +1157,8 @@ export function acceptPage(params: {
     'Record a verdict',
     html`<h1>Record a verdict on a part you received</h1>
     <p class="sub">
-      This verdict is published in <em>your</em> repository, not the issuer's.
-      They cannot delete it, and no service sits in between with the power to
-      suppress it. They can only answer it.
+      Published in <em>your</em> repository, not the issuer&rsquo;s. They
+      cannot delete it — only answer it.
     </p>
 
     ${signingAs(actor)}
@@ -1223,7 +1195,7 @@ export function acceptPage(params: {
     <h2>Right of reply</h2>
     <p class="sub">
       For an issuer answering a verdict against them. It cannot remove the
-      verdict — only respond to it, publicly and under their own signature.
+      verdict, only respond to it.
     </p>
     <div class="card" style="padding:1.15rem">
       <form method="post" action="/dispute">

@@ -253,7 +253,7 @@ describe('the feed page', () => {
     assert.ok(!/blocks committed and withheld/.test(feed), 'boilerplate is back on the cards')
 
     const post = await (await app.request(postPath(r.uri))).text()
-    assert.match(post, /8 of 17 blocks are committed but not published/)
+    assert.match(post, /8 of 17 blocks are withheld/)
   })
 
   test('a private block never reaches the page', async () => {
@@ -352,7 +352,7 @@ describe('threads', () => {
     for (const secret of ['REPAIRED', 'Metering valve wear', 'R. Inspector']) {
       assert.ok(!body.includes(secret), `${secret} leaked into the thread`)
     }
-    assert.match(body, /8 of 17 blocks are committed but not published/)
+    assert.match(body, /8 of 17 blocks are withheld/)
   })
 
   test('a release this observer has never seen is a 404, not an error', async () => {
@@ -418,8 +418,8 @@ describe('a part as a topic', () => {
 
     // A part holds no repository and signs nothing; the page has to say so
     // rather than dressing it up as a participant on the network.
-    assert.match(body, /Not an account/)
-    assert.match(body, /assembled by this observer/)
+    assert.match(body, /holds no repository and signs nothing/)
+    assert.match(body, /assembled from\s+records published independently/)
     assert.ok(!/follow/i.test(body), 'a part is not something you follow')
   })
 
@@ -717,9 +717,7 @@ describe('goods in', () => {
     ).text()
 
     assert.match(body, /This list is not from the network/)
-    assert.match(body, /no block for it/)
-    // And names what would change that, so the next version is legible.
-    assert.match(body, /disclosed only to named\s+parties/)
+    assert.match(body, /not from the network/)
   })
 
   test('shows only what was handed to the acting organization', async () => {
@@ -914,7 +912,7 @@ describe('the filing cabinet', () => {
     const body = await (await app.request('/cabinet')).text()
 
     assert.match(body, /not stored on this server/)
-    assert.match(body, /compelled to hand over/)
+    assert.match(body, /not stored on this server/)
     // The list is empty markup; only a browser can fill it in.
     assert.match(body, /id="cabinet"/)
     assert.match(body, /Reading this browser/)
@@ -975,7 +973,7 @@ describe('the shape on a phone', () => {
     // the page says which is which, because sitting next to a list of verdicts
     // it reads as "add another one".
     assert.match(body, /Check a document you hold/)
-    assert.match(body, /never settled/)
+    assert.match(body, /a verdict below is a party&rsquo;s\s+account of the part itself/i)
   })
 
   test('a part is written the way the trade writes it', async () => {
@@ -1559,6 +1557,6 @@ describe('the synthetic generator', () => {
     assert.equal(index.size.releases, 1)
     const body = await (await app.request('/')).text()
     assert.match(body, /issued a release certificate/)
-    assert.match(body, /SYNTHETIC/)
+    assert.match(body, /synthetic data/)
   })
 })

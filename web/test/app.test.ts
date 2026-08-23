@@ -92,7 +92,8 @@ describe('health and shape', () => {
     const { app } = await appWithNetwork()
     for (const path of ['/', '/verify']) {
       const body = await (await app.request(path)).text()
-      assert.match(body, /SYNTHETIC DATA/, `${path} is missing the marker`)
+      assert.match(body, /prototype for demonstration purposes only/, `${path} is missing the marker`)
+      assert.match(body, /synthetic data/, `${path} is missing the marker`)
     }
   })
 

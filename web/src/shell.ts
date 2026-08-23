@@ -855,13 +855,10 @@ export function layout(
 </head>
 <body>
 <div class="marker">
-  <strong>SYNTHETIC DATA</strong> — fictional organizations, invented part
-  numbers, nothing here is airworthiness evidence.${mode === 'demo'
-    ? html` <strong>Demo instance</strong> — there are no servers behind this
-        page. Every organization, its signing key and its repository live
-        inside this one process. The signatures and inclusion proofs are real
-        cryptography; what is simulated is the independence between the
-        parties. <a href="/demo/bundles.json">Sample documents</a>.`
+  <strong>Note:</strong> This is a prototype for demonstration purposes only
+  and is built with synthetic data.${mode === 'demo'
+    ? html` <strong>Demo instance</strong> —
+        <a href="/demo/bundles.json">sample documents</a>.`
     : ''}
 </div>
 <div class="app">
