@@ -11,6 +11,75 @@ import type {
 } from './index-port.js'
 
 /**
+ * A timestamp from either shape of row.
+ *
+ * `SELECT *` yields a Date, because node-postgres parses timestamptz. The feed
+ * wraps its rows in `to_jsonb` so both record kinds can be merged in one
+ * query, and JSON has no date type, so the same column arrives as an ISO
+ * string. These mappers declared Date and passed either through untouched,
+ * which held for exactly as long as nothing called a Date method on the
+ * result — until a feed card started showing the date on the document rather
+ * than the moment the row was observed, and the front page threw
+ * "at.getTime is not a function".
+ *
+ * Coercing at the boundary that asserts the type, rather than at each call
+ * site. `new Date(aDate)` is a clone, so the column path is unaffected.
+ */
+function at(v: unknown): Date {
+  return v instanceof Date ? v : new Date(String(v))
+}
+
+export function toRelease(r: Record<string, any>): ReleaseRow {
+  return {
+    cid: r.cid,
+    uri: r.uri,
+    issuerDid: r.issuer_did,
+    prevUri: r.prev_uri,
+    prevCid: r.prev_cid,
+    approvingAuthority: r.approving_authority,
+    formNumber: r.form_number,
+    organizationName: r.organization_name,
+    organizationAddress: r.organization_address,
+    description: r.description,
+    partNumber: r.part_number,
+    serialNumber: r.serial_number,
+    signerCert: r.signer_cert,
+    completedAt: at(r.completed_at),
+    observedAt: at(r.observed_at),
+  }
+}
+
+export function toAcceptance(r: Record<string, any>): AcceptanceRow {
+  return {
+    cid: r.cid,
+    uri: r.uri,
+    subjectUri: r.subject_uri,
+    subjectCid: r.subject_cid,
+    issuerDid: r.issuer_did,
+    verifierDid: r.verifier_did,
+    partNumber: r.part_number,
+    serialNumber: r.serial_number,
+    outcome: r.outcome,
+    note: r.note,
+    receivedAt: at(r.received_at),
+    observedAt: at(r.observed_at),
+  }
+}
+
+export function toDispute(r: Record<string, any>): DisputeRow {
+  return {
+    cid: r.cid,
+    uri: r.uri,
+    subjectUri: r.subject_uri,
+    subjectCid: r.subject_cid,
+    authorDid: r.author_did,
+    response: r.response,
+    disputedAt: at(r.disputed_at),
+    observedAt: at(r.observed_at),
+  }
+}
+
+/**
  * The read side of the index maintained by the Go ingest service.
  *
  * Strictly read-only. The web tier never writes to this database: everything in
@@ -28,56 +97,6 @@ export class PostgresIndex implements ReadIndex {
 
   async close(): Promise<void> {
     await this.pool.end()
-  }
-
-  private static toRelease(r: Record<string, any>): ReleaseRow {
-    return {
-      cid: r.cid,
-      uri: r.uri,
-      issuerDid: r.issuer_did,
-      prevUri: r.prev_uri,
-      prevCid: r.prev_cid,
-      approvingAuthority: r.approving_authority,
-      formNumber: r.form_number,
-      organizationName: r.organization_name,
-      organizationAddress: r.organization_address,
-      description: r.description,
-      partNumber: r.part_number,
-      serialNumber: r.serial_number,
-      signerCert: r.signer_cert,
-      completedAt: r.completed_at,
-      observedAt: r.observed_at,
-    }
-  }
-
-  private static toAcceptance(r: Record<string, any>): AcceptanceRow {
-    return {
-      cid: r.cid,
-      uri: r.uri,
-      subjectUri: r.subject_uri,
-      subjectCid: r.subject_cid,
-      issuerDid: r.issuer_did,
-      verifierDid: r.verifier_did,
-      partNumber: r.part_number,
-      serialNumber: r.serial_number,
-      outcome: r.outcome,
-      note: r.note,
-      receivedAt: r.received_at,
-      observedAt: r.observed_at,
-    }
-  }
-
-  private static toDispute(r: Record<string, any>): DisputeRow {
-    return {
-      cid: r.cid,
-      uri: r.uri,
-      subjectUri: r.subject_uri,
-      subjectCid: r.subject_cid,
-      authorDid: r.author_did,
-      response: r.response,
-      disputedAt: r.disputed_at,
-      observedAt: r.observed_at,
-    }
   }
 
   /**
@@ -103,13 +122,13 @@ export class PostgresIndex implements ReadIndex {
       r.kind === 'release'
         ? {
             kind: 'release' as const,
-            at: r.observed_at,
-            release: PostgresIndex.toRelease(r.payload),
+            at: at(r.observed_at),
+            release: toRelease(r.payload),
           }
         : {
             kind: 'verdict' as const,
-            at: r.observed_at,
-            verdict: PostgresIndex.toAcceptance(r.payload),
+            at: at(r.observed_at),
+            verdict: toAcceptance(r.payload),
           },
     )
   }
@@ -119,7 +138,7 @@ export class PostgresIndex implements ReadIndex {
       `SELECT * FROM release ORDER BY observed_at DESC LIMIT $1`,
       [limit],
     )
-    return rows.map(PostgresIndex.toRelease)
+    return rows.map(toRelease)
   }
 
   async releasesForPart(
@@ -132,7 +151,7 @@ export class PostgresIndex implements ReadIndex {
        ORDER BY completed_at DESC`,
       [partNumber, serialNumber],
     )
-    return rows.map(PostgresIndex.toRelease)
+    return rows.map(toRelease)
   }
 
   async chain(cid: string, maxDepth: number): Promise<ReleaseRow[]> {
@@ -147,7 +166,7 @@ export class PostgresIndex implements ReadIndex {
        SELECT * FROM chain ORDER BY depth`,
       [cid, maxDepth],
     )
-    return rows.map(PostgresIndex.toRelease)
+    return rows.map(toRelease)
   }
 
   async acceptancesForSubjects(cids: string[]): Promise<AcceptanceRow[]> {
@@ -156,7 +175,7 @@ export class PostgresIndex implements ReadIndex {
       `SELECT * FROM acceptance WHERE subject_cid = ANY($1) ORDER BY received_at DESC`,
       [cids],
     )
-    return rows.map(PostgresIndex.toAcceptance)
+    return rows.map(toAcceptance)
   }
 
   async disputesForSubjects(cids: string[]): Promise<DisputeRow[]> {
@@ -165,12 +184,12 @@ export class PostgresIndex implements ReadIndex {
       `SELECT * FROM dispute WHERE subject_cid = ANY($1) ORDER BY disputed_at ASC`,
       [cids],
     )
-    return rows.map(PostgresIndex.toDispute)
+    return rows.map(toDispute)
   }
 
   async releaseByUri(uri: string): Promise<ReleaseRow | null> {
     const { rows } = await this.pool.query(`SELECT * FROM release WHERE uri = $1`, [uri])
-    return rows[0] ? PostgresIndex.toRelease(rows[0]) : null
+    return rows[0] ? toRelease(rows[0]) : null
   }
 
   async releasesByUris(uris: string[]): Promise<Map<string, ReleaseRow>> {
@@ -180,7 +199,7 @@ export class PostgresIndex implements ReadIndex {
       `SELECT * FROM release WHERE uri = ANY($1)`,
       [uris],
     )
-    for (const r of rows) out.set(r.uri, PostgresIndex.toRelease(r))
+    for (const r of rows) out.set(r.uri, toRelease(r))
     return out
   }
 
