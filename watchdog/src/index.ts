@@ -1,9 +1,18 @@
 /**
  * f8130 watchdog — AppView B.
  *
- * A second reader of the same repositories, run by a different party, asking a
- * question the first one never asks: which issuers keep having their parts
- * refused, by operators who do not know each other?
+ * A second reader of the same repositories, run by a different party, asking
+ * questions the first one never asks — and asking them of the records
+ * themselves rather than of anybody's opinion.
+ *
+ * That constraint is not a limitation here, it is the whole strength. The
+ * network carries no accusations and never will: a party who cannot verify a
+ * document cannot prove that to a third party, so there is nothing negative
+ * for anyone to publish and nothing for this service to tally. What is left is
+ * arithmetic over what issuers put out under their own signatures — a serial
+ * with two origins, a history pointing at a record nobody can produce — and a
+ * station cannot decline to participate in a check it is not being asked to
+ * make.
  *
  * It has no relationship with AppView A. No shared database, no shared code, no
  * API between them, no agreement of any kind. It reaches the firehose over the
@@ -21,7 +30,7 @@ import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { html, raw } from 'hono/html'
 
-import { FLAG_THRESHOLD, WatchdogIndex, type IssuerRow } from './db.js'
+import { WatchdogIndex, type IssuerRow } from './db.js'
 
 const port = Number(process.env.PORT ?? 3000)
 const databaseUrl = process.env.DATABASE_URL
@@ -63,11 +72,8 @@ ${body}
 const short = (s: string) => (s.length > 28 ? `${s.slice(0, 20)}…${s.slice(-6)}` : s)
 const name = (i: { handle: string | null; did: string }) => i.handle ?? short(i.did)
 
-function verdict(i: IssuerRow): string {
-  if (i.distinctRejectors >= FLAG_THRESHOLD) return 'FLAGGED'
-  if (i.distinctRejectors === 1) return 'one rejection'
-  return 'no rejections observed'
-}
+const when = (d: Date | null | undefined) =>
+  d?.toISOString?.().slice(0, 10) ?? '—'
 
 async function main() {
   if (!databaseUrl) throw new Error('DATABASE_URL is required')
@@ -92,41 +98,85 @@ async function main() {
       )
     }
 
-    const issuers = await index.issuers()
-    const flagged = issuers.filter((i) => i.distinctRejectors >= FLAG_THRESHOLD)
+    const [issuers, cloned, dangling] = await Promise.all([
+      index.issuers(),
+      index.clonedSerials(),
+      index.danglingLinks(),
+    ])
 
     return c.html(
       page(
-        'Issuers',
-        html`<h1>Issuers by independent rejection</h1>
+        'Signals',
+        html`<h1>Contradictions in the public record</h1>
         <p class="note">
-          Ranked by how many <em>distinct</em> operators refused a part. One
-          operator refusing repeatedly is a commercial dispute. Several
-          unrelated operators refusing independently is a pattern — and it is a
-          pattern none of them could see alone, because today each rejection
-          dies inside the shop that made it.
+          Everything below is arithmetic over records the issuers published
+          themselves. Nobody was asked for an opinion and nobody is accused of
+          anything: these are places where the record disagrees with itself, or
+          where it is thinner than the rest.
         </p>
 
-        ${flagged.length > 0
-          ? html`<p class="flag">
-              ${flagged.length} issuer${flagged.length === 1 ? '' : 's'} flagged
-              at ${FLAG_THRESHOLD}+ independent rejectors:
-              ${flagged.map((f) => name(f)).join(', ')}.
-            </p>`
-          : html`<p class="note">No issuer has reached the flag threshold.</p>`}
+        <h2>One serial, two origins</h2>
+        <p class="note">
+          A part passes through many shops, so several releases naming one
+          serial is an ordinary service history. More than one release claiming
+          to be the part&rsquo;s <em>first</em> is not: a record with no
+          predecessor asserts the part began there, and two such claims for one
+          part number cannot both be true.
+        </p>
+        ${cloned.length === 0
+          ? html`<p class="note">None observed.</p>`
+          : html`<table>
+              <tr><th>Part</th><th>Serial</th><th>Origin claims</th><th>Releases</th><th>Stations</th></tr>
+              ${cloned.map(
+                (r) => html`<tr>
+                  <td>${r.partNumber}</td>
+                  <td>${r.serialNumber}</td>
+                  <td class="flag">${r.births}</td>
+                  <td>${r.releases}</td>
+                  <td>${r.stations}</td>
+                </tr>`,
+              )}
+            </table>`}
 
+        <h2>Histories that stop at a record nobody can produce</h2>
+        <p class="note">
+          A release naming a previous shop visit this observer has never seen.
+          It can mean the record was never published. It can equally mean this
+          index has not caught up, or was not subscribed when it went by — so
+          the claim here is about what this observer holds, not about what
+          exists.
+        </p>
+        ${dangling.length === 0
+          ? html`<p class="note">None observed.</p>`
+          : html`<table>
+              <tr><th>Part</th><th>Serial</th><th>Issuer</th><th>Points at</th><th>Signed</th></tr>
+              ${dangling.map(
+                (r) => html`<tr>
+                  <td>${r.partNumber}</td>
+                  <td>${r.serialNumber}</td>
+                  <td>${short(r.issuerDid)}</td>
+                  <td class="note">${short(r.prevUri ?? r.prevCid ?? '—')}</td>
+                  <td>${when(r.completedAt)}</td>
+                </tr>`,
+              )}
+            </table>`}
+
+        <h2>How much of each station&rsquo;s output anybody vouched for</h2>
+        <p class="note">
+          Two numbers, not a rate and not a score. A thin count most often
+          means nobody got round to publishing a check — most releases are
+          never checked in public, and a party who could not verify one has
+          nothing publishable to say either. It is a shape worth looking at,
+          and it is not evidence.
+        </p>
         <table>
-          <tr>
-            <th>Issuer</th><th>Releases</th><th>Distinct rejectors</th>
-            <th>Total rejections</th><th>Verdict</th>
-          </tr>
+          <tr><th>Station</th><th>Releases</th><th>Checked in public</th><th>First seen</th></tr>
           ${issuers.map(
             (i) => html`<tr>
               <td><a href="/issuer/${encodeURIComponent(i.did)}">${name(i)}</a></td>
               <td>${i.releases}</td>
-              <td class="${i.distinctRejectors >= FLAG_THRESHOLD ? 'flag' : ''}">${i.distinctRejectors}</td>
-              <td>${i.totalRejections}</td>
-              <td class="${i.distinctRejectors >= FLAG_THRESHOLD ? 'flag' : ''}">${verdict(i)}</td>
+              <td>${i.attested} of ${i.releases}</td>
+              <td class="note">${when(i.firstSeen)}</td>
             </tr>`,
           )}
         </table>
@@ -134,10 +184,10 @@ async function main() {
         ${peerUrl
           ? html`<p class="note">
               Every certificate counted here verifies cleanly in the other
-              AppView — <a href="${peerUrl}">${peerUrl}</a> — and it is right to.
-              Each document really was signed by the organization that claims it.
-              Both readings are correct; they are answers to different questions,
-              and no platform arbitrates between them.
+              AppView — <a href="${peerUrl}">${peerUrl}</a> — and it is right
+              to. Each document really was signed by the organization that
+              claims it. Both readings are correct; they are answers to
+              different questions, and no platform arbitrates between them.
             </p>`
           : ''}`,
       ),
@@ -149,8 +199,7 @@ async function main() {
     const issuer = await index.issuer(did)
     if (!issuer) return c.html(page('Unknown', html`<h1>No such issuer observed</h1>`), 404)
 
-    const rejections = await index.rejectionsFor(did)
-    const distinct = new Set(rejections.map((r) => r.verifierDid))
+    const releases = await index.releasesFor(did)
 
     return c.html(
       page(
@@ -159,30 +208,28 @@ async function main() {
         <p class="note">${issuer.did}</p>
         <p>
           ${issuer.releases} release${issuer.releases === 1 ? '' : 's'} observed ·
-          <span class="${distinct.size >= FLAG_THRESHOLD ? 'flag' : ''}">
-            ${distinct.size} independent rejector${distinct.size === 1 ? '' : 's'}
-          </span>
+          ${issuer.attested} checked in public
         </p>
 
-        <h2>Rejections</h2>
-        ${rejections.length === 0
+        <h2>Releases</h2>
+        ${releases.length === 0
           ? html`<p class="note">None observed.</p>`
           : html`<table>
-              <tr><th>Operator</th><th>Part</th><th>Outcome</th><th>Stated reason</th><th>Observed</th></tr>
-              ${rejections.map(
+              <tr><th>Part</th><th>Serial</th><th>Item</th><th>Signed</th><th>Checked</th></tr>
+              ${releases.map(
                 (r) => html`<tr>
-                  <td>${short(r.verifierDid)}</td>
-                  <td>${r.partNumber}/${r.serialNumber}</td>
-                  <td class="flag">${r.outcome}</td>
-                  <td>${r.note ?? '—'}</td>
-                  <td>${r.observedAt?.toISOString?.().slice(0, 19).replace('T', ' ') ?? '—'}</td>
+                  <td>${r.partNumber}</td>
+                  <td>${r.serialNumber}</td>
+                  <td>${r.description}</td>
+                  <td>${when(r.completedAt)}</td>
+                  <td>${r.attested === 0 ? html`<span class="note">—</span>` : r.attested}</td>
                 </tr>`,
               )}
             </table>
             <p class="note">
-              Each verdict above was published by the operator into their own
-              repository. The issuer cannot delete them, and no service sits in
-              between with the power to suppress them.
+              A dash means nobody has published a check on that release. It is
+              not a mark against it: the network carries successes only,
+              because a failed check cannot be proven to anybody.
             </p>`}`,
       ),
     )

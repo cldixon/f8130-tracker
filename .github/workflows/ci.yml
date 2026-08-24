@@ -8,6 +8,21 @@ on:
 jobs:
   typescript:
     runs-on: ubuntu-latest
+    services:
+      # The watchdog's signals are SQL, which a type checker cannot hold
+      # honest — a query can be well-typed and count the wrong rows. They run
+      # against a real database or they do not run.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: f8130_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports: ['5432:5432']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,6 +32,10 @@ jobs:
       - run: npm ci
       - run: npm run typecheck --workspaces --if-present
       - run: npm test
+        env:
+          # Without this the watchdog tests skip rather than fail, so CI would
+          # go green having never exercised a single query.
+          F8130_TEST_DSN: postgres://postgres:postgres@localhost:5432/f8130_test?sslmode=disable
 
   go:
     runs-on: ubuntu-latest
