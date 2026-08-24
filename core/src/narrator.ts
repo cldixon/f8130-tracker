@@ -68,6 +68,17 @@ export type NarrationBrief = {
    * neighbourhood rather than arbitrary.
    */
   familyHint: string
+  /**
+   * Makes two otherwise identical briefs distinct to the cache, and nothing
+   * else — it is never shown to the model.
+   *
+   * Set for a part being described for the first time and left unset for one
+   * coming back. Without it the memo answered every new part in a family with
+   * the prose it had already written for a different one, so two unrelated
+   * part numbers shared a description and a set of findings. That is a worse
+   * failure than a cache miss: it says the two are the same component.
+   */
+  variant?: string
 }
 
 /**
@@ -440,6 +451,11 @@ export async function narratedForm(params: {
     // remarks describe work on that part rather than on an unrelated one.
     familyHint:
       params.continues?.description ?? PARTS[mix(seed, 1) % PARTS.length]!.description,
+    // A returning part is meant to hit the cache — that is what keeps its
+    // description the same across the visits of its life. A new one must not,
+    // or it inherits the description of whatever was last written in its
+    // family and arrives as a different part number saying the same thing.
+    variant: params.continues ? undefined : String(seed),
   }
 
   const narration = await params.narrator.narrate(brief)
@@ -471,15 +487,23 @@ export async function narratedForm(params: {
 /**
  * Wraps a narrator so the same brief is only ever paid for once.
  *
- * Keyed on the brief rather than on the seed, because two seeds that produce
- * the same brief should produce the same prose — that is what makes a part's
- * description stable across the visits of its life.
+ * Keyed on the brief, which for a returning part is deliberately the brief its
+ * earlier visit carried — that is what makes a part's description stable
+ * across the visits of its life. A part being described for the first time
+ * carries a variant, so it gets prose of its own rather than inheriting the
+ * prose of the last part in its family.
  */
 export function memoize(inner: Narrator, cap = 200): Narrator {
   const cache = new Map<string, Narration | null>()
   return {
     async narrate(brief) {
-      const key = `${brief.orgKind}|${brief.status}|${brief.familyHint}|${brief.orgName}`
+      const key = [
+        brief.orgKind,
+        brief.status,
+        brief.familyHint,
+        brief.orgName,
+        brief.variant ?? '',
+      ].join('|')
       if (cache.has(key)) return cache.get(key)!
       const out = await inner.narrate(brief)
       // Failures are not cached: an outage should not poison the key for the

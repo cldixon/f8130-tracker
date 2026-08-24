@@ -34,6 +34,38 @@ const fmt = (d: Date | string | null | undefined) => {
 const short = (s: string, n = 14) =>
   s.length <= n * 2 ? s : `${s.slice(0, n)}…${s.slice(-6)}`
 
+/**
+ * How a party is named, in one place.
+ *
+ * Three steps, best first. The display name comes from a station record the
+ * organization published, which is the answer this AppView should prefer —
+ * learned from the network rather than read out of a table it ships. The
+ * handle is a domain somebody proved control of: less friendly, still a name,
+ * and far better to read than base32. The identifier is the last resort.
+ *
+ * The `h !== did` guard is the part that matters. The index stores the DID in
+ * the handle column when it could not resolve one, so an unguarded fallback
+ * trades one rendering of a DID for a longer one and looks, from outside,
+ * exactly like the bug it was meant to fix.
+ *
+ * Three copies of this logic existed and they disagreed: the parts page fell
+ * back to the handle, the feed and the thread page went straight to the DID.
+ * That is why a receiver rendered as an identifier on one screen and a name on
+ * another.
+ */
+export function nameParty(
+  did: string,
+  names: Map<string, string> | undefined,
+  handles: Map<string, string> | undefined,
+  didLength = 10,
+): string {
+  const name = names?.get(did)
+  if (name) return name
+  const h = handles?.get(did)
+  if (h && h !== did) return h
+  return short(did, didLength)
+}
+
 function stageRow(s: Stage) {
   const evidence =
     s.data && Object.keys(s.data).length > 0
@@ -225,8 +257,7 @@ export function partPage(params: {
   mode?: Mode
 }) {
   const { chain, attestations, handles } = params
-  const nameOf = (did: string) =>
-    params.names?.get(did) ?? handles.get(did) ?? short(did, 12)
+  const nameOf = (did: string) => nameParty(did, params.names, handles, 12)
 
   const head = html`<div class="topic">
     <div class="tname">${chain[0]?.description ?? 'Unknown component'}</div>
@@ -359,6 +390,8 @@ export function dashboardPage(params: {
   chrome?: Chrome
   issuers: IssuerStat[]
   handles: Map<string, string>
+  /** Display names from station records, same as everywhere else. */
+  names?: Map<string, string>
   indexAvailable: boolean
   mode?: Mode
 }) {
@@ -394,7 +427,7 @@ export function dashboardPage(params: {
             <tr><th>Issuer</th><th>Releases</th><th>Independently checked</th></tr>
             ${params.issuers.map(
               (s) => html`<tr>
-                <td>${params.handles.get(s.did) ?? short(s.did)}</td>
+                <td title="${s.did}">${nameParty(s.did, params.names, params.handles, 12)}</td>
                 <td>${s.releases}</td>
                 <td>
                   ${s.attested === 0 ? '—' : `${s.attested} of ${s.releases}`}
@@ -613,6 +646,15 @@ export function feedCard(
   handles: Map<string, string>,
   now = new Date(),
   /** Handle of the organization being viewed as, if any. */
+  /**
+   * The DID the visitor is acting as, not their handle.
+   *
+   * It used to be the handle, compared against `handles.get(did)` — and in
+   * production that map is DID-to-DID, because nothing ever wrote a real
+   * handle into the index. The comparison could not be true, so no card was
+   * ever marked as yours. A DID is the identity anyway; the handle is a name
+   * that points at it and one more hop to get wrong.
+   */
   viewer?: string,
   /** How many independent checks this observer has seen on each release. */
   replies?: Map<string, number>,
@@ -624,14 +666,14 @@ export function feedCard(
   /** The releases attestations are about, keyed by URI. */
   subjects?: Map<string, ReleaseRow>,
 ): HtmlEscapedString | Promise<HtmlEscapedString> {
-  const nameOf = (did: string) => names?.get(did) ?? short(did, 10)
+  const nameOf = (did: string) => nameParty(did, names, handles)
 
   // What the viewpoint control changes, and all it changes: which events are
   // marked as involving you. It grants no extra visibility — the withheld
   // blocks stay withheld whoever is looking, because the index never held
   // them in the first place.
   const yours = (did: string) =>
-    viewer !== undefined && handles.get(did) === viewer
+    viewer !== undefined && did === viewer
       ? html`<span class="mine">you</span>`
       : ''
 
@@ -734,7 +776,7 @@ export function threadPage(params: {
   const r = params.release
   const now = params.now ?? new Date()
   const withheld = FIELDS.filter((f) => !f.public).length
-  const nameOf = (did: string) => params.names?.get(did) ?? short(did, 10)
+  const nameOf = (did: string) => nameParty(did, params.names, params.handles)
   // Whose repository a record lives in is a claim about a DID, not about a
   // name, so this stays the identifier even where the byline is a name.
   const handleOf = (did: string) => short(did, 10)
@@ -1249,9 +1291,6 @@ export function issueBody(params: {
         <label for="out">The document — save this, it cannot be reconstructed</label>
         <textarea id="out" readonly data-uri="${params.issued.uri}"
           >${JSON.stringify(params.issued.bundle, null, 2)}</textarea>
-        <p class="sub" id="kept" hidden style="margin-top:.8rem">
-          Kept in <a href="/cabinet">this browser</a> — never on this server.
-        </p>
       </div>
     </div>`
   }

@@ -67,6 +67,12 @@ type IndexedRecord struct {
 	Station     *Station
 	// Deletions carry only a URI.
 	Deleted bool
+	// The repository author's handle, resolved from its DID.
+	//
+	// Not on the record — no f8130 record carries a handle, and one that did
+	// would be self-asserted. This comes from the DID document, which is where
+	// a handle is actually established, and it is empty when resolution failed.
+	Handle string
 }
 
 // ApplyCommit writes a verified commit's records and advances the cursor in a
@@ -140,7 +146,7 @@ func upsertRelease(
 		prevCID = &r.Prev.CID
 	}
 
-	if err := ensureActor(ctx, tx, r.IssuerDID); err != nil {
+	if err := ensureActor(ctx, tx, r.IssuerDID, rec.Handle); err != nil {
 		return err
 	}
 
@@ -188,7 +194,7 @@ func upsertAttestation(
 	}
 
 	author := authorOf(rec.URI)
-	if err := ensureActor(ctx, tx, author); err != nil {
+	if err := ensureActor(ctx, tx, author, rec.Handle); err != nil {
 		return err
 	}
 
@@ -224,14 +230,21 @@ func upsertStation(ctx context.Context, tx pgx.Tx, rec IndexedRecord) error {
 		return fmt.Errorf("station URI has no repository: %s", rec.URI)
 	}
 
+	// The handle is only the insert's placeholder and is deliberately absent
+	// from the update: a station record says nothing about handles, so this
+	// statement must not overwrite one ensureActor resolved.
+	handle := rec.Handle
+	if handle == "" {
+		handle = did
+	}
 	_, err := tx.Exec(ctx, `
 		INSERT INTO actor (did, handle, org_name, kind, cert_number)
-		VALUES ($1, $1, $2, $3, $4)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (did) DO UPDATE SET
 			org_name    = EXCLUDED.org_name,
 			kind        = EXCLUDED.kind,
 			cert_number = EXCLUDED.cert_number
-	`, did, st.DisplayName, st.Kind, nullIfEmpty(st.Certificate))
+	`, did, handle, st.DisplayName, st.Kind, nullIfEmpty(st.Certificate))
 	return err
 }
 
@@ -245,11 +258,32 @@ func authorOf(uri string) string {
 	return did
 }
 
-func ensureActor(ctx context.Context, tx pgx.Tx, did string) error {
+// ensureActor creates the row the first time a DID publishes anything, and
+// keeps its handle current.
+//
+// The handle used to be the DID: both writers here inserted VALUES ($1, $1),
+// and no statement anywhere ever put a real handle in the column. Nothing
+// failed loudly. What failed quietly was everything downstream that reads it —
+// the feed's fallback from a display name to a handle rendered a DID, and the
+// viewpoint check compared a handle against a DID and so never matched, which
+// is why no card was ever marked as yours in production. Both looked like view
+// bugs and neither was.
+//
+// An empty handle leaves whatever is already stored alone rather than
+// overwriting it with a blank: a resolution failure is this observer not
+// knowing, which is not the same as the account not having one.
+func ensureActor(ctx context.Context, tx pgx.Tx, did, handle string) error {
+	if handle == "" {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO actor (did, handle) VALUES ($1, $1)
+			ON CONFLICT (did) DO NOTHING
+		`, did)
+		return err
+	}
 	_, err := tx.Exec(ctx, `
-		INSERT INTO actor (did, handle) VALUES ($1, $1)
-		ON CONFLICT (did) DO NOTHING
-	`, did)
+		INSERT INTO actor (did, handle) VALUES ($1, $2)
+		ON CONFLICT (did) DO UPDATE SET handle = EXCLUDED.handle
+	`, did, handle)
 	return err
 }
 
