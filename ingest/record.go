@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	ReleaseNSID    = "dev.cldixon.f8130.release"
+	ReleaseNSID     = "dev.cldixon.f8130.release"
 	AttestationNSID = "dev.cldixon.f8130.attestation"
-	StationNSID    = "dev.cldixon.f8130.station"
+	StationNSID     = "dev.cldixon.f8130.station"
 )
 
 // StrongRef is an atproto strong reference: a location plus the content hash
