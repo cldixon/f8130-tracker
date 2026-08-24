@@ -8,10 +8,9 @@ import (
 )
 
 const (
-	ReleaseNSID    = "dev.cldixon.f8130.release"
-	AcceptanceNSID = "dev.cldixon.f8130.acceptance"
-	DisputeNSID    = "dev.cldixon.f8130.dispute"
-	StationNSID    = "dev.cldixon.f8130.station"
+	ReleaseNSID     = "dev.cldixon.f8130.release"
+	AttestationNSID = "dev.cldixon.f8130.attestation"
+	StationNSID     = "dev.cldixon.f8130.station"
 )
 
 // StrongRef is an atproto strong reference: a location plus the content hash
@@ -44,29 +43,23 @@ type Release struct {
 	Raw                 map[string]any
 }
 
-// Acceptance is a decoded acceptance record.
-type Acceptance struct {
-	Subject      StrongRef
-	IssuerDID    string
-	VerifierDID  string
-	PartNumber   string
-	SerialNumber string
-	Outcome      string
-	Note         string
-	ReceivedAt   time.Time
-	Raw          map[string]any
-}
-
-// Dispute is a decoded dispute record: an issuer answering a verdict.
+// Attestation is a decoded attestation: somebody checked a document against a
+// release and it held.
 //
-// There is no author field to check, unlike a release or an acceptance. A
-// dispute says only which verdict it answers and what the answer is, and the
-// author is the repository it was found in — which is the only claim about
-// authorship worth anything anyway.
-type Dispute struct {
+// There is no author field to check, and no issuer field either. The author is
+// the repository it was found in, which is the only authorship claim worth
+// anything; the issuer is in the subject URI, which the strong reference
+// already pins. Restating either on the record would only create a second
+// place for them to disagree with the first.
+//
+// There is no failed counterpart. A party who cannot verify a document cannot
+// prove that to anyone — a document that fails to recompute shows only that
+// some document fails, and anybody can produce one — so the network carries
+// successes and nothing else.
+type Attestation struct {
 	Subject    StrongRef
-	Response   string
-	DisputedAt time.Time
+	VerifiedAt time.Time
+	Synthetic  string
 	Raw        map[string]any
 }
 
@@ -109,10 +102,8 @@ func DecodeRecord(collection string, raw []byte) (any, error) {
 	switch collection {
 	case ReleaseNSID:
 		return decodeRelease(obj)
-	case AcceptanceNSID:
-		return decodeAcceptance(obj)
-	case DisputeNSID:
-		return decodeDispute(obj)
+	case AttestationNSID:
+		return decodeAttestation(obj)
 	case StationNSID:
 		return decodeStation(obj)
 	default:
@@ -169,8 +160,8 @@ func decodeRelease(obj map[string]any) (*Release, error) {
 	return r, nil
 }
 
-func decodeAcceptance(obj map[string]any) (*Acceptance, error) {
-	a := &Acceptance{Raw: obj}
+func decodeAttestation(obj map[string]any) (*Attestation, error) {
+	a := &Attestation{Raw: obj}
 	var err error
 
 	subject, err := optionalStrongRef(obj, "subject")
@@ -182,31 +173,13 @@ func decodeAcceptance(obj map[string]any) (*Acceptance, error) {
 	}
 	a.Subject = *subject
 
-	if a.IssuerDID, err = requireString(obj, "issuerDid"); err != nil {
+	if a.VerifiedAt, err = requireTime(obj, "verifiedAt"); err != nil {
 		return nil, err
 	}
-	if a.VerifierDID, err = requireString(obj, "verifierDid"); err != nil {
+	// Required on decode, like every other artifact this project writes. A
+	// record without one is not ours, whatever collection it arrived in.
+	if a.Synthetic, err = requireString(obj, "synthetic"); err != nil {
 		return nil, err
-	}
-	if a.PartNumber, err = requireString(obj, "partNumber"); err != nil {
-		return nil, err
-	}
-	if a.SerialNumber, err = requireString(obj, "serialNumber"); err != nil {
-		return nil, err
-	}
-	if a.Outcome, err = requireString(obj, "outcome"); err != nil {
-		return nil, err
-	}
-	switch a.Outcome {
-	case "accepted", "rejected", "discrepancy":
-	default:
-		return nil, fmt.Errorf("unknown outcome: %q", a.Outcome)
-	}
-	if a.ReceivedAt, err = requireTime(obj, "receivedAt"); err != nil {
-		return nil, err
-	}
-	if note, ok := obj["note"].(string); ok {
-		a.Note = note
 	}
 
 	return a, nil
@@ -290,29 +263,6 @@ func cidToString(v any) (string, error) {
 	default:
 		return "", fmt.Errorf("unrecognized CID representation %T", v)
 	}
-}
-
-func decodeDispute(obj map[string]any) (*Dispute, error) {
-	d := &Dispute{Raw: obj}
-	var err error
-
-	subject, err := optionalStrongRef(obj, "subject")
-	if err != nil {
-		return nil, err
-	}
-	if subject == nil {
-		return nil, fmt.Errorf("missing field: subject")
-	}
-	d.Subject = *subject
-
-	if d.Response, err = requireString(obj, "response"); err != nil {
-		return nil, err
-	}
-	if d.DisputedAt, err = requireTime(obj, "disputedAt"); err != nil {
-		return nil, err
-	}
-
-	return d, nil
 }
 
 func decodeStation(obj map[string]any) (*Station, error) {

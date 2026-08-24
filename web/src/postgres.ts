@@ -3,8 +3,7 @@ import { Pool } from 'pg'
 import type {
   ActorRow,
   FeedEvent,
-  AcceptanceRow,
-  DisputeRow,
+  AttestationRow,
   IssuerStat,
   ReadIndex,
   ReleaseRow,
@@ -49,32 +48,19 @@ export function toRelease(r: Record<string, any>): ReleaseRow {
   }
 }
 
-export function toAcceptance(r: Record<string, any>): AcceptanceRow {
+export function toAttestation(r: Record<string, any>): AttestationRow {
   return {
     cid: r.cid,
     uri: r.uri,
     subjectUri: r.subject_uri,
     subjectCid: r.subject_cid,
-    issuerDid: r.issuer_did,
     verifierDid: r.verifier_did,
-    partNumber: r.part_number,
-    serialNumber: r.serial_number,
-    outcome: r.outcome,
-    note: r.note,
-    receivedAt: at(r.received_at),
-    observedAt: at(r.observed_at),
-  }
-}
-
-export function toDispute(r: Record<string, any>): DisputeRow {
-  return {
-    cid: r.cid,
-    uri: r.uri,
-    subjectUri: r.subject_uri,
-    subjectCid: r.subject_cid,
-    authorDid: r.author_did,
-    response: r.response,
-    disputedAt: at(r.disputed_at),
+    // at://<did>/<collection>/<rkey>. Derived rather than read off the record,
+    // because the record does not carry it: who issued the release is a fact
+    // about the release's own repository, and restating it on the attestation
+    // would only create a second place for it to disagree.
+    issuerDid: String(r.subject_uri ?? '').split('/')[2] ?? '',
+    verifiedAt: at(r.verified_at),
     observedAt: at(r.observed_at),
   }
 }
@@ -111,7 +97,7 @@ export class PostgresIndex implements ReadIndex {
       `SELECT kind, observed_at, payload FROM (
          SELECT 'release'    AS kind, observed_at, to_jsonb(r) AS payload FROM release r
          UNION ALL
-         SELECT 'acceptance' AS kind, observed_at, to_jsonb(a) AS payload FROM acceptance a
+         SELECT 'attestation' AS kind, observed_at, to_jsonb(a) AS payload FROM attestation a
        ) events
        WHERE $2::timestamptz IS NULL OR observed_at > $2
        ORDER BY observed_at DESC, kind
@@ -126,9 +112,9 @@ export class PostgresIndex implements ReadIndex {
             release: toRelease(r.payload),
           }
         : {
-            kind: 'verdict' as const,
+            kind: 'attestation' as const,
             at: at(r.observed_at),
-            verdict: toAcceptance(r.payload),
+            attestation: toAttestation(r.payload),
           },
     )
   }
@@ -169,22 +155,13 @@ export class PostgresIndex implements ReadIndex {
     return rows.map(toRelease)
   }
 
-  async acceptancesForSubjects(cids: string[]): Promise<AcceptanceRow[]> {
+  async attestationsForSubjects(cids: string[]): Promise<AttestationRow[]> {
     if (cids.length === 0) return []
     const { rows } = await this.pool.query(
-      `SELECT * FROM acceptance WHERE subject_cid = ANY($1) ORDER BY received_at DESC`,
+      `SELECT * FROM attestation WHERE subject_cid = ANY($1) ORDER BY verified_at DESC`,
       [cids],
     )
-    return rows.map(toAcceptance)
-  }
-
-  async disputesForSubjects(cids: string[]): Promise<DisputeRow[]> {
-    if (cids.length === 0) return []
-    const { rows } = await this.pool.query(
-      `SELECT * FROM dispute WHERE subject_cid = ANY($1) ORDER BY disputed_at ASC`,
-      [cids],
-    )
-    return rows.map(toDispute)
+    return rows.map(toAttestation)
   }
 
   async releaseByUri(uri: string): Promise<ReleaseRow | null> {
@@ -204,26 +181,32 @@ export class PostgresIndex implements ReadIndex {
   }
 
   async issuerStats(): Promise<IssuerStat[]> {
+    // Attestations join back to the release rather than carrying an issuer of
+    // their own, so the issuer counted here is always the one on the record in
+    // the issuer's own repository — never a claim the attesting party made
+    // about who they were dealing with.
     const { rows } = await this.pool.query(
       `SELECT a.did,
-              COALESCE(r.releases, 0)          AS releases,
-              COALESCE(x.distinct_rejectors, 0) AS distinct_rejectors
+              COALESCE(r.releases, 0) AS releases,
+              COALESCE(t.attested, 0) AS attested
        FROM actor a
        LEFT JOIN (
          SELECT issuer_did, COUNT(*) AS releases
          FROM release GROUP BY issuer_did
        ) r ON r.issuer_did = a.did
        LEFT JOIN (
-         SELECT issuer_did, COUNT(DISTINCT verifier_did) AS distinct_rejectors
-         FROM acceptance WHERE outcome = 'rejected' GROUP BY issuer_did
-       ) x ON x.issuer_did = a.did
-       WHERE COALESCE(r.releases, 0) > 0 OR COALESCE(x.distinct_rejectors, 0) > 0
-       ORDER BY distinct_rejectors DESC, releases DESC`,
+         SELECT rel.issuer_did, COUNT(DISTINCT att.cid) AS attested
+         FROM attestation att
+         JOIN release rel ON rel.cid = att.subject_cid
+         GROUP BY rel.issuer_did
+       ) t ON t.issuer_did = a.did
+       WHERE COALESCE(r.releases, 0) > 0
+       ORDER BY releases DESC`,
     )
     return rows.map((r) => ({
       did: r.did,
       releases: Number(r.releases),
-      distinctRejectors: Number(r.distinct_rejectors),
+      attested: Number(r.attested),
     }))
   }
 

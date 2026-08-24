@@ -29,14 +29,12 @@ import {
 } from '@f8130/core'
 
 import type {
-  AcceptanceRow,
-  DisputeRow,
+  AttestationRow,
   FeedEvent,
   ReadIndex,
   ReleaseRow,
 } from './index-port.js'
 import {
-  acceptPage,
   cabinetPage,
   dashboardPage,
   disclosePage,
@@ -161,8 +159,8 @@ export function createApp(deps: AppDeps) {
     for (const e of events) {
       if (e.kind === 'release') dids.add(e.release.issuerDid)
       else {
-        dids.add(e.verdict.verifierDid)
-        dids.add(e.verdict.issuerDid)
+        dids.add(e.attestation.verifierDid)
+        dids.add(e.attestation.issuerDid)
       }
     }
     return dids
@@ -183,28 +181,28 @@ export function createApp(deps: AppDeps) {
   }
 
   /**
-   * The releases the verdicts on screen are about.
+   * The releases the attestations on screen are about.
    *
-   * A verdict card quotes its subject rather than restating it, which needs
-   * the release itself. One lookup for the whole page rather than one per
-   * card.
+   * An attestation card quotes its subject rather than restating it, which
+   * needs the release itself. One lookup for the whole page rather than one
+   * per card.
    */
   async function subjectsFor(events: FeedEvent[]): Promise<Map<string, ReleaseRow>> {
     if (!deps.index) return new Map()
     const uris = events
-      .filter((e) => e.kind === 'verdict')
-      .map((e) => (e as { verdict: AcceptanceRow }).verdict.subjectUri)
+      .filter((e) => e.kind === 'attestation')
+      .map((e) => (e as { attestation: AttestationRow }).attestation.subjectUri)
     if (uris.length === 0) return new Map()
     return deps.index.releasesByUris([...new Set(uris)])
   }
 
-  /** How many verdicts each release on screen has drawn. */
+  /** How many independent checks each release on screen has drawn. */
   async function replyCounts(events: FeedEvent[]): Promise<Map<string, number>> {
     const out = new Map<string, number>()
     if (!deps.index) return out
     const cids = events.filter((e) => e.kind === 'release').map((e) => e.release.cid)
     if (cids.length === 0) return out
-    for (const a of await deps.index.acceptancesForSubjects(cids)) {
+    for (const a of await deps.index.attestationsForSubjects(cids)) {
       out.set(a.subjectCid, (out.get(a.subjectCid) ?? 0) + 1)
     }
     return out
@@ -247,19 +245,10 @@ export function createApp(deps: AppDeps) {
       )
     }
 
-    const verdicts = await deps.index.acceptancesForSubjects([release.cid])
-    const answers = await deps.index.disputesForSubjects(verdicts.map((v) => v.cid))
-    const replies = new Map<string, DisputeRow[]>()
-    for (const d of answers) {
-      replies.set(d.subjectCid, [...(replies.get(d.subjectCid) ?? []), d])
-    }
+    const attestations = await deps.index.attestationsForSubjects([release.cid])
 
     const dids = new Set<string>([release.issuerDid])
-    for (const v of verdicts) {
-      dids.add(v.verifierDid)
-      dids.add(v.issuerDid)
-    }
-    for (const d of answers) dids.add(d.authorDid)
+    for (const a of attestations) dids.add(a.verifierDid)
     const handles = new Map<string, string>()
     await Promise.all(
       [...dids].map(async (did) => {
@@ -274,8 +263,7 @@ export function createApp(deps: AppDeps) {
         chrome: chrome(c, 'home'),
         release,
         // Oldest first: a thread reads downward.
-        verdicts: [...verdicts].reverse(),
-        replies,
+        attestations: [...attestations].reverse(),
         handles,
         names: await namesFor(dids),
       }),
@@ -417,7 +405,7 @@ export function createApp(deps: AppDeps) {
           partNumber,
           serialNumber,
           chain: [],
-          acceptances: new Map(),
+          attestations: new Map(),
           handles: new Map(),
           reachedBirth: false,
           mode,
@@ -432,19 +420,19 @@ export function createApp(deps: AppDeps) {
     const oldest = chain[chain.length - 1]
     const reachedBirth = Boolean(oldest && !oldest.prevCid)
 
-    const verdicts = await deps.index.acceptancesForSubjects(
+    const checks = await deps.index.attestationsForSubjects(
       chain.map((r) => r.cid),
     )
-    const acceptances = new Map<string, AcceptanceRow[]>()
-    for (const v of verdicts) {
-      const list = acceptances.get(v.subjectCid) ?? []
-      list.push(v)
-      acceptances.set(v.subjectCid, list)
+    const attestations = new Map<string, AttestationRow[]>()
+    for (const a of checks) {
+      const list = attestations.get(a.subjectCid) ?? []
+      list.push(a)
+      attestations.set(a.subjectCid, list)
     }
 
     const handles = await resolveHandles(deps.index, [
       ...chain.map((r) => r.issuerDid),
-      ...verdicts.map((v) => v.verifierDid),
+      ...checks.map((a) => a.verifierDid),
     ])
 
     // The same history, walked live over the issuers' own servers rather than
@@ -473,12 +461,11 @@ export function createApp(deps: AppDeps) {
         partNumber,
         serialNumber,
         chain,
-        acceptances,
+        attestations,
         handles,
         names: await namesFor([
           ...chain.map((r) => r.issuerDid),
-          ...verdicts.map((v) => v.verifierDid),
-          ...verdicts.map((v) => v.issuerDid),
+          ...checks.map((a) => a.verifierDid),
         ]),
         reachedBirth,
         trace,
@@ -517,7 +504,26 @@ export function createApp(deps: AppDeps) {
         resolver: deps.resolver,
         repo: deps.repo,
       })
-      return c.html(verifyPage(mode, report, undefined, chrome(c, 'docs')))
+      // Only a successful check by somebody acting as an organization can be
+      // vouched for. Everything else renders the report and stops.
+      const acting = deps.writer ? currentActor(c) : undefined
+      const actor = acting
+        ? deps.writer!.actors().find((a) => a.handle === acting)
+        : undefined
+      const vouch =
+        report.verified && actor
+          ? {
+              subjectUri: bundle.uri,
+              // The chain is newest-first, so its head is the record this
+              // document is about. A strong reference needs the CID, and this
+              // is where the pipeline already has it.
+              subjectCid: report.chain[0]?.cid ?? '',
+              actor: actor.displayName,
+            }
+          : null
+      return c.html(
+        verifyPage(mode, report, undefined, chrome(c, 'docs'), vouch?.subjectCid ? vouch : null),
+      )
     } catch (err) {
       return c.html(verifyPage(mode, undefined, describe(err), chrome(c, 'docs')), 400)
     }
@@ -921,6 +927,43 @@ export function createApp(deps: AppDeps) {
       )
     })
 
+    /**
+     * Publishing a successful check.
+     *
+     * Only successes reach here, and the lexicon has no failing counterpart.
+     * A party who cannot verify a document cannot prove that to anybody, so
+     * there is nothing publishable to write and no route that would write it.
+     *
+     * The record is rebuilt from the posted references and nothing else: the
+     * form carries the release URI and CID, and who is vouching comes from the
+     * session rather than the request, so a caller cannot attest as somebody
+     * else.
+     */
+    app.post('/attest', async (c) => {
+      const form = await c.req.parseBody()
+      const handle = currentActor(c)
+      if (!handle) {
+        return c.html(errorPage(403, 'Sign in as an organization to publish.'), 403)
+      }
+      const subjectUri = typeof form.subjectUri === 'string' ? form.subjectUri : ''
+      const subjectCid = typeof form.subjectCid === 'string' ? form.subjectCid : ''
+      if (!subjectUri || !subjectCid) {
+        return c.html(errorPage(400, 'An attestation needs the release it covers.'), 400)
+      }
+
+      try {
+        const written = await writer.createAttestation({
+          handle,
+          subject: { uri: subjectUri, cid: subjectCid },
+        })
+        return c.html(
+          verifyPage(mode, undefined, undefined, chrome(c, 'docs'), null, written.uri),
+        )
+      } catch (err) {
+        return c.html(errorPage(400, describe(err)), 400)
+      }
+    })
+
     app.get('/issue', (c) => {
       // The example button submits the handle it can see, and the handle it
       // can see wins. Reading only the cookie is what let a visitor pick an
@@ -1039,156 +1082,6 @@ export function createApp(deps: AppDeps) {
       )
     })
 
-    app.get('/accept', (c) =>
-      c.html(
-        acceptPage({
-          mode,
-          chrome: chrome(c),
-          actors: writer.actors(),
-          current: currentActor(c),
-        }),
-      ),
-    )
-
-    app.post('/accept', async (c) => {
-      const form = await c.req.parseBody()
-      const handle = currentActor(c)
-      if (!handle) {
-        return c.html(
-          acceptPage({
-            mode,
-            chrome: chrome(c),
-            actors: writer.actors(),
-            error: 'Choose an organization in the header before publishing.',
-          }),
-          400,
-        )
-      }
-      const get = (k: string) => (typeof form[k] === 'string' ? (form[k] as string) : '')
-
-      const uri = get('subjectUri')
-      const cid = get('subjectCid')
-      const outcome = get('outcome') as 'accepted' | 'rejected' | 'discrepancy'
-
-      const fail = (msg: string) =>
-        c.html(
-          acceptPage({
-            mode,
-            chrome: chrome(c),
-            actors: writer.actors(),
-            current: handle,
-            error: msg,
-          }),
-          400,
-        )
-
-      if (!uri || !cid) return fail('A release URI and CID are both required.')
-
-      // Look up what is actually being judged rather than trusting the form:
-      // a verdict that named the wrong issuer would be evidence against an
-      // innocent party.
-      const fetched = await fetchVerifiedRelease({
-        uri,
-        resolver: deps.resolver,
-        repo: deps.repo,
-      })
-      if (!fetched.ok) return fail(fetched.reason)
-
-      try {
-        const written = await writer.createAcceptance({
-          handle,
-          subject: { uri, cid },
-          issuerDid: fetched.did,
-          partNumber: String(fetched.record.partNumber ?? ''),
-          serialNumber: String(fetched.record.serialNumber ?? ''),
-          outcome,
-          note: get('note') || undefined,
-        })
-
-        // The part has been dealt with, so it comes off the dock. Whether it
-        // was accepted or rejected is beside the point — what settles a goods-in
-        // line is that somebody answered it.
-        deps.dock?.settle(uri)
-
-        // Answering from the inbox goes back to the inbox: the useful next
-        // thing is the next crate, not a receipt for this one.
-        if (get('from') === 'inbox') return c.redirect('/inbox', 303)
-
-        return c.html(
-          acceptPage({
-            mode,
-            chrome: chrome(c),
-            actors: writer.actors(),
-            current: handle,
-            written: { uri: written.uri, kind: 'acceptance' },
-          }),
-        )
-      } catch (err) {
-        return fail(describe(err))
-      }
-    })
-
-    app.post('/dispute', async (c) => {
-      const form = await c.req.parseBody()
-      const handle = currentActor(c)
-      if (!handle) {
-        return c.html(
-          acceptPage({
-            mode,
-            chrome: chrome(c),
-            actors: writer.actors(),
-            error: 'Choose an organization in the header before publishing.',
-          }),
-          400,
-        )
-      }
-      const get = (k: string) => (typeof form[k] === 'string' ? (form[k] as string) : '')
-
-      const uri = get('subjectUri')
-      const cid = get('subjectCid')
-      const response = get('response')
-
-      if (!uri || !cid || !response) {
-        return c.html(
-          acceptPage({
-            mode,
-            chrome: chrome(c),
-            actors: writer.actors(),
-            current: handle,
-            error: 'An acceptance URI, CID and response are all required.',
-          }),
-          400,
-        )
-      }
-
-      try {
-        const written = await writer.createDispute({
-          handle,
-          subject: { uri, cid },
-          response,
-        })
-        return c.html(
-          acceptPage({
-            mode,
-            chrome: chrome(c),
-            actors: writer.actors(),
-            current: handle,
-            written: { uri: written.uri, kind: 'dispute' },
-          }),
-        )
-      } catch (err) {
-        return c.html(
-          acceptPage({
-            mode,
-            chrome: chrome(c),
-            actors: writer.actors(),
-            current: handle,
-            error: describe(err),
-          }),
-          400,
-        )
-      }
-    })
   }
 
   app.notFound((c) => c.html(errorPage(404, 'No such page.'), 404))

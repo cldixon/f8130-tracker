@@ -25,10 +25,8 @@
  */
 
 import {
-  DISCREPANCY_ANGLES,
   narratedForm,
   orgs,
-  REJECTION_ANGLES,
   type Narrator,
   type Org,
   type RawForm,
@@ -37,56 +35,17 @@ import {
 import type { RecordWriter, StrongRef } from './writer.js'
 
 /** A release waiting for the operator who received it to say something. */
+/** A part handed to an operator, waiting for somebody to check its paperwork. */
 type Pending = {
   subject: StrongRef
-  issuerDid: string
   issuerHandle: string
   partNumber: string
   serialNumber: string
-  /** Block 7, which is public — see VerdictBrief on why Block 12 is not. */
   description: string
-  /**
-   * How this will go, decided when the part ships rather than when it is
-   * looked at.
-   *
-   * Nothing about the outcome depends on the moment of inspection — a part
-   * either arrives damaged or it does not — so rolling it early costs nothing
-   * and is arguably the more honest model. What it buys is a whole feed
-   * interval of warning, which is what the note below needs.
-   */
-  outcome: 'accepted' | 'rejected' | 'discrepancy'
-  /**
-   * The stated reason, started at ship time and awaited at inspection time.
-   *
-   * This is the fix for notes falling back to the canned list. The narration
-   * is not slow — p50 four seconds — but it used to run on the publishing
-   * path, where a bad minute on the API meant a canned string. Started here,
-   * it has twelve to forty-five seconds to arrive and by then has almost
-   * always resolved, so awaiting it costs nothing and a slow call is a slower
-   * reply rather than a worse one.
-   */
-  note: Promise<string | null> | null
+  /** The date the certificate claims it was signed. Receipt is dated from it. */
+  completedAt: Date
   /** The operator the part went to. Not a field on the form — see below. */
   operatorHandle: string
-  /**
-   * The date the certificate claims it was signed.
-   *
-   * Carried because the receiving inspection is dated from it and not from
-   * the moment the generator gets round to publishing the verdict. Receipt is
-   * release plus shipping time, which is the gap that was missing.
-   */
-  completedAt: Date
-  at: number
-}
-
-/** A verdict that went against an issuer, who may yet answer it. */
-type Answerable = {
-  subject: StrongRef
-  issuerHandle: string
-  description: string
-  note: string
-  /** Started the moment the verdict is published, for the same reason. */
-  reply: Promise<string | null> | null
   at: number
 }
 
@@ -166,22 +125,31 @@ const DEFAULT_MIN_GAP = 12_000
 const DEFAULT_MAX_GAP = 45_000
 const DEFAULT_FIRST_GAP = 4_000
 
-/** How often a verdict goes against the issuer. Most paperwork is fine. */
-const REJECTION_RATE = 0.18
+/**
+ * How much of a station's output somebody independently checks and says so.
+ *
+ * Not every part that arrives gets its paperwork verified against the network,
+ * and not every operator that verifies bothers to publish. Sixty per cent is
+ * high enough that attestation reads as ordinary practice and low enough that
+ * a gap on any one release means nothing — which is the correct strength for
+ * it, because absence is the only negative signal this network can carry and
+ * it must not be mistaken for an accusation.
+ */
+const COVERAGE = 0.6
 
 /**
- * Where the tick splits between closing a part out and releasing a new one.
+ * Stations whose work almost nobody vouches for.
  *
- * Under a half, so releases lead. Every release eventually draws exactly one
- * verdict, so an even split plus a standing backlog produced a feed that read
- * as almost entirely acceptances — the releases were there, but each one was
- * immediately buried by the verdict it caused. Leading with releases lets the
- * queue carry stock, which is what a supply chain looks like.
+ * Planted on purpose, so the watchdog has something real to find rather than a
+ * uniform population where every station looks like every other. Thin coverage
+ * is not proof of anything and the UI must not present it as such; it is the
+ * shape that makes a reader go and look.
  */
-const VERDICT_ROLL = 0.42
+const THIN_COVERAGE = 0.15
+const THIN_STATIONS = new Set(['saltmarsh-technics', 'wexford-components'])
 
-/** Below this a rejection gets its answer instead. */
-const DISPUTE_ROLL = 0.12
+/** Where the tick splits between checking an old part and releasing a new one. */
+const ATTEST_ROLL = 0.42
 
 /**
  * How often a release continues a part already in service rather than
@@ -239,25 +207,6 @@ const BACKLOG_SETTLED = 0.35
 const TRANSIT_MIN_DAYS = 2
 const TRANSIT_MAX_DAYS = 9
 
-const REJECTION_NOTES = [
-  'Back-to-birth documentation could not be produced on request.',
-  'Serial number on the part does not match the accompanying paperwork.',
-  'Supplied release references a shop visit we have no record of.',
-  'Certificate number on the release does not match the issuing station.',
-]
-
-const DISCREPANCY_NOTES = [
-  'Paperwork verifies; part shows damage not noted on the release.',
-  'Part serviceable and paperwork verifies, but the chain stops short of birth.',
-  'Received quantity does not match the quantity on the release.',
-]
-
-const DISPUTE_REPLIES = [
-  'Back-to-birth records were supplied to the purchaser at time of sale.',
-  'The referenced shop visit is published; we can provide the bundle on request.',
-  'We stand by this release and have asked the operator to re-inspect.',
-]
-
 /**
  * Drives synthetic activity for as long as anyone is watching.
  *
@@ -269,7 +218,6 @@ export class ActivityGenerator {
   private viewers = 0
   private timer: ReturnType<typeof setTimeout> | null = null
   private pending: Pending[] = []
-  private answerable: Answerable[] = []
   private inService: InService[] = []
   private seq = 0
   private seeded = false
@@ -285,7 +233,7 @@ export class ActivityGenerator {
   private seeding = false
 
   /** Counts, for the health endpoint and for tests. */
-  readonly stats = { released: 0, verdicts: 0, disputes: 0, errors: 0 }
+  readonly stats = { released: 0, attestations: 0, errors: 0 }
 
   constructor(private readonly opts: ActivityOptions) {}
 
@@ -401,35 +349,13 @@ export class ActivityGenerator {
    */
   async tick(): Promise<void> {
     try {
-      const r = this.rand()
-
-      // Answer a rejection now and then. The issuer cannot delete the verdict;
-      // replying is the whole of what they can do.
-      if (this.answerable.length > 0 && r < DISPUTE_ROLL) {
-        const target = this.answerable.shift()!
-        if (this.known(target.issuerHandle)) {
-          // The reply answers the objection that was actually raised, which
-          // is the whole interest of a right of reply. The canned list cannot
-          // do that — it answers whatever it always answers.
-          const response = (await target.reply) ?? this.pickOne(DISPUTE_REPLIES)!
-
-          await this.opts.writer.createDispute({
-            handle: target.issuerHandle,
-            subject: target.subject,
-            response,
-          })
-          this.stats.disputes++
-          return
-        }
-      }
-
-      // Close out a release that is waiting on its operator. The oldest one
-      // first, which with a backlog in place means a part that has genuinely
-      // been in transit for days rather than the one released a tick ago.
-      if (this.pending.length > 0 && r < VERDICT_ROLL) {
+      // Check an old part, or release a new one. The oldest waiting part
+      // first, which with a backlog in place means one that has genuinely been
+      // in transit for days rather than the one released a tick ago.
+      if (this.pending.length > 0 && this.rand() < ATTEST_ROLL) {
         const item = this.pending.shift()!
         if (this.known(item.operatorHandle)) {
-          await this.settle(item)
+          await this.attest(item)
           return
         }
       }
@@ -442,68 +368,37 @@ export class ActivityGenerator {
   }
 
   /**
-   * The receiving inspection: an operator publishes what it found.
+   * An operator says in public that a document checked out.
    *
    * Dated from the release rather than from the wall clock. The certificate
-   * was signed when the part left the shop; the inspection happens when it
-   * arrives, which is a shipping time later. Publishing the record now and
-   * dating it now was what made a release and its verdict read as though they
-   * had happened in the same second.
+   * was signed when the part left the shop; it is checked when the part
+   * arrives, a shipping time later. Publishing now and dating it now was what
+   * made a release and the statement about it read as the same moment.
+   *
+   * There is no failing counterpart to this method, here or anywhere. A party
+   * who cannot verify a document cannot prove that to anybody, so there is
+   * nothing to publish and nothing for this generator to simulate.
    */
-  private async settle(item: Pending, receivedAtOverride?: Date): Promise<void> {
+  private async attest(item: Pending, verifiedAtOverride?: Date): Promise<void> {
     // The tick path has already taken it off the front; the backlog path
     // reaches items by name and has not.
     this.pending = this.pending.filter((p) => p !== item)
-    const outcome = item.outcome
-    // Started a whole feed interval ago, so this has almost always resolved
-    // and awaiting it costs nothing. The canned list is still behind it for
-    // the case where it has not.
-    const note =
-      outcome === 'accepted'
-        ? undefined
-        : ((await item.note) ??
-          this.pickOne(outcome === 'rejected' ? REJECTION_NOTES : DISCREPANCY_NOTES))
 
-    // Never later than now: an inspection cannot be in the future, however
-    // long the crate took.
-    const receivedAt =
-      receivedAtOverride ??
+    // Never later than now: a check cannot happen in the future, however long
+    // the crate took.
+    const verifiedAt =
+      verifiedAtOverride ??
       new Date(
         Math.min(this.now(), item.completedAt.getTime() + this.transitDays() * 86_400_000),
       )
 
-    const written = await this.opts.writer.createAcceptance({
+    await this.opts.writer.createAttestation({
       handle: item.operatorHandle,
       subject: item.subject,
-      issuerDid: item.issuerDid,
-      partNumber: item.partNumber,
-      serialNumber: item.serialNumber,
-      outcome,
-      receivedAt,
-      ...(note ? { note } : {}),
+      verifiedAt,
     })
-    this.stats.verdicts++
+    this.stats.attestations++
     this.opts.dock?.settle(item.subject.uri)
-
-    if (outcome !== 'accepted') {
-      this.answerable.push({
-        subject: { uri: written.uri, cid: written.cid },
-        issuerHandle: item.issuerHandle,
-        description: item.description,
-        note: note ?? '',
-        // Same trick: the reply starts now and is read a tick or more later,
-        // so the issuer's answer is off the publishing path too.
-        reply: note
-          ? this.start(() =>
-              this.opts.narrator?.narrateDispute?.({
-                verdictNote: note,
-                description: item.description,
-              }),
-            )
-          : null,
-        at: this.now(),
-      })
-    }
   }
 
   /**
@@ -562,21 +457,21 @@ export class ActivityGenerator {
     // kinds together and running the plan oldest-first makes write order and
     // claimed order the same order, which is the only reason the column reads
     // as a timeline at all.
-    type Step = { agedDays: number; kind: 'release' | 'receipt'; n: number }
+    type Step = { agedDays: number; kind: 'release' | 'attestation'; n: number }
     const steps: Step[] = []
     for (let n = 0; n < size; n++) {
       const agedDays =
         BACKLOG_MIN_DAYS + Math.round(((span - BACKLOG_MIN_DAYS) * (size - n)) / size)
       steps.push({ agedDays, kind: 'release', n })
 
-      // Some of this stock has already been through a receiving dock. Without
-      // it the feed opens as an unbroken wall of releases, which is the
-      // complaint the backlog exists to answer, pointed the other way.
+      // Some of this stock has already been checked by whoever received it.
+      // Without it the feed opens as an unbroken wall of releases, which is
+      // the complaint the backlog exists to answer, pointed the other way.
       if (this.rand() >= BACKLOG_SETTLED) continue
       const arrived = agedDays - this.transitDays()
       // A shipment that would land today or later belongs to the live feed,
       // not to history.
-      if (arrived >= 1) steps.push({ agedDays: arrived, kind: 'receipt', n })
+      if (arrived >= 1) steps.push({ agedDays: arrived, kind: 'attestation', n })
     }
     steps.sort((a, b) => b.agedDays - a.agedDays)
 
@@ -591,7 +486,7 @@ export class ActivityGenerator {
         }
         const item = issued.get(step.n)
         if (!item || !this.known(item.operatorHandle)) continue
-        await this.settle(item, new Date(this.now() - step.agedDays * 86_400_000))
+        await this.attest(item, new Date(this.now() - step.agedDays * 86_400_000))
       } catch (err) {
         this.stats.errors++
         this.opts.onError?.(err)
@@ -688,40 +583,27 @@ export class ActivityGenerator {
       at: new Date(this.now()),
     })
 
-    const roll = this.rand()
-    const outcome =
-      roll < REJECTION_RATE
-        ? ('rejected' as const)
-        : roll < REJECTION_RATE + 0.08
-          ? ('discrepancy' as const)
-          : ('accepted' as const)
+    // Decide now whether anybody will ever vouch for this one, rather than
+    // rolling at inspection time. Most releases are checked by somebody; a
+    // proportion simply never are, because the operator did not get round to
+    // it or did not publish. A release nobody will attest is never queued, so
+    // it just sits in the feed unaccompanied — which is exactly what an
+    // unattested release looks like from outside.
+    const coverage = THIN_STATIONS.has(issuer.handle.split('.')[0] ?? '')
+      ? THIN_COVERAGE
+      : COVERAGE
+    if (this.rand() >= coverage) return null
 
     const queued: Pending = {
-      outcome,
-      note:
-        outcome === 'accepted'
-          ? null
-          : this.start(() =>
-              this.opts.narrator?.narrateVerdict?.({
-                outcome,
-                description: String(form.description ?? ''),
-                angle: this.pickOne(
-                  outcome === 'rejected' ? REJECTION_ANGLES : DISCREPANCY_ANGLES,
-                )!,
-              }),
-            ),
       subject: { uri: written.uri, cid: written.cid },
-      // at://<did>/<collection>/<rkey> — the only place the write hands back
-      // the issuer's DID, which the verdict has to name.
-      issuerDid: written.uri.split('/')[2] ?? '',
       issuerHandle: issuer.handle,
       partNumber: String(form.partNumber),
       serialNumber: String(form.serialNumber),
       description: String(form.description ?? ''),
       // Who received the part is NOT on the form — an 8130-3 says who issued
       // it, not who it went to. The generator remembers so it can have the
-      // right operator publish the verdict, which is how the protocol
-      // expresses receipt.
+      // right operator publish the attestation, which is how the protocol
+      // expresses that somebody checked.
       operatorHandle: operator.handle,
       completedAt: new Date(String(form.completedAt)),
       at: this.now(),

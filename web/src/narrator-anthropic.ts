@@ -17,22 +17,13 @@
 import Anthropic from '@anthropic-ai/sdk'
 
 import {
-  DISPUTE_SYSTEM,
-  DISPUTE_TOOL,
-  disputePrompt,
   NARRATION_SYSTEM,
   NARRATION_TOOL,
   narrationPrompt,
   validateNarration,
-  validateNote,
-  VERDICT_SYSTEM,
-  VERDICT_TOOL,
-  verdictPrompt,
-  type DisputeBrief,
   type Narration,
   type NarrationBrief,
   type Narrator,
-  type VerdictBrief,
 } from '@f8130/core'
 
 /**
@@ -54,15 +45,12 @@ export type AnthropicNarratorOptions = {
   apiKey?: string
   /** For a call something is waiting on. */
   timeoutMs?: number
-  /** For a call nothing is waiting on. */
-  backgroundTimeoutMs?: number
   onError?: (err: unknown) => void
 }
 
 export class AnthropicNarrator implements Narrator {
   private readonly client: Anthropic
   private readonly timeoutMs: number
-  private readonly backgroundTimeoutMs: number
   private readonly onError?: (err: unknown) => void
 
   /** Counts, for the health endpoint and for knowing whether this is working. */
@@ -88,11 +76,6 @@ export class AnthropicNarrator implements Narrator {
     // worst-case stall is invisible. With retries off this is the true worst
     // case rather than a third of it.
     this.timeoutMs = opts.timeoutMs ?? 15_000
-    // A call nothing is waiting on can afford to be patient. Being generous
-    // here is what turns a transient slow patch into a slower reply rather
-    // than a canned one — the tail that used to fall back now lands in time,
-    // because it has a whole feed interval to arrive in.
-    this.backgroundTimeoutMs = opts.backgroundTimeoutMs ?? 40_000
     this.onError = opts.onError
   }
 
@@ -147,64 +130,6 @@ export class AnthropicNarrator implements Narrator {
     }
   }
 
-  /**
-   * Both note kinds are started well before anything needs them — see the
-   * generator — so they get the patient timeout rather than the tight one.
-   */
-  async narrateVerdict(brief: VerdictBrief): Promise<string | null> {
-    return this.note(VERDICT_SYSTEM, VERDICT_TOOL, verdictPrompt(brief), 'note')
-  }
-
-  async narrateDispute(brief: DisputeBrief): Promise<string | null> {
-    return this.note(DISPUTE_SYSTEM, DISPUTE_TOOL, disputePrompt(brief), 'response')
-  }
-
-  /** One constrained sentence or two, for the two reply kinds. */
-  private async note(
-    system: string,
-    tool: typeof VERDICT_TOOL,
-    prompt: string,
-    key: string,
-  ): Promise<string | null> {
-    this.stats.asked++
-    try {
-      const response = await this.client.messages.create(
-        {
-          model: MODEL,
-          max_tokens: 512,
-          system,
-          tools: [tool],
-          tool_choice: { type: 'tool', name: tool.name },
-          messages: [{ role: 'user', content: prompt }],
-        },
-        { timeout: this.backgroundTimeoutMs },
-      )
-
-      if (response.stop_reason === 'refusal') {
-        this.stats.refused++
-        return null
-      }
-      const call = response.content.find((b) => b.type === 'tool_use')
-      if (!call || call.type !== 'tool_use') {
-        this.stats.rejected++
-        return null
-      }
-
-      const checked = validateNote(call.input, key)
-      if (!checked.ok) {
-        this.stats.rejected++
-        this.onError?.(new Error(`${key} rejected: ${checked.reason}`))
-        return null
-      }
-
-      this.stats.narrated++
-      return checked.note
-    } catch (err) {
-      this.stats.failed++
-      this.onError?.(describe(err))
-      return null
-    }
-  }
 }
 
 /** Most specific first, so a 429 is distinguishable from a bad request. */

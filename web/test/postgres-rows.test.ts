@@ -17,7 +17,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { toRelease, toAcceptance, toDispute } from '../src/postgres.js'
+import { toRelease, toAttestation } from '../src/postgres.js'
 
 const ISO = '2026-08-17T20:36:00.000Z'
 
@@ -28,13 +28,9 @@ describe('row mapping', () => {
     assert.ok(r.observedAt instanceof Date)
     assert.equal(r.completedAt.toISOString(), ISO)
 
-    const a = toAcceptance({ received_at: ISO, observed_at: ISO })
-    assert.ok(a.receivedAt instanceof Date)
-    assert.equal(a.receivedAt.toISOString(), ISO)
-
-    const d = toDispute({ disputed_at: ISO, observed_at: ISO })
-    assert.ok(d.disputedAt instanceof Date)
-    assert.equal(d.disputedAt.toISOString(), ISO)
+    const a = toAttestation({ verified_at: ISO, observed_at: ISO })
+    assert.ok(a.verifiedAt instanceof Date)
+    assert.equal(a.verifiedAt.toISOString(), ISO)
   })
 
   test('leaves the Dates the column queries produce alone', () => {
@@ -43,16 +39,16 @@ describe('row mapping', () => {
     assert.ok(r.completedAt instanceof Date)
     assert.equal(r.completedAt.getTime(), when.getTime())
 
-    const a = toAcceptance({ received_at: when, observed_at: when })
-    assert.equal(a.receivedAt.getTime(), when.getTime())
+    const a = toAttestation({ verified_at: when, observed_at: when })
+    assert.equal(a.verifiedAt.getTime(), when.getTime())
   })
 
   test('every date a card can render survives the round trip', () => {
     // The specific failure: a card calling a Date method on a value the mapper
     // had promised was a Date.
     const r = toRelease({ completed_at: ISO, observed_at: ISO })
-    const a = toAcceptance({ received_at: ISO, observed_at: ISO })
-    for (const d of [r.completedAt, r.observedAt, a.receivedAt, a.observedAt]) {
+    const a = toAttestation({ verified_at: ISO, observed_at: ISO })
+    for (const d of [r.completedAt, r.observedAt, a.verifiedAt, a.observedAt]) {
       assert.doesNotThrow(() => d.getTime())
       assert.ok(!Number.isNaN(d.getTime()), 'an unparseable date reached a card')
     }

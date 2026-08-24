@@ -1,0 +1,36 @@
+{
+  "lexicon": 1,
+  "id": "dev.cldixon.f8130.attestation",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A signed statement that the author held a paper release certificate and checked it: the document they were handed recomputes to the commitment in the subject record, which was signed by the key the issuing organization's DID says is theirs. Published in the author's own repo, so the issuer cannot suppress it. Only successful checks are published. A failed check is not publishable here and deliberately so — a mismatch cannot be proven to a third party, since revealing a document that fails proves only that some document fails, and anyone can produce one. An operator who cannot verify a certificate takes it up with the station privately. The absence of attestations on a station's releases is therefore weak evidence and nothing more, which is the correct strength for it. SYNTHETIC DEMONSTRATION DATA.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": [
+          "subject",
+          "verifiedAt",
+          "synthetic"
+        ],
+        "properties": {
+          "subject": {
+            "type": "ref",
+            "ref": "com.atproto.repo.strongRef",
+            "description": "The release certificate that was checked. A strong reference rather than a bare URI because the CID pins the exact record: the attestation covers the bytes that were verified and cannot be read as covering a later, different record."
+          },
+          "verifiedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "When the author ran the check. Self-asserted like every timestamp an author writes, so an observer should keep its own."
+          },
+          "synthetic": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "Required marker. This record set exists to demonstrate a protocol, not to describe real inspections."
+          }
+        }
+      }
+    }
+  }
+}

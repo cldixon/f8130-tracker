@@ -201,8 +201,7 @@ func (c *Consumer) extractRecords(
 		}
 		collection := nsid.String()
 		if collection != ReleaseNSID &&
-			collection != AcceptanceNSID &&
-			collection != DisputeNSID &&
+			collection != AttestationNSID &&
 			collection != StationNSID {
 			continue
 		}
@@ -242,17 +241,12 @@ func (c *Consumer) extractRecords(
 				continue
 			}
 			rec.Release = v
-		case *Acceptance:
-			if v.VerifierDID != evt.Repo {
-				c.logger().Warn("acceptance claims a different verifier than its repo; skipping",
-					"uri", uri, "claimed", v.VerifierDID)
-				continue
-			}
-			rec.Acceptance = v
-		case *Dispute:
-			// Nothing to cross-check: a dispute names no author, so the
-			// repository it was found in is the author by construction.
-			rec.Dispute = v
+		case *Attestation:
+			// Nothing to cross-check: an attestation names no author and no
+			// issuer, so the repository it was found in is the author by
+			// construction and the subject URI names the issuer. A record
+			// that cannot claim to be somebody else cannot lie about it.
+			rec.Attestation = v
 		case *Station:
 			// Self-asserted, and the repository it was found in is the subject
 			// by construction — a profile claiming to describe somebody else

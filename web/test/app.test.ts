@@ -20,7 +20,7 @@ import {
 
 import { createApp } from '../src/app.js'
 import type {
-  AcceptanceRow,
+  AttestationRow,
   IssuerStat,
   ReadIndex,
   ReleaseRow,
@@ -51,8 +51,7 @@ const emptyIndex = (over: Partial<ReadIndex> = {}): ReadIndex => ({
   recentReleases: async () => [],
   releasesForPart: async () => [],
   chain: async () => [],
-  acceptancesForSubjects: async () => [],
-  disputesForSubjects: async () => [],
+  attestationsForSubjects: async () => [],
   releaseByUri: async () => null,
   releasesByUris: async () => new Map(),
   issuerStats: async () => [],
@@ -269,7 +268,7 @@ describe('browsing with an index', () => {
       emptyIndex({
         recentReleases: async () => [releaseRow()],
         issuerStats: async () => [
-          { did: 'did:plc:cs4gk2mp7yv6nbcdefghijkl', releases: 1, distinctRejectors: 0 },
+          { did: 'did:plc:cs4gk2mp7yv6nbcdefghijkl', releases: 1, attested: 0 },
         ],
         handleFor: async () => 'cascadia-mro.f8130.cldixon.dev',
       }),
@@ -282,19 +281,25 @@ describe('browsing with an index', () => {
     // so the release list went and the accountability column stayed — that
     // number has no other home in the application.
     assert.ok(!body.includes('NT882104'), 'the release table came back')
-    assert.match(body, /Independent rejections/)
+    assert.match(body, /Independently checked/)
   })
 
-  test('an issuer with two independent rejections is flagged', async () => {
+  test('coverage is shown as a count against the total, not as a verdict', async () => {
     const { app } = await appWithNetwork(
       emptyIndex({
         issuerStats: async (): Promise<IssuerStat[]> => [
-          { did: 'did:plc:mr5jq8tn3wz7pbcdefghijkm', releases: 3, distinctRejectors: 2 },
+          { did: 'did:plc:mr5jq8tn3wz7pbcdefghijkm', releases: 8, attested: 1 },
         ],
       }),
     )
     const body = await (await app.request('/parts')).text()
-    assert.match(body, /class="flagged"/)
+
+    // Thin coverage can mean nobody got round to checking as easily as it can
+    // mean something is wrong, so the page reports the two numbers and leaves
+    // the weighing to a reader. It used to render a "flagged" class off a
+    // rejection count, which was a judgement the data could not support.
+    assert.match(body, /1 of 8/)
+    assert.ok(!body.includes('class="flagged"'), 'the page passed a verdict')
   })
 
   test('the part page shows claimed and observed times side by side', async () => {
@@ -334,30 +339,26 @@ describe('browsing with an index', () => {
     assert.match(body, /not proof none exists/)
   })
 
-  test('operator verdicts appear against the release they judge', async () => {
-    const verdict: AcceptanceRow = {
-      cid: 'bafyacc',
-      uri: 'at://did:plc:exa/dev.cldixon.f8130.acceptance/1',
+  test('public checks appear against the release they cover', async () => {
+    const check: AttestationRow = {
+      cid: 'bafyatt',
+      uri: 'at://did:plc:exa/dev.cldixon.f8130.attestation/1',
       subjectUri: releaseRow().uri,
       subjectCid: 'bafyoverhaul',
-      issuerDid: 'did:plc:cs4gk2mp7yv6nbcdefghijkl',
       verifierDid: 'did:plc:exa1r2t3u4v5wbcdefghijkn',
-      partNumber: 'NT882104',
-      serialNumber: 'SN000417',
-      outcome: 'rejected',
-      note: 'Chain does not reach birth',
-      receivedAt: new Date('2026-02-01T12:00:00Z'),
+      issuerDid: 'did:plc:cs4gk2mp7yv6nbcdefghijkl',
+      verifiedAt: new Date('2026-02-01T12:00:00Z'),
       observedAt: new Date('2026-02-01T12:05:00Z'),
     }
     const { app } = await appWithNetwork(
       emptyIndex({
         releasesForPart: async () => [releaseRow()],
         chain: async () => [releaseRow()],
-        acceptancesForSubjects: async () => [verdict],
+        attestationsForSubjects: async () => [check],
       }),
     )
     const body = await (await app.request('/part/NT882104/SN000417')).text()
-    assert.match(body, /rejected by/)
+    assert.match(body, /Independently checked by/)
   })
 
   test('the chain API reports whether birth was reached', async () => {
@@ -569,13 +570,9 @@ function fakeWriter(over: Partial<RecordWriter> = {}) {
         bundle: { synthetic: 'S', version: 1, uri: 'at://x', issuerHandle: p.handle, values: {}, nonces: [] } as any,
       }
     },
-    createAcceptance: async (p) => {
-      calls.push({ kind: 'acceptance', ...p })
-      return { uri: 'at://did:plc:y/dev.cldixon.f8130.acceptance/3acc', cid: 'bafyacc' }
-    },
-    createDispute: async (p) => {
-      calls.push({ kind: 'dispute', ...p })
-      return { uri: 'at://did:plc:z/dev.cldixon.f8130.dispute/3dis', cid: 'bafydis' }
+    createAttestation: async (p) => {
+      calls.push({ kind: 'attestation', ...p })
+      return { uri: 'at://did:plc:y/dev.cldixon.f8130.attestation/3att', cid: 'bafyatt' }
     },
     ...over,
   }
@@ -685,69 +682,6 @@ describe('issuance', () => {
 })
 
 describe('verdicts', () => {
-  test('the issuer is looked up rather than taken from the form', async () => {
-    const { app, calls, overhaul } = await appWithWriter()
-    const res = await app.request('/accept', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
-      body: new URLSearchParams({
-        subjectUri: overhaul.bundle.uri,
-        subjectCid: 'bafywhatever',
-        outcome: 'rejected',
-        note: 'Chain does not reach birth',
-      }),
-    })
-    assert.equal(res.status, 200)
-    assert.match(await res.text(), /Verdict published/)
-
-    // A verdict naming the wrong issuer would be evidence against an innocent
-    // party, so the issuer and part come from the fetched record.
-    assert.equal(calls[0].issuerDid, CASCADIA.did)
-    assert.equal(calls[0].partNumber, 'NT882104')
-    assert.equal(calls[0].outcome, 'rejected')
-  })
-
-  test('a verdict on a record that does not exist is refused', async () => {
-    const { app } = await appWithWriter()
-    const res = await app.request('/accept', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
-      body: new URLSearchParams({
-        subjectUri: `at://${CASCADIA.did}/dev.cldixon.f8130.release/3mzzzzzzzzz2z`,
-        subjectCid: 'bafynope',
-        outcome: 'rejected',
-      }),
-    })
-    assert.equal(res.status, 400)
-    assert.match(await res.text(), /never published/)
-  })
-
-  test('a dispute answers a verdict without removing it', async () => {
-    const { app, calls } = await appWithWriter()
-    const res = await app.request('/dispute', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
-      body: new URLSearchParams({
-        subjectUri: 'at://did:plc:e/dev.cldixon.f8130.acceptance/3a',
-        subjectCid: 'bafyacc',
-        response: 'Documentation was supplied on 3 March.',
-      }),
-    })
-    assert.equal(res.status, 200)
-    assert.match(await res.text(), /Reply published/)
-    assert.equal(calls[0].kind, 'dispute')
-    assert.match(calls[0].response, /3 March/)
-  })
-
-  test('an incomplete dispute is refused', async () => {
-    const { app } = await appWithWriter()
-    const res = await app.request('/dispute', {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTING },
-      body: new URLSearchParams({ subjectUri: 'at://x/y/z' }),
-    })
-    assert.equal(res.status, 400)
-  })
 })
 
 describe('field labels', () => {

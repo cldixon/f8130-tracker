@@ -62,10 +62,9 @@ type IndexedRecord struct {
 	CID        string
 	Collection string
 	// Exactly one of these is set.
-	Release    *Release
-	Acceptance *Acceptance
-	Dispute    *Dispute
-	Station    *Station
+	Release     *Release
+	Attestation *Attestation
+	Station     *Station
 	// Deletions carry only a URI.
 	Deleted bool
 }
@@ -101,13 +100,9 @@ func (s *Store) ApplyCommit(
 			if err := upsertRelease(ctx, tx, rec, seq, observedAt); err != nil {
 				return fmt.Errorf("upsert release %s: %w", rec.URI, err)
 			}
-		case rec.Acceptance != nil:
-			if err := upsertAcceptance(ctx, tx, rec, seq, observedAt); err != nil {
-				return fmt.Errorf("upsert acceptance %s: %w", rec.URI, err)
-			}
-		case rec.Dispute != nil:
-			if err := upsertDispute(ctx, tx, rec, seq, observedAt); err != nil {
-				return fmt.Errorf("upsert dispute %s: %w", rec.URI, err)
+		case rec.Attestation != nil:
+			if err := upsertAttestation(ctx, tx, rec, seq, observedAt); err != nil {
+				return fmt.Errorf("upsert attestation %s: %w", rec.URI, err)
 			}
 		case rec.Station != nil:
 			if err := upsertStation(ctx, tx, rec); err != nil {
@@ -172,53 +167,22 @@ func upsertRelease(
 	return err
 }
 
-func upsertAcceptance(
-	ctx context.Context,
-	tx pgx.Tx,
-	rec IndexedRecord,
-	seq int64,
-	observedAt time.Time,
-) error {
-	a := rec.Acceptance
-	raw, err := json.Marshal(jsonSafe(a.Raw))
-	if err != nil {
-		return err
-	}
-
-	if err := ensureActor(ctx, tx, a.VerifierDID); err != nil {
-		return err
-	}
-
-	_, err = tx.Exec(ctx, `
-		INSERT INTO acceptance (
-			cid, uri, subject_uri, subject_cid, issuer_did, verifier_did,
-			part_number, serial_number, outcome, note, received_at, observed_at,
-			seq, raw_record
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-		ON CONFLICT (cid) DO UPDATE SET
-			uri = EXCLUDED.uri,
-			seq = EXCLUDED.seq
-	`,
-		rec.CID, rec.URI, a.Subject.URI, a.Subject.CID, a.IssuerDID, a.VerifierDID,
-		a.PartNumber, a.SerialNumber, a.Outcome, nullIfEmpty(a.Note), a.ReceivedAt,
-		observedAt, seq, raw,
-	)
-	return err
-}
-
-// upsertDispute stores an issuer's answer to a verdict against them.
+// upsertAttestation stores somebody's signed statement that a document checked
+// out.
 //
 // The author is the repository the record was found in, which the consumer
-// carries on the URI, so there is no claimed author to reconcile.
-func upsertDispute(
+// carries on the URI, so there is no claimed author to reconcile — and no
+// claimed issuer either, since the subject URI already names whose repo the
+// release lives in.
+func upsertAttestation(
 	ctx context.Context,
 	tx pgx.Tx,
 	rec IndexedRecord,
 	seq int64,
 	observedAt time.Time,
 ) error {
-	d := rec.Dispute
-	raw, err := json.Marshal(jsonSafe(d.Raw))
+	a := rec.Attestation
+	raw, err := json.Marshal(jsonSafe(a.Raw))
 	if err != nil {
 		return err
 	}
@@ -229,16 +193,16 @@ func upsertDispute(
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO dispute (
-			cid, uri, subject_uri, subject_cid, author_did, response,
-			disputed_at, observed_at, seq, raw_record
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		INSERT INTO attestation (
+			cid, uri, subject_uri, subject_cid, verifier_did,
+			verified_at, observed_at, seq, raw_record
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		ON CONFLICT (cid) DO UPDATE SET
 			uri = EXCLUDED.uri,
 			seq = EXCLUDED.seq
 	`,
-		rec.CID, rec.URI, d.Subject.URI, d.Subject.CID, author, d.Response,
-		d.DisputedAt, observedAt, seq, raw,
+		rec.CID, rec.URI, a.Subject.URI, a.Subject.CID, author,
+		a.VerifiedAt, observedAt, seq, raw,
 	)
 	return err
 }
@@ -293,10 +257,7 @@ func deleteRecord(ctx context.Context, tx pgx.Tx, uri string) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM release WHERE uri = $1`, uri); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM acceptance WHERE uri = $1`, uri); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx, `DELETE FROM dispute WHERE uri = $1`, uri)
+	_, err := tx.Exec(ctx, `DELETE FROM attestation WHERE uri = $1`, uri)
 	return err
 }
 
@@ -362,14 +323,23 @@ func (s *Store) Chain(ctx context.Context, cid string, maxDepth int) ([]ChainLin
 	return out, rows.Err()
 }
 
-// IssuerRejections counts distinct operators who have rejected an issuer's
-// releases — the scoring the watchdog AppView is built on.
-func (s *Store) IssuerRejections(ctx context.Context) (map[string]int, error) {
+// IssuerCoverage counts, per issuing organization, how many of its releases
+// somebody independently checked and said so in public.
+//
+// Not a score, and deliberately not framed as one. A thin count can mean
+// nobody got round to checking as easily as it can mean something is wrong,
+// so it is returned as attested-against-total and left to a reader to weigh.
+// The network carries no rejections to count instead: a party who cannot
+// verify a document cannot prove that to anybody, so there is nothing
+// publishable to aggregate.
+func (s *Store) IssuerCoverage(ctx context.Context) (map[string][2]int, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT issuer_did, COUNT(DISTINCT verifier_did)
-		FROM acceptance
-		WHERE outcome = 'rejected'
-		GROUP BY issuer_did
+		SELECT r.issuer_did,
+		       COUNT(*)                       AS releases,
+		       COUNT(DISTINCT att.cid)        AS attested
+		FROM release r
+		LEFT JOIN attestation att ON att.subject_cid = r.cid
+		GROUP BY r.issuer_did
 		ORDER BY 2 DESC
 	`)
 	if err != nil {
@@ -377,14 +347,14 @@ func (s *Store) IssuerRejections(ctx context.Context) (map[string]int, error) {
 	}
 	defer rows.Close()
 
-	out := map[string]int{}
+	out := map[string][2]int{}
 	for rows.Next() {
 		var did string
-		var n int
-		if err := rows.Scan(&did, &n); err != nil {
+		var releases, attested int
+		if err := rows.Scan(&did, &releases, &attested); err != nil {
 			return nil, err
 		}
-		out[did] = n
+		out[did] = [2]int{releases, attested}
 	}
 	return out, rows.Err()
 }
@@ -406,8 +376,11 @@ func (s *Store) Reset(ctx context.Context) error {
 	// Reindex means the index is rebuilt from sequence zero. Nothing here is a
 	// source of truth, so there is nothing to lose by taking the tables with
 	// it.
+	// acceptance and dispute are named here although nothing writes them any
+	// more. They exist in deployments that ran before the network stopped
+	// carrying verdicts, and a reindex is the moment to be rid of them.
 	if _, err := s.pool.Exec(ctx, `
-		DROP TABLE IF EXISTS release, acceptance, dispute, actor, ingest_cursor CASCADE
+		DROP TABLE IF EXISTS release, acceptance, dispute, attestation, actor, ingest_cursor CASCADE
 	`); err != nil {
 		return err
 	}

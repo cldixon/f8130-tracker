@@ -10,8 +10,7 @@ import type {
   VerificationReport,
 } from '@f8130/core'
 import type {
-  AcceptanceRow,
-  DisputeRow,
+  AttestationRow,
   FeedEvent,
   IssuerStat,
   ReleaseRow,
@@ -55,6 +54,16 @@ export function verifyPage(
   report?: VerificationReport,
   error?: string,
   chrome?: Chrome,
+  /**
+   * The document that produced this report, and who could vouch for it.
+   *
+   * Present only on a successful check by somebody signed in as an
+   * organization. There is no failing counterpart: a party who cannot verify a
+   * document cannot prove that to anyone, so the page offers nothing to
+   * publish and says why.
+   */
+  vouch?: { subjectUri: string; subjectCid: string; actor: string } | null,
+  published?: string,
 ) {
   const form = html`<form method="post" action="/verify">
     <label for="bundle">Bundle JSON — the document as it was handed to you</label>
@@ -73,6 +82,13 @@ export function verifyPage(
         you paste is stored.
       </p>
       ${error ? html`<div class="verdict no"><h2>Could not read that bundle</h2><p>${error}</p></div>` : ''}
+      ${published
+        ? html`<div class="verdict ok">
+            <h2>Published</h2>
+            <p class="mono" style="word-break:break-all">${published}</p>
+            <p>It is in your repository now. The issuer cannot remove it.</p>
+          </div>`
+        : ''}
       <div class="card" style="padding:1.15rem">${form}</div>`,
       mode,
       chrome,
@@ -113,6 +129,35 @@ export function verifyPage(
           : 'At least one check failed. See the stages below for what and why.'}
       </p>
     </div>
+
+    ${published
+      ? html`<div class="verdict ok" style="margin-top:1rem">
+          <h2>Published</h2>
+          <p class="mono" style="word-break:break-all">${published}</p>
+          <p>
+            It is in your repository now. The issuer cannot remove it.
+          </p>
+        </div>`
+      : vouch
+        ? html`<form method="post" action="/attest" class="card" style="margin-top:1rem">
+            <input type="hidden" name="subjectUri" value="${vouch.subjectUri}">
+            <input type="hidden" name="subjectCid" value="${vouch.subjectCid}">
+            <h2 style="margin-top:0">Say so in public</h2>
+            <p class="sub">
+              Publishes a record in ${vouch.actor}&rsquo;s repository saying
+              this document checked out. It names no findings and carries no
+              part number — only which release you checked, and when.
+            </p>
+            <button type="submit">Publish an attestation</button>
+          </form>`
+        : report.verified
+          ? ''
+          : html`<div class="meta" style="margin-top:1rem">
+              There is nothing to publish. A document that fails to recompute
+              proves only that some document fails, and anyone can produce one,
+              so a failed check is not evidence to anybody but you. Take it up
+              with the issuer directly.
+            </div>`}
 
     <div class="card">${report.stages.map(stageRow)}</div>
     ${lesson}
@@ -171,7 +216,7 @@ export function partPage(params: {
   partNumber: string
   serialNumber: string
   chain: ReleaseRow[]
-  acceptances: Map<string, AcceptanceRow[]>
+  attestations: Map<string, AttestationRow[]>
   handles: Map<string, string>
   names?: Map<string, string>
   reachedBirth: boolean
@@ -179,7 +224,7 @@ export function partPage(params: {
   trace?: ChainTrace | null
   mode?: Mode
 }) {
-  const { chain, acceptances, handles } = params
+  const { chain, attestations, handles } = params
   const nameOf = (did: string) =>
     params.names?.get(did) ?? handles.get(did) ?? short(did, 12)
 
@@ -261,7 +306,7 @@ export function partPage(params: {
     <h2>Shop visits, newest first</h2>
     <div class="card">
       ${chain.map((r, i) => {
-        const verdicts = acceptances.get(r.cid) ?? []
+        const checks = attestations.get(r.cid) ?? []
         return html`<div class="link">
           <div class="rail"><div class="dot"></div>${i < chain.length - 1 ? html`<div class="line"></div>` : ''}</div>
           <div class="body" style="flex:1">
@@ -280,14 +325,12 @@ export function partPage(params: {
               <div><div class="label">Completed (claimed)</div>${fmt(r.completedAt)}</div>
               <div><div class="label">First observed here</div>${fmt(r.observedAt)}</div>
             </div>
-            ${verdicts.length > 0
+            ${checks.length > 0
               ? html`<div class="times">
                   <div>
-                    <div class="label">Verdicts</div>
-                    ${verdicts.map(
-                      (v) => html`<span class="${v.outcome === 'rejected' ? 'flagged' : ''}">
-                        ${v.outcome} by ${nameOf(v.verifierDid)}
-                      </span><br>`,
+                    <div class="label">Independently checked by</div>
+                    ${checks.map(
+                      (a) => html`<span>${nameOf(a.verifierDid)}</span><br>`,
                     )}
                   </div>
                 </div>`
@@ -348,13 +391,13 @@ export function dashboardPage(params: {
       ${params.issuers.length === 0
         ? html`<div class="empty">No issuers observed yet.</div>`
         : html`<table>
-            <tr><th>Issuer</th><th>Releases</th><th>Independent rejections</th></tr>
+            <tr><th>Issuer</th><th>Releases</th><th>Independently checked</th></tr>
             ${params.issuers.map(
               (s) => html`<tr>
                 <td>${params.handles.get(s.did) ?? short(s.did)}</td>
                 <td>${s.releases}</td>
-                <td class="${s.distinctRejectors >= 2 ? 'flagged' : ''}">
-                  ${s.distinctRejectors === 0 ? '—' : s.distinctRejectors}
+                <td>
+                  ${s.attested === 0 ? '—' : `${s.attested} of ${s.releases}`}
                 </td>
               </tr>`,
             )}
@@ -493,12 +536,6 @@ export function disclosePage(params: {
 
 /* --------------------------------------------------------------------- feed */
 
-const OUTCOME_WORD: Record<string, string> = {
-  accepted: 'accepted',
-  rejected: 'rejected',
-  discrepancy: 'flagged a discrepancy on',
-}
-
 const ago = (at: Date, now: Date) => {
   const s = Math.max(0, Math.round((now.getTime() - at.getTime()) / 1000))
   if (s < 60) return `${s}s ago`
@@ -577,14 +614,14 @@ export function feedCard(
   now = new Date(),
   /** Handle of the organization being viewed as, if any. */
   viewer?: string,
-  /** How many verdicts this observer has seen on each release. */
+  /** How many independent checks this observer has seen on each release. */
   replies?: Map<string, number>,
   /**
    * Display names by DID. Handles stay separate because they are the identity
    * the viewpoint check compares against, while these are only for reading.
    */
   names?: Map<string, string>,
-  /** The releases verdicts are about, keyed by URI. */
+  /** The releases attestations are about, keyed by URI. */
   subjects?: Map<string, ReleaseRow>,
 ): HtmlEscapedString | Promise<HtmlEscapedString> {
   const nameOf = (did: string) => names?.get(did) ?? short(did, 10)
@@ -624,7 +661,7 @@ export function feedCard(
       })}
       ${n > 0
         ? html`<div class="meta"><a href="${postPath(r.uri)}"
-            >${n} ${n === 1 ? 'verdict' : 'verdicts'}</a></div>`
+            >checked by ${n}</a></div>`
         : ''}
     </article>`
   }
@@ -639,22 +676,20 @@ export function feedCard(
    * more faithful shape: a verdict is a record about another record, which is
    * a quote rather than a reply.
    */
-  const v = event.verdict
-  const subject = subjects?.get(v.subjectUri)
-  return html`<article class="event ${v.outcome}" data-cid="${v.cid}">
+  const t = event.attestation
+  const subject = subjects?.get(t.subjectUri)
+  return html`<article class="event attested" data-cid="${t.cid}">
     <div class="who">
-      ${avatar(nameOf(v.verifierDid), true)}
-      ${byline(v.verifierDid)} ${OUTCOME_WORD[v.outcome] ?? v.outcome}
-      <span class="when"><a href="${postPath(v.subjectUri)}"
-        >${ago(v.receivedAt, now)}</a></span>
+      ${avatar(nameOf(t.verifierDid), true)}
+      ${byline(t.verifierDid)} checked this document
+      <span class="when"><a href="${postPath(t.subjectUri)}"
+        >${ago(t.verifiedAt, now)}</a></span>
     </div>
 
-    ${v.note ? html`<div class="note">&ldquo;${v.note}&rdquo;</div>` : ''}
-
-    <a class="quoted" href="${postPath(v.subjectUri)}">
+    <a class="quoted" href="${postPath(t.subjectUri)}">
       <div class="qwho">
-        ${avatar(subject?.organizationName ?? nameOf(v.issuerDid), true)}
-        <strong>${subject?.organizationName ?? nameOf(v.issuerDid)}</strong>
+        ${avatar(subject?.organizationName ?? nameOf(t.issuerDid), true)}
+        <strong>${subject?.organizationName ?? nameOf(t.issuerDid)}</strong>
         <span class="when">
           ${subject ? html`released ${ago(subject.completedAt, now)}` : 'released'}
         </span>
@@ -667,14 +702,7 @@ export function feedCard(
             flat: true,
             small: true,
           })
-        : html`${dataplate({
-              description: 'Not seen by this observer',
-              partNumber: v.partNumber,
-              serialNumber: v.serialNumber,
-              flat: true,
-              small: true,
-            })}
-            <div class="unseen">this observer has not seen the release itself</div>`}
+        : html`<div class="unseen">this observer has not seen the release itself</div>`}
     </a>
   </article>`
 }
@@ -682,15 +710,15 @@ export function feedCard(
 /* ------------------------------------------------------------------ thread */
 
 /**
- * One release and everything published in answer to it.
+ * One release and everyone who has publicly checked it.
  *
- * The shape is a thread because the records are one. A verdict is a record in
- * the verifier's repository carrying a strong reference to the release, which
- * is structurally what a reply is on this protocol — and the consequence is
- * the thing worth showing: the issuer whose release is at the top cannot
- * delete anything below it. They can add.
+ * The shape is a thread because the records are one. An attestation is a
+ * record in the checker's repository carrying a strong reference to the
+ * release, which is structurally what a reply is on this protocol — and the
+ * consequence is the thing worth showing: the issuer whose release is at the
+ * top cannot delete anything below it. They can add.
  *
- * Nothing here is a verdict this service is passing. The page offers to run
+ * Nothing here is a judgement this service is passing. The page offers to run
  * the checks and show them; it does not stamp a mark on the post. A mark would
  * say the platform vouches, and the whole argument is that nobody vouches.
  */
@@ -698,9 +726,7 @@ export function threadPage(params: {
   chrome?: Chrome
   mode?: Mode
   release: ReleaseRow
-  verdicts: AcceptanceRow[]
-  /** Replies to verdicts, keyed by the acceptance CID each answers. */
-  replies: Map<string, DisputeRow[]>
+  attestations: AttestationRow[]
   handles: Map<string, string>
   names?: Map<string, string>
   now?: Date
@@ -739,47 +765,30 @@ export function threadPage(params: {
       </div>
       <div class="meta">
         ${withheld} of ${FIELDS.length} blocks are withheld. Checking compares a
-        copy you hold against this record; a verdict below is a party&rsquo;s
-        account of the part itself.
+        copy you hold against this record.
       </div>
     </article>
 
     <div class="replies">
-      ${params.verdicts.length === 0
+      ${params.attestations.length === 0
         ? html`<div class="card"><div class="empty">
-            No verdict has been published on this release yet. Whoever received
-            the part can publish one at any time, in their own repository.
+            Nobody has published a check on this release. That is not a mark
+            against it — most releases are never checked in public, and a party
+            who could not verify one has nothing publishable to say either.
           </div></div>`
-        : params.verdicts.map((v) => {
-            const answers = params.replies.get(v.cid) ?? []
-            return html`<article class="event ${v.outcome} reply" data-cid="${v.cid}">
+        : params.attestations.map(
+            (a) => html`<article class="event attested reply" data-cid="${a.cid}">
               <div class="who">
-                ${avatar(nameOf(v.verifierDid), true)}
-                <strong>${nameOf(v.verifierDid)}</strong>
-                ${OUTCOME_WORD[v.outcome] ?? v.outcome} the part
-                <span class="when">${ago(v.receivedAt, now)}</span>
+                ${avatar(nameOf(a.verifierDid), true)}
+                <strong>${nameOf(a.verifierDid)}</strong> checked this document
+                <span class="when">${ago(a.verifiedAt, now)}</span>
               </div>
-              ${v.note ? html`<div class="note">&ldquo;${v.note}&rdquo;</div>` : ''}
               <div class="meta">
-                in <span class="mono">${handleOf(v.verifierDid)}</span>&rsquo;s own
-                repository · observed here ${fmt(v.observedAt)}
+                in <span class="mono">${handleOf(a.verifierDid)}</span>&rsquo;s own
+                repository · observed here ${fmt(a.observedAt)}
               </div>
-              ${answers.map(
-                (d) => html`<article class="event answer" data-cid="${d.cid}">
-                  <div class="who">
-                    ${avatar(nameOf(d.authorDid), true)}
-                    <strong>${nameOf(d.authorDid)}</strong> answered
-                    <span class="when">${ago(d.disputedAt, now)}</span>
-                  </div>
-                  <div class="note">&ldquo;${d.response}&rdquo;</div>
-                  <div class="meta">
-                    the reply is all they can publish — the verdict above is not
-                    theirs to remove
-                  </div>
-                </article>`,
-              )}
-            </article>`
-          })}
+            </article>`,
+          )}
     </div>`,
     params.mode,
     params.chrome,
@@ -1142,78 +1151,6 @@ export function issuePage(params: {
     params.chrome,
   )
 }
-
-export function acceptPage(params: {
-  chrome?: Chrome
-  mode?: Mode
-  actors: Actor[]
-  current?: string
-  written?: { uri: string; kind: 'acceptance' | 'dispute' }
-  error?: string
-}) {
-  const actor = params.actors.find((a) => a.handle === params.current)
-
-  return layout(
-    'Record a verdict',
-    html`<h1>Record a verdict on a part you received</h1>
-    <p class="sub">
-      Published in <em>your</em> repository, not the issuer&rsquo;s. They
-      cannot delete it — only answer it.
-    </p>
-
-    ${signingAs(actor)}
-
-    ${params.error
-      ? html`<div class="verdict no" style="margin-top:1.25rem"><h2>Could not record</h2><p>${params.error}</p></div>`
-      : ''}
-    ${params.written
-      ? html`<div class="verdict ok" style="margin-top:1.25rem">
-          <h2>${params.written.kind === 'dispute' ? 'Reply published' : 'Verdict published'}</h2>
-          <p class="mono" style="word-break:break-all">${params.written.uri}</p>
-        </div>`
-      : ''}
-
-    <h2>Acceptance or rejection</h2>
-    <div class="card" style="padding:1.15rem">
-      <form method="post" action="/accept">
-        <label for="subjectUri">Release URI</label>
-        <input type="text" id="subjectUri" name="subjectUri" placeholder="at://…">
-        <label for="subjectCid">Release CID</label>
-        <input type="text" id="subjectCid" name="subjectCid" placeholder="bafyrei…">
-        <label for="outcome">Outcome</label>
-        <select id="outcome" name="outcome">
-          <option value="accepted">accepted</option>
-          <option value="rejected">rejected</option>
-          <option value="discrepancy">discrepancy</option>
-        </select>
-        <label for="note">Stated reason</label>
-        <input type="text" id="note" name="note">
-        <button type="submit">Publish verdict</button>
-      </form>
-    </div>
-
-    <h2>Right of reply</h2>
-    <p class="sub">
-      For an issuer answering a verdict against them. It cannot remove the
-      verdict, only respond to it.
-    </p>
-    <div class="card" style="padding:1.15rem">
-      <form method="post" action="/dispute">
-        <label for="dSubjectUri">Acceptance URI</label>
-        <input type="text" id="dSubjectUri" name="subjectUri" placeholder="at://…">
-        <label for="dSubjectCid">Acceptance CID</label>
-        <input type="text" id="dSubjectCid" name="subjectCid" placeholder="bafyrei…">
-        <label for="response">Response</label>
-        <input type="text" id="response" name="response">
-        <button type="submit">Publish reply</button>
-      </form>
-    </div>`,
-    params.mode,
-    params.chrome,
-  )
-}
-
-// ---------------------------------------------------------------- form view
 
 export type FormFold = { label: string; hash: string; side?: 'left' | 'right' }
 

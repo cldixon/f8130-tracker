@@ -119,56 +119,56 @@ func TestDecodeRejectsGarbageBytes(t *testing.T) {
 	}
 }
 
-func TestDecodeAcceptance(t *testing.T) {
+func TestDecodeAttestation(t *testing.T) {
 	obj := map[string]any{
-		"$type": AcceptanceNSID,
+		"$type": AttestationNSID,
 		"subject": map[string]any{
 			"uri": "at://did:plc:cs4gk2mp7yv6nbcdefghijkl/dev.cldixon.f8130.release/3abc",
 			"cid": "bafyreiabc",
 		},
-		"issuerDid":    "did:plc:cs4gk2mp7yv6nbcdefghijkl",
-		"verifierDid":  "did:plc:exa1r2t3u4v5wbcdefghijkn",
-		"partNumber":   "NT882104",
-		"serialNumber": "SN000417",
-		"outcome":      "rejected",
-		"note":         "Chain does not reach birth",
-		"receivedAt":   "2026-02-01T12:00:00Z",
+		"verifiedAt": "2026-02-01T12:00:00Z",
+		"synthetic":  "SYNTHETIC DEMONSTRATION DATA",
 	}
 
-	r, err := DecodeRecord(AcceptanceNSID, encode(t, obj))
+	r, err := DecodeRecord(AttestationNSID, encode(t, obj))
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	a, ok := r.(*Acceptance)
+	a, ok := r.(*Attestation)
 	if !ok {
 		t.Fatalf("wrong type: %T", r)
-	}
-	if a.Outcome != "rejected" {
-		t.Errorf("outcome: got %q", a.Outcome)
 	}
 	if a.Subject.CID != "bafyreiabc" {
 		t.Errorf("subject cid: got %q", a.Subject.CID)
 	}
-	if a.Note == "" {
-		t.Error("note should be preserved")
+	if a.VerifiedAt.IsZero() {
+		t.Error("verifiedAt did not decode")
 	}
 }
 
-func TestDecodeRejectsUnknownOutcome(t *testing.T) {
+// An attestation with no subject vouches for nothing and would index as a
+// statement about nowhere. Better to drop it than to store a dangling one.
+func TestDecodeAttestationRequiresSubject(t *testing.T) {
 	obj := map[string]any{
-		"$type":        AcceptanceNSID,
-		"subject":      map[string]any{"uri": "at://x/y/z", "cid": "bafyreiabc"},
-		"issuerDid":    "did:plc:cs4gk2mp7yv6nbcdefghijkl",
-		"verifierDid":  "did:plc:exa1r2t3u4v5wbcdefghijkn",
-		"partNumber":   "NT882104",
-		"serialNumber": "SN000417",
-		// Not one of accepted / rejected / discrepancy. An unrecognized verdict
-		// must not be indexed as if it meant something.
-		"outcome":    "probably fine",
-		"receivedAt": "2026-02-01T12:00:00Z",
+		"$type":      AttestationNSID,
+		"verifiedAt": "2026-02-01T12:00:00Z",
+		"synthetic":  "SYNTHETIC DEMONSTRATION DATA",
 	}
-	if _, err := DecodeRecord(AcceptanceNSID, encode(t, obj)); err == nil {
-		t.Error("expected an error for an unknown outcome")
+	if _, err := DecodeRecord(AttestationNSID, encode(t, obj)); err == nil {
+		t.Fatal("want error for an attestation with no subject")
+	}
+}
+
+// Every artifact this project writes carries the marker. One without it is not
+// ours, whatever collection it arrived in.
+func TestDecodeAttestationRequiresMarker(t *testing.T) {
+	obj := map[string]any{
+		"$type":      AttestationNSID,
+		"subject":    map[string]any{"uri": "at://x/y/z", "cid": "bafyreiabc"},
+		"verifiedAt": "2026-02-01T12:00:00Z",
+	}
+	if _, err := DecodeRecord(AttestationNSID, encode(t, obj)); err == nil {
+		t.Fatal("want error for an attestation with no synthetic marker")
 	}
 }
 
@@ -195,49 +195,9 @@ func TestDecodeReleaseWithPrev(t *testing.T) {
 	}
 }
 
-func TestDecodeDispute(t *testing.T) {
-	obj := map[string]any{
-		"$type":      DisputeNSID,
-		"subject":    map[string]any{"uri": "at://did:plc:op/x/1", "cid": "bafyacc"},
-		"response":   "Back-to-birth records were supplied at time of sale.",
-		"disputedAt": "2026-04-02T09:00:00Z",
-	}
-
-	r, err := DecodeRecord(DisputeNSID, encode(t, obj))
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	d, ok := r.(*Dispute)
-	if !ok {
-		t.Fatalf("got %T, want *Dispute", r)
-	}
-	if d.Subject.CID != "bafyacc" {
-		t.Errorf("subject cid = %q", d.Subject.CID)
-	}
-	if d.Response != obj["response"] {
-		t.Errorf("response = %q", d.Response)
-	}
-	if d.DisputedAt.IsZero() {
-		t.Error("disputedAt did not decode")
-	}
-}
-
-// A dispute with no subject answers nothing, and would index as a reply to
-// nowhere. Better to drop it than to store a dangling one.
-func TestDecodeDisputeRequiresSubject(t *testing.T) {
-	obj := map[string]any{
-		"$type":      DisputeNSID,
-		"response":   "We stand by this release.",
-		"disputedAt": "2026-04-02T09:00:00Z",
-	}
-	if _, err := DecodeRecord(DisputeNSID, encode(t, obj)); err == nil {
-		t.Fatal("want error for a dispute with no subject")
-	}
-}
-
 func TestAuthorOf(t *testing.T) {
 	for _, tc := range []struct{ uri, want string }{
-		{"at://did:plc:abc/dev.cldixon.f8130.dispute/3k", "did:plc:abc"},
+		{"at://did:plc:abc/dev.cldixon.f8130.attestation/3k", "did:plc:abc"},
 		{"nonsense", ""},
 	} {
 		if got := authorOf(tc.uri); got != tc.want {

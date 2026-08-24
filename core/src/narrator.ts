@@ -88,56 +88,20 @@ export type Narration = {
 }
 
 /**
- * Why a verdict brief carries no Block 12.
- *
- * An operator inspecting a part physically holds the paper form, so in the
- * world being modelled they can read the remarks. But the note they publish is
- * *public*, and Block 12 is committed and withheld. A model handed the private
- * remarks and asked to explain a rejection would quote them — that is what
- * makes a good explanation — and the withheld block would arrive on the public
- * record by way of the reply to it.
- *
- * So a verdict is briefed on the component and the outcome only. Receiving
- * inspections are about the part and the paperwork accompanying it, which is
- * what the canned notes always described anyway.
- */
-export type VerdictBrief = {
-  outcome: 'rejected' | 'discrepancy'
-  /** Block 7, which is public. */
-  description: string
-  /**
-   * What kind of finding to write about.
-   *
-   * Chosen here rather than by the model, for the same reason the status of a
-   * release is. Asked for a rejection reason with nothing else to go on, the
-   * model returned the same sentence four times out of four — and it was the
-   * sentence the system prompt used as its example. Briefs that barely differ
-   * produce output that does not differ at all.
-   */
-  angle: string
-}
-
-/** An issuer answering one specific stated reason. */
-export type DisputeBrief = {
-  /** The published note being answered, verbatim. */
-  verdictNote: string
-  description: string
-}
-
-/**
  * A source of prose.
  *
  * Returns null for any failure at all. A narrator never throws and never
  * partially succeeds: the caller's fallback is one branch, not five.
  *
- * The verdict and dispute methods are optional. A narrator that only writes
- * releases is a valid narrator, and the caller falls back to the canned lists
- * for the rest — the same degradation as having no narrator at all.
+ * It writes Block 7 and Block 12, and nothing else. It used to also write the
+ * reason an operator rejected a part, which was a mistake of a specific kind:
+ * the model invented a finding that no check had produced, in prose confident
+ * enough to be read as one. The network no longer carries rejections at all —
+ * an attestation says a document verified, and nothing says it did not — so
+ * there is nothing left here for a model to make up.
  */
 export interface Narrator {
   narrate(brief: NarrationBrief): Promise<Narration | null>
-  narrateVerdict?(brief: VerdictBrief): Promise<string | null>
-  narrateDispute?(brief: DisputeBrief): Promise<string | null>
 }
 
 // ---------------------------------------------------------------------------
@@ -196,130 +160,6 @@ export const NARRATION_TOOL: NarrationToolSchema = {
       },
     },
   },
-}
-
-const NOTE_RULES = [
-  'Never name a company. Never write a part number, serial number,',
-  'certificate number or work order.',
-  'One or two short sentences, under 200 characters.',
-].join('\n')
-
-export const VERDICT_TOOL: NarrationToolSchema = {
-  name: 'record_receiving_finding',
-  description:
-    'Record why a received part was not accepted outright. Call this once.',
-  strict: true,
-  input_schema: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['note'],
-    properties: {
-      note: {
-        type: 'string',
-        maxLength: 400,
-        description:
-          'The stated reason, as a receiving inspector writes it: what was ' +
-          'wrong with the part or with the paperwork that came with it. ' +
-          'Concrete and unemotional. ' + NOTE_RULES,
-      },
-    },
-  },
-}
-
-export const DISPUTE_TOOL: NarrationToolSchema = {
-  name: 'record_reply',
-  description:
-    "Record an issuer's reply to a verdict published against them. Call this once.",
-  strict: true,
-  input_schema: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['response'],
-    properties: {
-      response: {
-        type: 'string',
-        maxLength: 400,
-        description:
-          'The reply, answering the specific objection raised and nothing ' +
-          'else. It cannot remove the verdict and must not pretend to — it ' +
-          'states what the shop did, holds, or offers to provide. ' + NOTE_RULES,
-      },
-    },
-  },
-}
-
-export const VERDICT_SYSTEM = [
-  'You write the stated reason on a synthetic receiving inspection for a',
-  'protocol demonstration. Nothing here describes a real part or a real',
-  'organization.',
-  '',
-  'A receiving inspector writes what is wrong and stops: no argument, no',
-  'apology, no recommendation, no restating of the question. Write the',
-  'finding for the specific component named, in the words that component',
-  'would attract — a valve leaks, an actuator binds, a generator fails a',
-  'load test.',
-  '',
-  NOTE_RULES,
-  '',
-  'Call record_receiving_finding exactly once. Write nothing else.',
-].join('\n')
-
-export const DISPUTE_SYSTEM = [
-  'You write an issuing shop\'s reply to a receiving inspection that went',
-  'against them, for a protocol demonstration. Nothing here describes a real',
-  'part or a real organization.',
-  '',
-  'The reply cannot delete or amend the verdict — it lives in the other',
-  "party's records, not the shop's. Answering is the whole of what is",
-  'available, so answer: state what was done, what is held, or what can be',
-  'provided. Do not concede reflexively and do not bluster.',
-  '',
-  NOTE_RULES,
-  '',
-  'Call record_reply exactly once. Write nothing else.',
-].join('\n')
-
-/**
- * The angles a receiving inspection can turn on.
- *
- * Split by outcome because they are different findings. A rejection means the
- * part does not go on the aircraft; a discrepancy means it does, with
- * something written down. Handing the model both sets produced discrepancies
- * that read like rejections.
- */
-export const REJECTION_ANGLES = [
-  'the paperwork does not match the part in front of you',
-  'the part is physically not in the condition the release claims',
-  'the history stops somewhere it should not',
-  'the item received is not the item that was ordered or is the wrong configuration',
-  'the certifying details on the release do not hold up',
-] as const
-
-export const DISCREPANCY_ANGLES = [
-  'the part is serviceable but arrived with damage nobody recorded',
-  'the count received does not match the count on the release',
-  'the paperwork verifies but the traceability behind it is thin',
-  'the part is fine and the packaging or preservation was not',
-  'a minor detail on the release is wrong in a way that does not affect airworthiness',
-] as const
-
-export function verdictPrompt(brief: VerdictBrief): string {
-  return [
-    `Component received: ${brief.description}.`,
-    brief.outcome === 'rejected'
-      ? 'It was REJECTED — it is not going on an aircraft.'
-      : 'It was ACCEPTED WITH A DISCREPANCY — it is serviceable and will be used, but something is written down.',
-    `Write about this: ${brief.angle}.`,
-    'Be specific to the component named.',
-  ].join('\n')
-}
-
-export function disputePrompt(brief: DisputeBrief): string {
-  return [
-    `Component: ${brief.description}.`,
-    `The published objection, verbatim: "${brief.verdictNote}"`,
-    'Answer that objection specifically.',
-  ].join('\n')
 }
 
 /**
@@ -483,44 +323,6 @@ export function validateNarration(
   }
 
   return { ok: true, narration: { description, remarks } }
-}
-
-export type NoteCheck =
-  | { ok: true; note: string }
-  | { ok: false; reason: string }
-
-/**
- * The same content gate, for a note rather than a narration.
- *
- * A verdict note and a dispute reply are published records like any other, so
- * they cross exactly the checks a Block 12 crosses: no real companies, no
- * invented identifiers, no control characters, and a length the lexicon will
- * accept.
- */
-export function validateNote(raw: unknown, key = 'note', max = 1000): NoteCheck {
-  if (typeof raw !== 'object' || raw === null) {
-    return { ok: false, reason: 'not an object' }
-  }
-  const value = (raw as Record<string, unknown>)[key]
-  if (typeof value !== 'string') return { ok: false, reason: `${key} is not a string` }
-
-  const note = value.trim()
-  if (note.length === 0 || note.length > max) {
-    return { ok: false, reason: `${key} length` }
-  }
-  if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(note)) {
-    return { ok: false, reason: `${key} has control characters` }
-  }
-  for (const pattern of NAME_PATTERNS) {
-    const hit = pattern.exec(note)
-    if (hit) return { ok: false, reason: `names ${hit[0]}` }
-  }
-  for (const pattern of IDENTIFIER_SHAPES) {
-    const hit = pattern.exec(note)
-    if (hit) return { ok: false, reason: `contains an identifier: ${hit[0]}` }
-  }
-
-  return { ok: true, note }
 }
 
 // ---------------------------------------------------------------------------
