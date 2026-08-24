@@ -36,51 +36,39 @@ export type ReleaseRow = {
   observedAt: Date
 }
 
-export type AcceptanceRow = {
+/**
+ * Somebody checked a document against a release, and it held.
+ *
+ * There is no failed counterpart, here or in the lexicon. A party who cannot
+ * verify a document cannot prove that to anyone — a document that fails to
+ * recompute demonstrates only that some document fails, and anybody can make
+ * one. So the network carries successes, and the absence of them is the
+ * closest thing to a negative signal it can honestly offer.
+ */
+export type AttestationRow = {
   cid: string
   uri: string
   subjectUri: string
   subjectCid: string
-  issuerDid: string
+  /** The repository it was found in, which is the whole of its authorship claim. */
   verifierDid: string
-  partNumber: string
-  serialNumber: string
-  outcome: 'accepted' | 'rejected' | 'discrepancy'
-  note: string | null
-  receivedAt: Date
+  /** Derived from the subject URI, not restated on the record. */
+  issuerDid: string
+  verifiedAt: Date
   observedAt: Date
 }
 
 /**
  * One thing that happened, as this observer saw it happen.
  *
- * Ordered by `observedAt` rather than by anything the issuer claimed. A feed
- * sorted on `completedAt` would let a backdating issuer choose where in the
- * timeline their record appears, which is the one thing an independent
+ * Ordered by `observedAt` rather than by anything an author claimed. A feed
+ * sorted on a claimed timestamp would let a backdating issuer choose where in
+ * the timeline their record appears, which is the one thing an independent
  * observer's own clock is for.
  */
 export type FeedEvent =
   | { kind: 'release'; at: Date; release: ReleaseRow }
-  | { kind: 'verdict'; at: Date; verdict: AcceptanceRow }
-
-/**
- * An issuer answering a verdict published against them.
- *
- * They cannot delete or amend it — the verdict is a record in the verifier's
- * repository — so replying is the whole of what they can do. Indexing that
- * reply is what makes the limit visible rather than merely true.
- */
-export type DisputeRow = {
-  cid: string
-  uri: string
-  subjectUri: string
-  subjectCid: string
-  /** The repository it was found in, which is the only authorship claim here. */
-  authorDid: string
-  response: string
-  disputedAt: Date
-  observedAt: Date
-}
+  | { kind: 'attestation'; at: Date; attestation: AttestationRow }
 
 /**
  * Who a DID is, as this observer learned it from the network.
@@ -91,9 +79,9 @@ export type DisputeRow = {
  * party it describes rather than a table this service shipped, which is the
  * distinction the station lexicon exists to make.
  *
- * Null when the organization has never published a profile. A verdict from an
- * operator this observer has only ever seen judge things is exactly that case,
- * and the honest rendering is the DID.
+ * Null when the organization has never published a profile. An attestation
+ * from an operator this observer has never seen publish one is exactly that
+ * case, and the honest rendering is the DID.
  */
 export type ActorRow = {
   did: string
@@ -104,12 +92,19 @@ export type ActorRow = {
 export type IssuerStat = {
   did: string
   releases: number
-  distinctRejectors: number
+  /**
+   * How many of this station's releases somebody independently checked.
+   *
+   * Not a score. A thin count can mean nobody bothered as easily as it can
+   * mean something is wrong, which is why it is shown as a count against the
+   * total rather than as a verdict.
+   */
+  attested: number
 }
 
 export interface ReadIndex {
   /**
-   * Releases and verdicts interleaved, newest first.
+   * Releases and attestations interleaved, newest first.
    *
    * `since` returns only what arrived after that moment, which is how the live
    * stream stays incremental without the client re-reading the whole feed.
@@ -120,17 +115,15 @@ export interface ReadIndex {
   releasesForPart(partNumber: string, serialNumber: string): Promise<ReleaseRow[]>
   /** Walks prev_cid back toward birth, newest first. */
   chain(cid: string, maxDepth: number): Promise<ReleaseRow[]>
-  acceptancesForSubjects(cids: string[]): Promise<AcceptanceRow[]>
-  /** Replies to verdicts, keyed by the acceptance CID each answers. */
-  disputesForSubjects(cids: string[]): Promise<DisputeRow[]>
+  attestationsForSubjects(cids: string[]): Promise<AttestationRow[]>
   /** One release by its at:// URI, which is what a permalink can rebuild. */
   releaseByUri(uri: string): Promise<ReleaseRow | null>
   /**
-   * The releases a set of verdicts are about, keyed by URI.
+   * The releases a set of attestations are about, keyed by URI.
    *
-   * A verdict card shows the release it judges rather than restating it, so
+   * An attestation card shows the release it covers rather than restating it, so
    * the feed needs the subject of everything on screen in one go. Missing
-   * URIs are simply absent: an observer can see a verdict on a release it
+   * URIs are simply absent: an observer can see an attestation on a release it
    * never saw, and that is a fact about the feed rather than an error.
    */
   releasesByUris(uris: string[]): Promise<Map<string, ReleaseRow>>

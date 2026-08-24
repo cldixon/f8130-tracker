@@ -39,9 +39,11 @@ import type {
 import { RepoFetchError } from './ports.js'
 import type { Bundle } from '../bundle.js'
 
-export const ACCEPTANCE_NSID = 'dev.cldixon.f8130.acceptance'
+export const ATTESTATION_NSID = 'dev.cldixon.f8130.attestation'
 export const RELEASE_NSID = 'dev.cldixon.f8130.release'
-export const DISPUTE_NSID = 'dev.cldixon.f8130.dispute'
+
+/** Every artifact this project writes carries one. */
+const SYNTHETIC_MARKER = 'SYNTHETIC DEMONSTRATION DATA'
 
 type KeyEpoch = { key: SigningKey; from: Date }
 
@@ -205,71 +207,33 @@ export class MemoryNetwork implements IdentityResolver, RepoClient {
    * repo, under their own key. The issuer cannot delete it. They can only
    * answer it.
    */
-  async accept(params: {
-    handle: string
-    subject: { uri: string; cid: any }
-    issuerDid: string
-    partNumber: string
-    serialNumber: string
-    outcome: 'accepted' | 'rejected' | 'discrepancy'
-    note?: string
-    receivedAt?: string
-  }): Promise<{ uri: string; cid: any }> {
-    const org = this.org(params.handle)
-
-    const record: Record<string, unknown> = {
-      $type: ACCEPTANCE_NSID,
-      subject: { uri: params.subject.uri, cid: params.subject.cid },
-      issuerDid: params.issuerDid,
-      verifierDid: org.did,
-      partNumber: params.partNumber,
-      serialNumber: params.serialNumber,
-      outcome: params.outcome,
-      ...(params.note ? { note: params.note } : {}),
-      receivedAt:
-        params.receivedAt ?? new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
-    }
-
-    const rkey = TID.nextStr()
-    org.repo = await org.repo.applyWrites(
-      [
-        {
-          action: WriteOpAction.Create,
-          collection: ACCEPTANCE_NSID as any,
-          rkey: rkey as any,
-          record: record as any,
-        },
-      ],
-      org.keypair,
-    )
-
-    return {
-      uri: `at://${org.did}/${ACCEPTANCE_NSID}/${rkey}`,
-      cid: await cidForLex(record as any),
-    }
-  }
-
   /**
-   * An issuer answering a verdict, in the issuer's own repository.
+   * A signed statement that a document checked out, in the checker's own repo.
    *
-   * The whole of what they can do. The verdict is a record in the verifier's
-   * repo signed by the verifier's key, so there is no operation available to
-   * an issuer that removes or amends it, and none is offered here.
+   * Only successes are publishable, and the asymmetry is deliberate rather
+   * than an omission. A party who holds a document that fails cannot prove
+   * that to anybody: revealing a document that does not recompute shows only
+   * that some document does not recompute, and anyone can produce one of
+   * those. There is no operation here for publishing a failure because there
+   * is no way to make one mean anything.
+   *
+   * The issuer cannot remove this, the same way they could not remove a
+   * verdict. What changed is that the statement is now one a party would
+   * actually want to make about somebody else in public.
    */
-  async dispute(params: {
+  async attest(params: {
     handle: string
     subject: { uri: string; cid: any }
-    response: string
-    disputedAt?: string
+    verifiedAt?: string
   }): Promise<{ uri: string; cid: any }> {
     const org = this.org(params.handle)
 
     const record: Record<string, unknown> = {
-      $type: DISPUTE_NSID,
+      $type: ATTESTATION_NSID,
       subject: { uri: params.subject.uri, cid: params.subject.cid },
-      response: params.response,
-      disputedAt:
-        params.disputedAt ?? new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+      verifiedAt:
+        params.verifiedAt ?? new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+      synthetic: SYNTHETIC_MARKER,
     }
 
     const rkey = TID.nextStr()
@@ -277,7 +241,7 @@ export class MemoryNetwork implements IdentityResolver, RepoClient {
       [
         {
           action: WriteOpAction.Create,
-          collection: DISPUTE_NSID as any,
+          collection: ATTESTATION_NSID as any,
           rkey: rkey as any,
           record: record as any,
         },
@@ -286,7 +250,7 @@ export class MemoryNetwork implements IdentityResolver, RepoClient {
     )
 
     return {
-      uri: `at://${org.did}/${DISPUTE_NSID}/${rkey}`,
+      uri: `at://${org.did}/${ATTESTATION_NSID}/${rkey}`,
       cid: await cidForLex(record as any),
     }
   }

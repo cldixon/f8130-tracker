@@ -33,7 +33,6 @@ import {
   orphanForm,
   orgs,
   overhaulForm,
-  rejectionNotes,
   routineLineages,
   vanishedLineage,
   visitForm,
@@ -45,7 +44,7 @@ import {
 } from './scenarios.js'
 
 const RELEASE = 'dev.cldixon.f8130.release'
-const ACCEPTANCE = 'dev.cldixon.f8130.acceptance'
+const ATTESTATION = 'dev.cldixon.f8130.attestation'
 const STATION = 'dev.cldixon.f8130.station'
 
 const PDS_URL = process.env.PDS_INTERNAL_URL ?? 'http://pds.railway.internal:3000'
@@ -146,7 +145,16 @@ async function alreadySeeded(session: Session): Promise<boolean> {
 /** Removes every f8130 record from an organization's repository. */
 async function clearRecords(session: Session): Promise<number> {
   let removed = 0
-  for (const collection of [RELEASE, ACCEPTANCE, STATION]) {
+  // The two retired collections are still listed. They exist in repositories
+  // seeded before the network stopped carrying verdicts, and a reset is the
+  // moment to be rid of them.
+  for (const collection of [
+    RELEASE,
+    ATTESTATION,
+    STATION,
+    'dev.cldixon.f8130.acceptance',
+    'dev.cldixon.f8130.dispute',
+  ]) {
     for (;;) {
       const res = await session.agent.com.atproto.repo.listRecords({
         repo: session.did,
@@ -206,36 +214,20 @@ async function issueRelease(
   return { ref: { uri: res.data.uri, cid: res.data.cid }, bundle }
 }
 
-async function issueAcceptance(
+async function issueAttestation(
   session: Session,
-  params: {
-    subject: StrongRef
-    issuerDid: string
-    partNumber: string
-    serialNumber: string
-    outcome: 'accepted' | 'rejected' | 'discrepancy'
-    note?: string
-    receivedAt: string
-  },
+  params: { subject: StrongRef; verifiedAt: string },
 ): Promise<void> {
   await session.agent.com.atproto.repo.createRecord({
     repo: session.did,
-    collection: ACCEPTANCE,
+    collection: ATTESTATION,
     record: {
-      $type: ACCEPTANCE,
+      $type: ATTESTATION,
       subject: params.subject,
-      issuerDid: params.issuerDid,
-      verifierDid: session.did,
-      partNumber: params.partNumber,
-      serialNumber: params.serialNumber,
-      outcome: params.outcome,
-      ...(params.note ? { note: params.note } : {}),
-      receivedAt: params.receivedAt,
+      verifiedAt: params.verifiedAt,
+      synthetic: 'SYNTHETIC DEMONSTRATION DATA',
     },
   })
-  console.log(
-    `    ${session.org.displayName} ${params.outcome} ${params.partNumber}/${params.serialNumber}`,
-  )
 }
 
 /**
@@ -341,14 +333,9 @@ async function publishLineage(params: {
     prev = issued.ref
 
     if (visit.receivedAt) {
-      await issueAcceptance(customer, {
+      await issueAttestation(customer, {
         subject: issued.ref,
-        issuerDid: issuer.did,
-        partNumber: String(issued.bundle.values.partNumber),
-        serialNumber: String(issued.bundle.values.serialNumber),
-        outcome: visit.outcome ?? 'accepted',
-        ...(visit.note ? { note: visit.note } : {}),
-        receivedAt: visit.receivedAt,
+        verifiedAt: visit.receivedAt,
       })
     }
   }
@@ -407,13 +394,9 @@ async function main() {
   console.log('\nScenario 1 — a part with a complete history:')
   const birth = await issueRelease(northwind, birthForm)
   const overhaul = await issueRelease(cascadia, overhaulForm, birth.ref)
-  await issueAcceptance(exampleair, {
+  await issueAttestation(exampleair, {
     subject: overhaul.ref,
-    issuerDid: cascadia.did,
-    partNumber: 'NT882104',
-    serialNumber: 'SN000417',
-    outcome: 'accepted',
-    receivedAt: '2026-01-29T15:00:00Z',
+    verifiedAt: '2026-01-29T15:00:00Z',
   })
   bundles.genuine = overhaul.bundle
   bundles.birth = birth.bundle
@@ -442,20 +425,22 @@ async function main() {
   })
   bundles.orphan = orphan.bundle
 
-  // ------------------------------------------------- 5. the accumulating signal
-  console.log('\nScenario 5 — three independent operators reject the same broker:')
-  const rejectors = [exampleair, southpoint, cascadia]
-  for (let i = 0; i < brokerForms.length; i++) {
-    const issued = await issueRelease(meridian, brokerForms[i]!)
-    await issueAcceptance(rejectors[i]!, {
-      subject: issued.ref,
-      issuerDid: meridian.did,
-      partNumber: String(issued.bundle.values.partNumber),
-      serialNumber: String(issued.bundle.values.serialNumber),
-      outcome: 'rejected',
-      note: rejectionNotes[i],
-      receivedAt: `2026-03-1${i + 2}T10:00:00Z`,
-    })
+  // ------------------------------------------------- 5. the absent signal
+  //
+  // This used to be three operators publicly rejecting the same broker, which
+  // is a thing no operator would ever do: an unprovable accusation of fraud
+  // against a named business, published by a party with a commercial interest.
+  // The network does not carry rejections any more, and nothing here pretends
+  // it does.
+  //
+  // What is left is the honest version, and it is quieter. The broker's
+  // releases are published and nobody vouches for any of them. That is not
+  // evidence of anything by itself — most releases are never checked in public
+  // — which is exactly why it is the right strength. It is a shape that makes
+  // a reader go and look, not a finding.
+  console.log('\nScenario 5 — a broker whose releases nobody has checked:')
+  for (const form of brokerForms) {
+    await issueRelease(meridian, form)
   }
 
   // ------------------------------------------------- 6. the deep, clean chain

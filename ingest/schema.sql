@@ -64,57 +64,40 @@ CREATE INDEX IF NOT EXISTS release_prev_cid_idx ON release (prev_cid);
 CREATE INDEX IF NOT EXISTS release_issuer_idx ON release (issuer_did);
 CREATE INDEX IF NOT EXISTS release_observed_idx ON release (observed_at DESC);
 
-CREATE TABLE IF NOT EXISTS acceptance (
-  cid           TEXT PRIMARY KEY,
-  uri           TEXT NOT NULL UNIQUE,
-
-  -- Also not a foreign key: firehose ordering across repositories is not
-  -- guaranteed, so an operator's verdict can legitimately arrive before the
-  -- release it judges. Reconcile on read.
-  subject_uri   TEXT NOT NULL,
-  subject_cid   TEXT NOT NULL,
-
-  issuer_did    TEXT NOT NULL,
-  verifier_did  TEXT NOT NULL,
-  part_number   TEXT NOT NULL,
-  serial_number TEXT NOT NULL,
-  outcome       TEXT NOT NULL CHECK (outcome IN ('accepted', 'rejected', 'discrepancy')),
-  note          TEXT,
-  received_at   TIMESTAMPTZ NOT NULL,
-  observed_at   TIMESTAMPTZ NOT NULL,
-  seq           BIGINT NOT NULL,
-  raw_record    JSONB NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS acceptance_issuer_outcome_idx ON acceptance (issuer_did, outcome);
-CREATE INDEX IF NOT EXISTS acceptance_subject_idx ON acceptance (subject_cid);
-
--- An issuer answering a verdict published against them.
+-- Somebody checked a document against a release and it held.
 --
--- They cannot delete or amend the verdict — it lives in the verifier's
--- repository, not theirs — so a reply is the whole of what they can do, and
--- indexing it is what makes that visible rather than merely true.
-CREATE TABLE IF NOT EXISTS dispute (
+-- There is no failed counterpart and no outcome column. A party who cannot
+-- verify a document cannot prove that to anybody — revealing a document that
+-- fails to recompute shows only that some document fails, and anyone can make
+-- one — so the network carries successes, and the absence of them is the
+-- closest thing to a negative signal it can honestly offer.
+--
+-- No issuer column either: who issued the release is in subject_uri, and the
+-- release row it joins to is authoritative about it. Restating it here would
+-- only create a second place for the two to disagree.
+CREATE TABLE IF NOT EXISTS attestation (
   cid           TEXT PRIMARY KEY,
   uri           TEXT NOT NULL UNIQUE,
 
-  -- The acceptance being answered. Not a foreign key, for the same reason as
-  -- the others: cross-repository ordering is not guaranteed.
+  -- Not a foreign key: firehose ordering across repositories is not
+  -- guaranteed, so an attestation can legitimately arrive before the release
+  -- it covers. Reconcile on read.
   subject_uri   TEXT NOT NULL,
   subject_cid   TEXT NOT NULL,
 
-  -- The repository the record was found in. A dispute names no author, which
-  -- is the only authorship claim worth anything.
-  author_did    TEXT NOT NULL,
+  -- The repository the record was found in, which is the whole of its
+  -- authorship claim.
+  verifier_did  TEXT NOT NULL,
 
-  response      TEXT NOT NULL,
-  disputed_at   TIMESTAMPTZ NOT NULL,
+  verified_at   TIMESTAMPTZ NOT NULL,
   observed_at   TIMESTAMPTZ NOT NULL,
   seq           BIGINT NOT NULL,
   raw_record    JSONB NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS dispute_subject_idx ON dispute (subject_cid);
+CREATE INDEX IF NOT EXISTS attestation_subject_idx ON attestation (subject_cid);
+CREATE INDEX IF NOT EXISTS attestation_verifier_idx ON attestation (verifier_did);
+CREATE INDEX IF NOT EXISTS attestation_observed_idx ON attestation (observed_at DESC);
 
 -- Single-row table. The cursor advances in the same transaction as the rows it
 -- describes, so a crash between the two is not representable: either the

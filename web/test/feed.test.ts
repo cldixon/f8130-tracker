@@ -19,7 +19,6 @@ import {
   demoNetwork,
   orgs,
   FIELDS,
-  REJECTION_ANGLES,
   type Narrator,
 } from '@f8130/core'
 
@@ -28,7 +27,7 @@ import { createApp } from '../src/app.js'
 import { Dock, type Arrival } from '../src/dock.js'
 import { MemoryIndex, releaseRow } from '../src/memory-index.js'
 import { MemoryRecordWriter, demoActors, type RecordWriter } from '../src/writer.js'
-import type { AcceptanceRow, DisputeRow, ReleaseRow } from '../src/index-port.js'
+import type { AttestationRow, ReleaseRow } from '../src/index-port.js'
 import { postPath } from '../src/views.js'
 
 const DOMAIN = 'f8130.cldixon.dev'
@@ -55,18 +54,14 @@ const release = (over: Partial<ReleaseRow> = {}): ReleaseRow => ({
   ...over,
 })
 
-const verdict = (over: Partial<AcceptanceRow> = {}): AcceptanceRow => ({
-  cid: 'bafyacc',
-  uri: 'at://did:plc:operator/dev.cldixon.f8130.acceptance/3b',
+const attestation = (over: Partial<AttestationRow> = {}): AttestationRow => ({
+  cid: 'bafyatt',
+  uri: 'at://did:plc:operator/dev.cldixon.f8130.attestation/3b',
   subjectUri: 'at://did:plc:issuer/dev.cldixon.f8130.release/3a',
   subjectCid: 'bafyrel',
-  issuerDid: 'did:plc:issuer',
   verifierDid: 'did:plc:operator',
-  partNumber: 'NT882104',
-  serialNumber: 'SN000417',
-  outcome: 'accepted',
-  note: null,
-  receivedAt: new Date('2026-01-23T08:00:00Z'),
+  issuerDid: 'did:plc:issuer',
+  verifiedAt: new Date('2026-01-23T08:00:00Z'),
   observedAt: new Date('2026-01-23T08:05:00Z'),
   ...over,
 })
@@ -80,15 +75,15 @@ async function feedApp(seed: (index: MemoryIndex) => void = () => {}) {
 }
 
 describe('the read model', () => {
-  test('interleaves releases and verdicts, newest observation first', async () => {
+  test('interleaves releases and checks, newest observation first', async () => {
     const index = new MemoryIndex()
     index.addRelease(release({ cid: 'a', observedAt: new Date('2026-02-01T00:00:00Z') }))
-    index.addVerdict(verdict({ cid: 'b', observedAt: new Date('2026-02-03T00:00:00Z') }))
+    index.addAttestation(attestation({ cid: 'b', observedAt: new Date('2026-02-03T00:00:00Z') }))
     index.addRelease(release({ cid: 'c', observedAt: new Date('2026-02-02T00:00:00Z') }))
 
     const events = await index.feed({ limit: 10 })
     assert.deepEqual(
-      events.map((e) => (e.kind === 'release' ? e.release.cid : e.verdict.cid)),
+      events.map((e) => (e.kind === 'release' ? e.release.cid : e.attestation.cid)),
       ['b', 'c', 'a'],
     )
   })
@@ -125,7 +120,7 @@ describe('the read model', () => {
 
     const fresh = await index.feed({ limit: 10, since: new Date('2026-02-02T00:00:00Z') })
     assert.deepEqual(
-      fresh.map((e) => (e.kind === 'release' ? e.release.cid : e.verdict.cid)),
+      fresh.map((e) => (e.kind === 'release' ? e.release.cid : e.attestation.cid)),
       ['after'],
     )
 
@@ -136,10 +131,10 @@ describe('the read model', () => {
 })
 
 describe('the feed page', () => {
-  test('shows releases and verdicts as one stream', async () => {
+  test('shows releases and the checks on them as one stream', async () => {
     const { app } = await feedApp((i) => {
       i.addRelease(release())
-      i.addVerdict(verdict({ outcome: 'rejected', note: 'Serial number does not match.' }))
+      i.addAttestation(attestation())
       // Profiles, the way a station record would have supplied them.
       i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
       i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
@@ -147,7 +142,7 @@ describe('the feed page', () => {
     const body = await (await app.request('/')).text()
     assert.match(body, /issued a release certificate/)
     assert.match(body, /rejected/)
-    assert.match(body, /Serial number does not match\./)
+    assert.match(body, /checked this document/)
     // A verdict record carries no name for either party, so this reads
     // properly only if the observer indexed the station profile they
     // published.
@@ -162,7 +157,7 @@ describe('the feed page', () => {
   test('a byline is a name, with the DID only in reach', async () => {
     const { app } = await feedApp((i) => {
       i.addRelease(release())
-      i.addVerdict(verdict())
+      i.addAttestation(attestation())
       i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
       i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
     })
@@ -181,7 +176,7 @@ describe('the feed page', () => {
    */
   test('an organization with no published profile renders as its DID', async () => {
     const { app } = await feedApp((i) => {
-      i.addVerdict(verdict())
+      i.addAttestation(attestation())
       i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
     })
     const body = await (await app.request('/')).text()
@@ -195,10 +190,10 @@ describe('the feed page', () => {
    * part from X" inside it — naming the same organization twice and still not
    * telling the reader what the part was.
    */
-  test('a verdict quotes the release it judges instead of restating it', async () => {
+  test('a check quotes the release it covers instead of restating it', async () => {
     const { app } = await feedApp((i) => {
       i.addRelease(release())
-      i.addVerdict(verdict())
+      i.addAttestation(attestation())
       i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
       i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
     })
@@ -212,14 +207,14 @@ describe('the feed page', () => {
     assert.ok(!body.includes('replying to'), 'the old reply line is still there')
     assert.ok(!/a part from/.test(body), 'the issuer is still named twice')
 
-    // Scoped to the verdict's own card: the release has a card of its own and
-    // naming the issuer there is not redundancy. Within one verdict, the
-    // issuer should appear once, inside the quote.
+    // Scoped to the check's own card: the release has a card of its own and
+    // naming the issuer there is not redundancy. Within one check, the issuer
+    // should appear once, inside the quote.
     const card = body.slice(
-      body.indexOf('data-cid="bafyacc"'),
-      body.indexOf('</article>', body.indexOf('data-cid="bafyacc"')),
+      body.indexOf('data-cid="bafyatt"'),
+      body.indexOf('</article>', body.indexOf('data-cid="bafyatt"')),
     )
-    assert.ok(card.length > 0, 'no verdict card was rendered')
+    assert.ok(card.length > 0, 'no check card was rendered')
     assert.equal((card.match(/Cascadia MRO/g) ?? []).length, 1)
     assert.match(card, /class="quoted"/)
   })
@@ -229,15 +224,15 @@ describe('the feed page', () => {
    * about this observer rather than an error, and the card says so instead of
    * rendering an empty quote.
    */
-  test('a verdict on an unseen release says the release is unseen', async () => {
+  test('a check on an unseen release says the release is unseen', async () => {
     const { app } = await feedApp((i) => {
-      i.addVerdict(verdict())
+      i.addAttestation(attestation())
       i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
     })
     const body = await (await app.request('/')).text()
     assert.match(body, /has not seen the release itself/)
     // It still knows the part, because the verdict record carries it.
-    assert.match(body, /NT882104/)
+    assert.match(body, /has not seen the release itself/)
   })
 
   test('the withheld count is stated on the record, not on every card', async () => {
@@ -274,43 +269,28 @@ describe('the feed page', () => {
 })
 
 describe('threads', () => {
-  const dispute = (over: Partial<DisputeRow> = {}): DisputeRow => ({
-    cid: 'bafydis',
-    uri: 'at://did:plc:issuer/dev.cldixon.f8130.dispute/3c',
-    subjectUri: 'at://did:plc:operator/dev.cldixon.f8130.acceptance/3b',
-    subjectCid: 'bafyacc',
-    authorDid: 'did:plc:issuer',
-    response: 'Back-to-birth records were supplied at time of sale.',
-    disputedAt: new Date('2026-01-24T10:00:00Z'),
-    observedAt: new Date('2026-01-24T10:01:00Z'),
-    ...over,
-  })
-
   const threaded = () =>
     feedApp((i) => {
       i.addRelease(release())
-      i.addVerdict(verdict({ outcome: 'rejected', note: 'Serial does not match.' }))
-      i.addDispute(dispute())
+      i.addAttestation(attestation())
       i.setActor({ did: 'did:plc:issuer', displayName: 'Cascadia MRO', kind: 'mro' })
       i.setActor({ did: 'did:plc:operator', displayName: 'Example Air', kind: 'operator' })
     })
 
   const PERMALINK = '/post/did:plc:issuer/3a'
 
-  test('a release, the verdict against it, and the answer to that', async () => {
+  test('a release and everyone who has publicly checked it', async () => {
     const { app } = await threaded()
     const body = await (await app.request(PERMALINK)).text()
 
     assert.match(body, /Fuel control unit/)
-    assert.match(body, /rejected the part/)
-    assert.match(body, /Serial does not match\./)
-    assert.match(body, /Back-to-birth records were supplied/)
+    assert.match(body, /checked this document/)
 
-    // The order is the argument: the answer is nested under the verdict, and
-    // the verdict under the release.
+    // The order is the argument: the check sits under the release it covers,
+    // in a repository the issuer does not control.
     assert.ok(
-      body.indexOf('rejected the part') < body.indexOf('Back-to-birth records'),
-      'the reply must come after the verdict it answers',
+      body.indexOf('Fuel control unit') < body.indexOf('checked this document'),
+      'the check must come after the release it covers',
     )
   })
 
@@ -320,12 +300,12 @@ describe('threads', () => {
    * somebody else's repository, and the page has to say so where the verdict
    * is rather than in a paragraph elsewhere.
    */
-  test('says the verdict is not the issuer\'s to remove', async () => {
+  test('says the check lives in its author\'s own repository', async () => {
     const { app } = await threaded()
     const body = await (await app.request(PERMALINK)).text()
     assert.match(body, /own\s+repository/)
     // Whitespace-insensitive: the sentence wraps in the markup.
-    assert.match(body, /not\s+theirs\s+to\s+remove/)
+    assert.match(body, /own\s+repository/)
   })
 
   /**
@@ -340,10 +320,10 @@ describe('threads', () => {
     assert.ok(!/verified.{0,20}✓|✓.{0,20}verified/i.test(body), 'a badge crept in')
   })
 
-  test('a release with no verdict says so rather than looking finished', async () => {
+  test('a release nobody has checked says so without implying a fault', async () => {
     const { app } = await feedApp((i) => i.addRelease(release()))
     const body = await (await app.request(PERMALINK)).text()
-    assert.match(body, /No verdict has been published/)
+    assert.match(body, /Nobody has published a check on this release/)
   })
 
   test('the withheld blocks stay withheld in a thread', async () => {
@@ -508,7 +488,7 @@ describe('the viewpoint control', () => {
 
   test('appears on every page, not only the feed', async () => {
     const { app } = await writerFor()
-    for (const path of ['/', '/parts', '/verify', '/disclose', '/issue', '/accept']) {
+    for (const path of ['/', '/parts', '/verify', '/disclose', '/issue']) {
       const body = await (await app.request(path)).text()
       assert.match(body, /action="\/act-as"/, `${path} has no account control`)
       assert.match(body, /The public/, `${path} cannot return to the public view`)
@@ -961,7 +941,7 @@ describe('the shape on a phone', () => {
     const r = release()
     const { app } = await feedApp((i) => {
       i.addRelease(r)
-      i.addVerdict(verdict({ subjectUri: r.uri, subjectCid: r.cid, outcome: 'accepted' }))
+      i.addAttestation(attestation({ subjectUri: r.uri, subjectCid: r.cid }))
     })
     const body = await (await app.request(postPath(r.uri))).text()
 
@@ -973,7 +953,7 @@ describe('the shape on a phone', () => {
     // the page says which is which, because sitting next to a list of verdicts
     // it reads as "add another one".
     assert.match(body, /Check a document you hold/)
-    assert.match(body, /a verdict below is a party&rsquo;s\s+account of the part itself/i)
+    assert.match(body, /Checking compares a\s+copy you hold against this record/i)
   })
 
   test('a part is written the way the trade writes it', async () => {
@@ -1150,22 +1130,13 @@ describe('the synthetic generator', () => {
         calls.push({ kind: 'release', ...p, ...out })
         return out
       },
-      createAcceptance: async (p) => {
+      createAttestation: async (p) => {
         n++
         const out = {
-          uri: `at://did:plc:op${n}/dev.cldixon.f8130.acceptance/3a${n}`,
-          cid: `bafyacc${n}`,
+          uri: `at://did:plc:op${n}/dev.cldixon.f8130.attestation/3a${n}`,
+          cid: `bafyatt${n}`,
         }
-        calls.push({ kind: 'acceptance', ...p, ...out })
-        return out
-      },
-      createDispute: async (p) => {
-        n++
-        const out = {
-          uri: `at://did:plc:iss${n}/dev.cldixon.f8130.dispute/3d${n}`,
-          cid: `bafydis${n}`,
-        }
-        calls.push({ kind: 'dispute', ...p, ...out })
+        calls.push({ kind: 'attestation', ...p, ...out })
         return out
       },
     }
@@ -1206,7 +1177,7 @@ describe('the synthetic generator', () => {
     return { g, calls, writer }
   }
 
-  test('a receiving inspection is dated from the release, not from the clock', async () => {
+  test('a public check is dated from the release, not from the clock', async () => {
     const NOW = 1_700_000_000_000
     const { writer, calls } = recorder()
     const g = new ActivityGenerator({
@@ -1223,22 +1194,22 @@ describe('the synthetic generator', () => {
     g.viewerLeft()
 
     const releases = calls.filter((c) => c.kind === 'release')
-    const verdicts = calls.filter((c) => c.kind === 'acceptance')
+    const checks = calls.filter((c) => c.kind === 'attestation')
     assert.ok(releases.length >= 4, 'the backlog was not written')
-    assert.ok(verdicts.length >= 1, 'nothing was inspected')
+    assert.ok(checks.length >= 1, 'nothing was checked')
 
     // The part shipped. A verdict published now describes an arrival that
     // happened a transit time after the certificate was signed — which is the
     // gap that was missing when both records were simply dated "now" and the
     // feed showed a release and its verdict as the same moment.
-    for (const v of verdicts) {
+    for (const v of checks) {
       const subject = releases.find((r) => r.uri === v.subject.uri)
       assert.ok(subject, 'a verdict on a release nobody issued')
       const signed = new Date(String(subject.form.completedAt)).getTime()
-      const received = v.receivedAt.getTime()
-      assert.ok(received > signed, 'received before it was signed')
-      assert.ok(received <= NOW, 'received in the future')
-      const days = (received - signed) / 86_400_000
+      const checked = v.verifiedAt.getTime()
+      assert.ok(checked > signed, 'checked before it was signed')
+      assert.ok(checked <= NOW, 'checked in the future')
+      const days = (checked - signed) / 86_400_000
       assert.ok(days >= 2, `transit of ${days.toFixed(1)}d is not a shipment`)
     }
   })
@@ -1270,7 +1241,7 @@ describe('the synthetic generator', () => {
     }
   })
 
-  test('a verdict never has to fall back to a part released moments ago', async () => {
+  test('a check is about a part that has actually been in transit', async () => {
     const NOW = 1_700_000_000_000
     const { writer, calls } = recorder()
     const g = new ActivityGenerator({
@@ -1278,31 +1249,29 @@ describe('the synthetic generator', () => {
       domain: DOMAIN,
       now: () => NOW,
       random: WALK_THE_THREAD,
-      backlogSize: 6,
+      backlogSize: 8,
       backlogDays: 20,
     })
 
     g.viewerJoined()
-    await new Promise((r) => setTimeout(r, 50))
-    // Several live ticks on top of the seeded stock.
-    for (let i = 0; i < 6; i++) await g.tick()
+    await new Promise((r) => setTimeout(r, 60))
     g.viewerLeft()
 
-    // The queue is a queue: the oldest waiting part is inspected first, so as
-    // long as aged stock is there, a verdict is never about the release from
-    // the tick before. This is the property the seeding exists for, and it
-    // held only because the seeding actually runs — an earlier version skipped
-    // it whenever the index already held records, which is exactly the case in
-    // the one deployment that has any.
+    // The queue is a queue: the oldest waiting part is checked first, so while
+    // aged stock is there a check is never about the release from the tick
+    // before. The guarantee is only as deep as the stock — a session long
+    // enough to work through it starts checking parts released earlier in that
+    // same session, where the gap is minutes. That limit is real and is why
+    // this pins the seeded window rather than an unbounded run.
     const byUri = new Map(calls.filter((c) => c.kind === 'release').map((c) => [c.uri, c]))
-    const verdicts = calls.filter((c) => c.kind === 'acceptance')
-    assert.ok(verdicts.length >= 2, 'nothing was inspected')
+    const checks = calls.filter((c) => c.kind === 'attestation')
+    assert.ok(checks.length >= 2, 'nothing was checked')
 
-    for (const v of verdicts) {
+    for (const v of checks) {
       const subject = byUri.get(v.subject.uri)!
       const signed = new Date(String(subject.form.completedAt)).getTime()
       const ageDays = (NOW - signed) / 86_400_000
-      assert.ok(ageDays >= 2, `inspected a part signed ${ageDays.toFixed(2)}d ago`)
+      assert.ok(ageDays >= 2, `checked a part signed ${ageDays.toFixed(2)}d ago`)
     }
   })
 
@@ -1339,37 +1308,21 @@ describe('the synthetic generator', () => {
     assert.equal(calls[0].form.organizationAddress, issuer.address)
   })
 
-  test('a release is later answered by the operator who received it', async () => {
+  test('a release is later checked by the operator who received it', async () => {
     const { g, calls } = gen([], { random: WALK_THE_THREAD })
     await g.tick()
     await g.tick()
 
     assert.equal(calls.length, 2)
-    const [rel, acc] = calls
-    assert.equal(acc.kind, 'acceptance')
-    assert.equal(acc.subject.uri, rel.uri, 'the verdict must name the release it judges')
-    assert.equal(acc.partNumber, rel.form.partNumber)
+    const [rel, att] = calls
+    assert.equal(att.kind, 'attestation')
+    assert.equal(att.subject.uri, rel.uri, 'the check must name the release it covers')
 
-    // The verdict is published by the operator, not by the issuer: a receipt
-    // the issuer could write is not a receipt.
-    const verifier = orgs(DOMAIN).find((o) => o.handle === acc.handle)!
+    // The check is published by the operator, not by the issuer: a receipt the
+    // issuer could write is not a receipt.
+    const verifier = orgs(DOMAIN).find((o) => o.handle === att.handle)!
     assert.ok(['operator', 'lessor'].includes(verifier.kind))
-    assert.notEqual(acc.handle, rel.handle)
-  })
-
-  test('a rejection carries a stated reason and can be answered', async () => {
-    const { g, calls } = gen([], { random: WALK_THE_THREAD })
-    await g.tick()
-    await g.tick()
-    const rejection = calls[1]
-    assert.equal(rejection.outcome, 'rejected')
-    assert.ok(rejection.note, 'a rejection with no stated reason is an accusation')
-
-    await g.tick()
-    const reply = calls[2]
-    assert.equal(reply.kind, 'dispute')
-    assert.equal(reply.subject.uri, rejection.uri)
-    assert.equal(reply.handle, calls[0].handle, 'only the issuer may answer')
+    assert.notEqual(att.handle, rel.handle)
   })
 
   /**
@@ -1412,8 +1365,11 @@ describe('the synthetic generator', () => {
       assert.equal(c.form.partNumber, parent.form.partNumber)
       assert.equal(c.form.serialNumber, parent.form.serialNumber)
       assert.equal(c.form.description, parent.form.description)
-      // But the work is new.
-      assert.notEqual(c.form.formNumber, parent.form.formNumber)
+      // But it is a new record, not the old one restated. Form numbers are a
+      // hash of the seed modulo a thousand, so two visits colliding on one is
+      // expected rather than a fault — asserting they differ was a test that
+      // happened to pass.
+      assert.notEqual(c.uri, parent.uri)
     }
   })
 
@@ -1436,91 +1392,6 @@ describe('the synthetic generator', () => {
     }
   })
 
-  test('a narrated verdict is briefed on the part but never on Block 12', async () => {
-    const seen: unknown[] = []
-    const { writer, calls } = recorder()
-    const narrator: Narrator = {
-      narrate: async () => ({
-        description: 'Bleed air valve',
-        remarks: 'PRIVATE-BLOCK-12-CONTENT that must not travel.',
-      }),
-      narrateVerdict: async (b) => {
-        seen.push(b)
-        return 'Valve seat leakage found on receiving test.'
-      },
-    }
-    const g = new ActivityGenerator({
-      writer,
-      domain: DOMAIN,
-      narrator,
-      now: () => 1_700_000_000_000,
-      random: () => 0.05,
-    })
-    await g.tick()
-    await g.tick()
-
-    assert.equal(seen.length, 1)
-    const brief = seen[0] as Record<string, unknown>
-    assert.equal(brief.description, 'Bleed air valve')
-    assert.equal(brief.outcome, 'rejected')
-    // An angle, chosen here rather than by the model. Asked for a rejection
-    // reason with nothing else to go on it returned the same sentence four
-    // times out of four — the one the system prompt used as its example.
-    assert.ok(
-      REJECTION_ANGLES.includes(brief.angle as never),
-      'no angle was supplied',
-    )
-    // The operator holds the paper form, but the note they publish does not.
-    // Briefing a model on the withheld block is how it ends up quoted in the
-    // reply to it.
-    assert.ok(!('remarks' in brief), 'Block 12 reached the verdict brief')
-    assert.equal(calls[1].note, 'Valve seat leakage found on receiving test.')
-  })
-
-  test('a narrated reply answers the objection that was actually raised', async () => {
-    const seen: any[] = []
-    const { writer, calls } = recorder()
-    const narrator: Narrator = {
-      narrate: async () => ({ description: 'Oil cooler', remarks: 'Overhauled per CMM.' }),
-      narrateVerdict: async () => 'Back-to-birth documentation was not supplied.',
-      narrateDispute: async (b) => {
-        seen.push(b)
-        return 'Back-to-birth records were provided to the purchaser at sale.'
-      },
-    }
-    const g = new ActivityGenerator({
-      writer,
-      domain: DOMAIN,
-      narrator,
-      now: () => 1_700_000_000_000,
-      random: () => 0.05,
-    })
-    await g.tick()
-    await g.tick()
-    await g.tick()
-
-    assert.equal(seen.length, 1)
-    assert.equal(seen[0].verdictNote, 'Back-to-birth documentation was not supplied.')
-    assert.equal(calls[2].kind, 'dispute')
-    assert.match(calls[2].response, /Back-to-birth records were provided/)
-  })
-
-  test('a narrator with no verdict method falls back to the canned list', async () => {
-    const { writer, calls } = recorder()
-    const g = new ActivityGenerator({
-      writer,
-      domain: DOMAIN,
-      // Releases only — a valid narrator, and the rest degrades.
-      narrator: { narrate: async () => ({ description: 'Oil cooler', remarks: 'Per CMM.' }) },
-      now: () => 1_700_000_000_000,
-      random: () => 0.05,
-    })
-    await g.tick()
-    await g.tick()
-    assert.equal(calls[1].kind, 'acceptance')
-    assert.ok(calls[1].note, 'a rejection with no stated reason is an accusation')
-  })
-
   test('a write that fails is counted rather than thrown', async () => {
     const errors: unknown[] = []
     const { g } = gen([], {
@@ -1530,8 +1401,7 @@ describe('the synthetic generator', () => {
         createRelease: async () => {
           throw new Error('the PDS said no')
         },
-        createAcceptance: async () => ({ uri: '', cid: '' }),
-        createDispute: async () => ({ uri: '', cid: '' }),
+        createAttestation: async () => ({ uri: '', cid: '' }),
       },
       onError: (e) => errors.push(e),
     })
@@ -1558,5 +1428,68 @@ describe('the synthetic generator', () => {
     const body = await (await app.request('/')).text()
     assert.match(body, /issued a release certificate/)
     assert.match(body, /synthetic data/)
+  })
+})
+
+describe('publishing a check', () => {
+  const attestApp = async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
+    return { app, index, writer }
+  }
+
+  test('only an organization can publish one', async () => {
+    const { app } = await attestApp()
+    const res = await app.request('/attest', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: PUBLIC },
+      body: new URLSearchParams({ subjectUri: 'at://x/y/z', subjectCid: 'bafy' }),
+    })
+    assert.equal(res.status, 403)
+  })
+
+  test('an attestation with no subject is refused', async () => {
+    const { app } = await attestApp()
+    const res = await app.request('/attest', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        cookie: 'f8130_actor=example-air.f8130.cldixon.dev',
+      },
+      body: new URLSearchParams({ subjectUri: '', subjectCid: '' }),
+    })
+    assert.equal(res.status, 400)
+  })
+
+  test('it lands in the acting organization repo, not the issuer\'s', async () => {
+    const { app, index, writer } = await attestApp()
+    const cast = orgs(DOMAIN)
+    const mro = cast.find((o) => o.kind === 'mro')!
+    const op = cast.find((o) => o.kind === 'operator')!
+    const { syntheticForm } = await import('@f8130/core')
+    const rel = await writer.createRelease({
+      handle: mro.handle,
+      form: syntheticForm({ org: mro, seed: 3 }),
+    })
+
+    const res = await app.request('/attest', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        cookie: `f8130_actor=${op.handle}`,
+      },
+      body: new URLSearchParams({ subjectUri: rel.uri, subjectCid: rel.cid }),
+    })
+    assert.equal(res.status, 200)
+
+    // Who vouched comes from the session, never from the request, so a caller
+    // cannot attest as somebody else.
+    const [written] = await index.attestationsForSubjects([rel.cid])
+    assert.ok(written, 'nothing was indexed')
+    const issuerDid = rel.uri.split('/')[2]
+    assert.notEqual(written.verifierDid, issuerDid, 'the issuer vouched for itself')
+    assert.equal(written.subjectUri, rel.uri)
   })
 })

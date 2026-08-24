@@ -17,8 +17,7 @@ import { PUBLIC_FIELDS, type Bundle } from '@f8130/core'
 
 import type {
   ActorRow,
-  AcceptanceRow,
-  DisputeRow,
+  AttestationRow,
   FeedEvent,
   IssuerStat,
   ReadIndex,
@@ -57,8 +56,7 @@ export function releaseRow(params: {
 
 export class MemoryIndex implements ReadIndex {
   private readonly releases: ReleaseRow[] = []
-  private readonly verdicts: AcceptanceRow[] = []
-  private readonly disputes: DisputeRow[] = []
+  private readonly attestations: AttestationRow[] = []
   private readonly handles = new Map<string, string>()
   private readonly actors = new Map<string, ActorRow>()
 
@@ -67,14 +65,9 @@ export class MemoryIndex implements ReadIndex {
     this.releases.push(row)
   }
 
-  addVerdict(row: AcceptanceRow): void {
-    if (this.verdicts.some((v) => v.cid === row.cid)) return
-    this.verdicts.push(row)
-  }
-
-  addDispute(row: DisputeRow): void {
-    if (this.disputes.some((d) => d.cid === row.cid)) return
-    this.disputes.push(row)
+  addAttestation(row: AttestationRow): void {
+    if (this.attestations.some((a) => a.cid === row.cid)) return
+    this.attestations.push(row)
   }
 
   setHandle(did: string, handle: string): void {
@@ -87,18 +80,21 @@ export class MemoryIndex implements ReadIndex {
   }
 
   /** Every release, newest observation first. Used by tests and the dashboard. */
-  get size(): { releases: number; verdicts: number; disputes: number } {
+  get size(): { releases: number; attestations: number } {
     return {
       releases: this.releases.length,
-      verdicts: this.verdicts.length,
-      disputes: this.disputes.length,
+      attestations: this.attestations.length,
     }
   }
 
   async feed(params: { limit: number; since?: Date }): Promise<FeedEvent[]> {
     const events: FeedEvent[] = [
       ...this.releases.map((r) => ({ kind: 'release' as const, at: r.observedAt, release: r })),
-      ...this.verdicts.map((v) => ({ kind: 'verdict' as const, at: v.observedAt, verdict: v })),
+      ...this.attestations.map((a) => ({
+        kind: 'attestation' as const,
+        at: a.observedAt,
+        attestation: a,
+      })),
     ]
     return events
       .filter((e) => !params.since || e.at.getTime() > params.since.getTime())
@@ -133,18 +129,11 @@ export class MemoryIndex implements ReadIndex {
     return out
   }
 
-  async acceptancesForSubjects(cids: string[]): Promise<AcceptanceRow[]> {
+  async attestationsForSubjects(cids: string[]): Promise<AttestationRow[]> {
     const wanted = new Set(cids)
-    return this.verdicts
-      .filter((v) => wanted.has(v.subjectCid))
-      .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime())
-  }
-
-  async disputesForSubjects(cids: string[]): Promise<DisputeRow[]> {
-    const wanted = new Set(cids)
-    return this.disputes
-      .filter((d) => wanted.has(d.subjectCid))
-      .sort((a, b) => a.disputedAt.getTime() - b.disputedAt.getTime())
+    return this.attestations
+      .filter((a) => wanted.has(a.subjectCid))
+      .sort((a, b) => b.verifiedAt.getTime() - a.verifiedAt.getTime())
   }
 
   async releaseByUri(uri: string): Promise<ReleaseRow | null> {
@@ -159,23 +148,20 @@ export class MemoryIndex implements ReadIndex {
   }
 
   async issuerStats(): Promise<IssuerStat[]> {
-    const dids = new Set([
-      ...this.releases.map((r) => r.issuerDid),
-      ...this.verdicts.map((v) => v.issuerDid),
-    ])
+    // An attestation names no issuer, so the count comes from joining back to
+    // the release it covers. That keeps the issuer the one on the record in
+    // the issuer's own repository rather than a claim somebody else made.
+    const byCid = new Map(this.releases.map((r) => [r.cid, r]))
+    const dids = new Set(this.releases.map((r) => r.issuerDid))
     return [...dids]
       .map((did) => ({
         did,
         releases: this.releases.filter((r) => r.issuerDid === did).length,
-        // Distinct verifiers, not distinct rejections: one disgruntled operator
-        // rejecting ten parts is a commercial dispute, not a pattern.
-        distinctRejectors: new Set(
-          this.verdicts
-            .filter((v) => v.issuerDid === did && v.outcome === 'rejected')
-            .map((v) => v.verifierDid),
-        ).size,
+        attested: this.attestations.filter(
+          (a) => byCid.get(a.subjectCid)?.issuerDid === did,
+        ).length,
       }))
-      .sort((a, b) => b.distinctRejectors - a.distinctRejectors)
+      .sort((a, b) => b.releases - a.releases)
   }
 
   async actorsFor(dids: string[]): Promise<Map<string, ActorRow>> {

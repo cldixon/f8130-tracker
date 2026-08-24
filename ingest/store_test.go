@@ -70,99 +70,17 @@ func releaseRec(cid, uri, issuer, part, serial, status string, completed time.Ti
 	}
 }
 
-func acceptanceRec(cid, uri, issuer, verifier, outcome string) IndexedRecord {
+func attestationRec(cid, uri, issuer, verifier, subjectCID string) IndexedRecord {
 	return IndexedRecord{
 		URI:        uri,
 		CID:        cid,
-		Collection: AcceptanceNSID,
-		Acceptance: &Acceptance{
-			Subject:      StrongRef{URI: "at://" + issuer + "/x/y", CID: "bafysubject"},
-			IssuerDID:    issuer,
-			VerifierDID:  verifier,
-			PartNumber:   "NT882104",
-			SerialNumber: "SN000417",
-			Outcome:      outcome,
-			ReceivedAt:   time.Now().UTC().Truncate(time.Second),
-			Raw:          map[string]any{"$type": AcceptanceNSID, "outcome": outcome},
+		Collection: AttestationNSID,
+		Attestation: &Attestation{
+			Subject:    StrongRef{URI: "at://" + issuer + "/x/y", CID: subjectCID},
+			VerifiedAt: time.Now().UTC().Truncate(time.Second),
+			Synthetic:  "SYNTHETIC DEMONSTRATION DATA",
+			Raw:        map[string]any{"$type": AttestationNSID},
 		},
-	}
-}
-
-func disputeRec(cid, uri, subjectCID string) IndexedRecord {
-	return IndexedRecord{
-		URI:        uri,
-		CID:        cid,
-		Collection: DisputeNSID,
-		Dispute: &Dispute{
-			Subject:    StrongRef{URI: "at://did:plc:op/x/y", CID: subjectCID},
-			Response:   "Back-to-birth records were supplied at time of sale.",
-			DisputedAt: time.Now().UTC().Truncate(time.Second),
-			Raw:        map[string]any{"$type": DisputeNSID},
-		},
-	}
-}
-
-// An issuer cannot remove a verdict against them. Indexing the reply is what
-// makes that limit visible in the thread instead of merely true underneath it.
-func TestApplyCommitStoresDispute(t *testing.T) {
-	s, ctx := testStore(t)
-	now := time.Now().UTC().Truncate(time.Second)
-
-	acc := acceptanceRec("bafyacc", "at://"+cascadia+"/a/1", northwind, cascadia, "rejected")
-	dis := disputeRec("bafydis", "at://"+northwind+"/d/1", "bafyacc")
-
-	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{acc, dis}); err != nil {
-		t.Fatal(err)
-	}
-
-	var (
-		author   string
-		response string
-		subject  string
-	)
-	err := s.pool.QueryRow(ctx,
-		`SELECT author_did, response, subject_cid FROM dispute WHERE cid = $1`,
-		"bafydis",
-	).Scan(&author, &response, &subject)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// The author is the repository it was found in, not a field it claimed.
-	if author != northwind {
-		t.Errorf("author = %q, want %q", author, northwind)
-	}
-	if subject != "bafyacc" {
-		t.Errorf("subject = %q, want the acceptance it answers", subject)
-	}
-	if response == "" {
-		t.Error("response did not store")
-	}
-}
-
-func TestDeleteRemovesDispute(t *testing.T) {
-	s, ctx := testStore(t)
-	now := time.Now().UTC().Truncate(time.Second)
-	uri := "at://" + northwind + "/d/2"
-
-	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{
-		disputeRec("bafydel", uri, "bafyacc"),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.ApplyCommit(ctx, 2, now, []IndexedRecord{
-		{URI: uri, Collection: DisputeNSID, Deleted: true},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	var n int
-	if err := s.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM dispute WHERE uri = $1`, uri).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 0 {
-		t.Error("dispute should be gone")
 	}
 }
 
@@ -430,44 +348,53 @@ func TestChainRespectsDepthLimit(t *testing.T) {
 	}
 }
 
-func TestAcceptanceMayArriveBeforeItsRelease(t *testing.T) {
+func TestAttestationMayArriveBeforeItsRelease(t *testing.T) {
 	s, ctx := testStore(t)
 	now := time.Now().UTC()
 
-	// Firehose ordering across repositories is not guaranteed, so a verdict can
-	// legitimately land before the release it judges. No foreign key means this
+	// Firehose ordering across repositories is not guaranteed, so a check can
+	// legitimately land before the release it covers. No foreign key means this
 	// simply stores.
-	acc := acceptanceRec("bafyacc", "at://"+exampleA+"/a/1", meridian, exampleA, "rejected")
-	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{acc}); err != nil {
-		t.Fatalf("an early acceptance must not be an integrity error: %v", err)
+	att := attestationRec("bafyatt", "at://"+exampleA+"/a/1", meridian, exampleA, "bafyunseen")
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{att}); err != nil {
+		t.Fatalf("an early attestation must not be an integrity error: %v", err)
 	}
 }
 
-func TestIssuerRejectionsCountDistinctOperators(t *testing.T) {
+// Coverage is a count, not a score. It used to be "distinct operators who
+// rejected this issuer", which the network no longer carries and no operator
+// would ever publish: an unprovable accusation of fraud against a named
+// business. What is countable is who vouched, and the absence of that is left
+// for a reader to weigh rather than aggregated into a verdict.
+func TestIssuerCoverageCountsWhoVouched(t *testing.T) {
 	s, ctx := testStore(t)
 	now := time.Now().UTC()
 
+	rel1 := releaseRec("bafyr1", "at://"+meridian+"/r/1", meridian,
+		"NT882104", "SN000001", "OVERHAULED", now, nil)
+	rel2 := releaseRec("bafyr2", "at://"+meridian+"/r/2", meridian,
+		"NT882104", "SN000002", "OVERHAULED", now, nil)
+	rel3 := releaseRec("bafyr3", "at://"+cascadia+"/r/3", cascadia,
+		"NT882104", "SN000003", "REPAIRED", now, nil)
+
 	recs := []IndexedRecord{
-		acceptanceRec("bafy1", "at://"+exampleA+"/a/1", meridian, exampleA, "rejected"),
-		// The same operator rejecting twice is still one independent voice.
-		acceptanceRec("bafy2", "at://"+exampleA+"/a/2", meridian, exampleA, "rejected"),
-		acceptanceRec("bafy3", "at://"+southpt+"/a/1", meridian, southpt, "rejected"),
-		// An acceptance is not a rejection.
-		acceptanceRec("bafy4", "at://"+exampleA+"/a/3", cascadia, exampleA, "accepted"),
+		rel1, rel2, rel3,
+		attestationRec("bafya1", "at://"+exampleA+"/a/1", meridian, exampleA, "bafyr1"),
+		attestationRec("bafya2", "at://"+southpt+"/a/2", cascadia, southpt, "bafyr3"),
 	}
 	if err := s.ApplyCommit(ctx, 1, now, recs); err != nil {
 		t.Fatal(err)
 	}
 
-	scores, err := s.IssuerRejections(ctx)
+	cov, err := s.IssuerCoverage(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scores[meridian] != 2 {
-		t.Errorf("meridian: got %d distinct rejectors, want 2", scores[meridian])
+	if cov[meridian] != [2]int{2, 1} {
+		t.Errorf("meridian: got %v, want [2 1]", cov[meridian])
 	}
-	if _, ok := scores[cascadia]; ok {
-		t.Error("cascadia has no rejections and should not be scored")
+	if cov[cascadia] != [2]int{1, 1} {
+		t.Errorf("cascadia: got %v, want [1 1]", cov[cascadia])
 	}
 }
 

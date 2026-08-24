@@ -26,8 +26,10 @@ import {
 import { releaseRow } from './memory-index.js'
 
 export const RELEASE_NSID = 'dev.cldixon.f8130.release'
-export const ACCEPTANCE_NSID = 'dev.cldixon.f8130.acceptance'
-export const DISPUTE_NSID = 'dev.cldixon.f8130.dispute'
+export const ATTESTATION_NSID = 'dev.cldixon.f8130.attestation'
+
+/** Every artifact this project writes carries one. */
+const SYNTHETIC_MARKER = 'SYNTHETIC DEMONSTRATION DATA'
 
 export type StrongRef = { uri: string; cid: string }
 
@@ -47,30 +49,16 @@ export interface RecordWriter {
     form: RawForm
     prev?: StrongRef
   }): Promise<Written & { bundle: Bundle }>
-  createAcceptance(params: {
+  /**
+   * A signed statement that a document the caller holds checked out.
+   *
+   * The only judgement this interface offers, because it is the only one that
+   * can be proven. A failure is not publishable — see the lexicon.
+   */
+  createAttestation(params: {
     handle: string
     subject: StrongRef
-    issuerDid: string
-    partNumber: string
-    serialNumber: string
-    outcome: 'accepted' | 'rejected' | 'discrepancy'
-    note?: string
-    /**
-     * When the part was received, if that is not now.
-     *
-     * A receiving inspection happens when the part arrives, which is days
-     * after the release certificate was signed and the part left the shop.
-     * Defaulting to now is right for a person clicking the button and wrong
-     * for anything reconstructing a sequence, where the gap between the two
-     * dates is the shipping time and is the whole reason the sequence reads
-     * as a supply chain.
-     */
-    receivedAt?: Date
-  }): Promise<Written>
-  createDispute(params: {
-    handle: string
-    subject: StrongRef
-    response: string
+    verifiedAt?: Date
   }): Promise<Written>
 }
 
@@ -158,62 +146,24 @@ export class AtpRecordWriter implements RecordWriter {
     }
   }
 
-  async createAcceptance(params: {
+  async createAttestation(params: {
     handle: string
     subject: StrongRef
-    issuerDid: string
-    partNumber: string
-    serialNumber: string
-    outcome: 'accepted' | 'rejected' | 'discrepancy'
-    note?: string
-    receivedAt?: Date
+    verifiedAt?: Date
   }): Promise<Written> {
     const agent = await this.session(params.handle)
     const did = agent.session!.did
 
     const res = await agent.com.atproto.repo.createRecord({
       repo: did,
-      collection: ACCEPTANCE_NSID,
+      collection: ATTESTATION_NSID,
       record: {
-        $type: ACCEPTANCE_NSID,
+        $type: ATTESTATION_NSID,
         subject: params.subject,
-        issuerDid: params.issuerDid,
-        verifierDid: did,
-        partNumber: params.partNumber,
-        serialNumber: params.serialNumber,
-        outcome: params.outcome,
-        ...(params.note ? { note: params.note } : {}),
-        receivedAt: (params.receivedAt ?? new Date())
+        verifiedAt: (params.verifiedAt ?? new Date())
           .toISOString()
           .replace(/\.\d+Z$/, 'Z'),
-      },
-    })
-    return { uri: res.data.uri, cid: res.data.cid }
-  }
-
-  /**
-   * The issuer's right of reply.
-   *
-   * It cannot delete or amend the verdict — that record lives in the
-   * operator's repository, not theirs. All it can do is answer, publicly and
-   * under its own signature, which is the most a fair system should offer.
-   */
-  async createDispute(params: {
-    handle: string
-    subject: StrongRef
-    response: string
-  }): Promise<Written> {
-    const agent = await this.session(params.handle)
-    const did = agent.session!.did
-
-    const res = await agent.com.atproto.repo.createRecord({
-      repo: did,
-      collection: DISPUTE_NSID,
-      record: {
-        $type: DISPUTE_NSID,
-        subject: params.subject,
-        response: params.response,
-        disputedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+        synthetic: SYNTHETIC_MARKER,
       },
     })
     return { uri: res.data.uri, cid: res.data.cid }
@@ -252,27 +202,16 @@ export class MemoryRecordWriter implements RecordWriter {
         cid: unknown
         bundle: Bundle
       }>
-      accept(p: {
+      attest(p: {
         handle: string
         subject: StrongRef
-        issuerDid: string
-        partNumber: string
-        serialNumber: string
-        outcome: 'accepted' | 'rejected' | 'discrepancy'
-        note?: string
-        receivedAt?: string
-      }): Promise<{ uri: string; cid: unknown }>
-      dispute(p: {
-        handle: string
-        subject: StrongRef
-        response: string
+        verifiedAt?: string
       }): Promise<{ uri: string; cid: unknown }>
       resolveHandle(handle: string): Promise<string | null>
     },
     private readonly index: {
       addRelease(row: any): void
-      addVerdict(row: any): void
-      addDispute(row: any): void
+      addAttestation(row: any): void
       setHandle(did: string, handle: string): void
       setActor(row: { did: string; displayName: string | null; kind: string | null }): void
     },
@@ -317,62 +256,32 @@ export class MemoryRecordWriter implements RecordWriter {
     return { uri: issued.uri, cid, bundle: issued.bundle }
   }
 
-  async createAcceptance(params: {
+  async createAttestation(params: {
     handle: string
     subject: StrongRef
-    issuerDid: string
-    partNumber: string
-    serialNumber: string
-    outcome: 'accepted' | 'rejected' | 'discrepancy'
-    note?: string
-    receivedAt?: Date
+    verifiedAt?: Date
   }): Promise<Written> {
-    const { receivedAt, ...rest } = params
-    const written = await this.net.accept({
-      ...rest,
-      ...(receivedAt
-        ? { receivedAt: receivedAt.toISOString().replace(/\.\d+Z$/, 'Z') }
+    const written = await this.net.attest({
+      handle: params.handle,
+      subject: params.subject,
+      ...(params.verifiedAt
+        ? { verifiedAt: params.verifiedAt.toISOString().replace(/\.\d+Z$/, 'Z') }
         : {}),
     })
     const did = written.uri.split('/')[2]!
     const now = new Date()
     this.index.setHandle(did, params.handle)
     this.profile(did, params.handle)
-    this.index.addVerdict({
+    this.index.addAttestation({
       cid: String(written.cid),
       uri: written.uri,
       subjectUri: params.subject.uri,
       subjectCid: params.subject.cid,
-      issuerDid: params.issuerDid,
+      // Who published it is the repo it is in; who issued the release is in
+      // the subject URI. Neither is restated on the record — see the lexicon.
       verifierDid: did,
-      partNumber: params.partNumber,
-      serialNumber: params.serialNumber,
-      outcome: params.outcome,
-      note: params.note ?? null,
-      receivedAt: receivedAt ?? now,
-      observedAt: now,
-    })
-    return { uri: written.uri, cid: String(written.cid) }
-  }
-
-  async createDispute(params: {
-    handle: string
-    subject: StrongRef
-    response: string
-  }): Promise<Written> {
-    const written = await this.net.dispute(params)
-    const did = written.uri.split('/')[2]!
-    const now = new Date()
-    this.index.setHandle(did, params.handle)
-    this.profile(did, params.handle)
-    this.index.addDispute({
-      cid: String(written.cid),
-      uri: written.uri,
-      subjectUri: params.subject.uri,
-      subjectCid: params.subject.cid,
-      authorDid: did,
-      response: params.response,
-      disputedAt: now,
+      issuerDid: params.subject.uri.split('/')[2] ?? '',
+      verifiedAt: params.verifiedAt ?? now,
       observedAt: now,
     })
     return { uri: written.uri, cid: String(written.cid) }
