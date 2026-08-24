@@ -662,7 +662,7 @@ describe('the viewpoint control', () => {
     const index = new MemoryIndex()
     const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
     const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
-    return { app, index, writer }
+    return { app, index, writer, net }
   }
 
   test('appears on every page, not only the feed', async () => {
@@ -795,18 +795,166 @@ describe('the viewpoint control', () => {
     )
   })
 
+  /**
+   * The viewpoint mark, against the organization's real DID.
+   *
+   * It used to plant a handle in the index and let the check compare handles.
+   * That passed for months while the same code marked nothing whatsoever in
+   * production, because the live index stores a DID in its handle column and a
+   * handle never equals a DID. The check resolves the visitor's handle to a
+   * DID now, so this names a release the resolver agrees belongs to them.
+   */
   test('marks the events the viewing organization is party to', async () => {
-    const { app, index } = await writerFor()
-    index.setHandle('did:plc:issuer', `cascadia-mro.${DOMAIN}`)
-    index.addRelease(release())
+    const cascadia = `cascadia-mro.${DOMAIN}`
+
+    const mine = await writerFor()
+    const did = await mine.net.resolveHandle(cascadia)
+    assert.ok(did, 'the demo network could not resolve the acting organization')
+    mine.index.addRelease(release({ issuerDid: did!, uri: `at://${did}/r/1` }))
 
     const asIssuer = await (
-      await app.request('/', { headers: { cookie: `f8130_actor=cascadia-mro.${DOMAIN}` } })
+      await mine.app.request('/', { headers: { cookie: `f8130_actor=${cascadia}` } })
     ).text()
     assert.match(asIssuer, /class="mine"/)
 
-    const asPublic = await (await app.request('/', { headers: { cookie: PUBLIC } })).text()
+    const asPublic = await (
+      await mine.app.request('/', { headers: { cookie: PUBLIC } })
+    ).text()
     assert.ok(!asPublic.includes('class="mine"'), 'the public is party to nothing')
+
+    // The other half. A check that always returned true would pass everything
+    // above and still be wrong.
+    const theirs = await writerFor()
+    theirs.index.addRelease(release({ issuerDid: 'did:plc:someoneelse' }))
+    const asStranger = await (
+      await theirs.app.request('/', { headers: { cookie: `f8130_actor=${cascadia}` } })
+    ).text()
+    assert.ok(!asStranger.includes('class="mine"'), "somebody else's release was marked")
+  })
+})
+
+/**
+ * The feed over an index shaped the way the live one actually is.
+ *
+ * Two bugs shipped and sat in production behind a green suite, and both had
+ * the same cause: MemoryIndex is a more capable object than PostgresIndex.
+ * The tests handed it real handles through setHandle and real display names
+ * through setActor, so every lookup succeeded. The Go ingest writes neither —
+ * it wrote the DID into the handle column and left org_name null until a
+ * station record turned up — so in production the same code compared a handle
+ * against a DID and rendered base32 where a name belonged.
+ *
+ * These build the index the way ingest does and assert on what a visitor sees.
+ * A suite that only ever runs against the generous double cannot catch this
+ * class of bug, and it has now missed it twice — the other time being the
+ * timestamps that arrived as strings from one query and Dates from every
+ * other.
+ */
+describe('the feed over a production-shaped index', () => {
+  const DID = 'did:plc:cascadiamro00000000000'
+  const OPERATOR = 'did:plc:exampleair000000000000'
+
+  /**
+   * What the Go ingest leaves behind for a repository it has seen publish,
+   * before any station record has arrived: a row keyed by DID, carrying a
+   * handle and nothing else.
+   */
+  async function liveShaped(opts: { handle?: string; name?: string } = {}) {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
+
+    // ensureActor's row. Without a resolved handle the column holds the DID,
+    // which is exactly what shipped.
+    index.setHandle(OPERATOR, opts.handle ?? OPERATOR)
+    if (opts.name) index.setActor({ did: OPERATOR, displayName: opts.name, kind: 'operator' })
+
+    index.addRelease(release({ issuerDid: DID, uri: `at://${DID}/r/1`, cid: 'bafyr1' }))
+    index.addAttestation({
+      cid: 'bafya1',
+      uri: `at://${OPERATOR}/dev.cldixon.f8130.attestation/1`,
+      subjectUri: `at://${DID}/r/1`,
+      subjectCid: 'bafyr1',
+      verifierDid: OPERATOR,
+      issuerDid: DID,
+      verifiedAt: new Date(),
+      observedAt: new Date(),
+    })
+    return { app, index }
+  }
+
+  /**
+   * Just the attestation card.
+   *
+   * Assertions have to be scoped to it. The account switcher lists every
+   * organization on the roster, so a bare `body.includes(handle)` is true on
+   * every page whatever the card says — which is how the first draft of these
+   * tests passed against the very bug they were written for.
+   */
+  const card = (body: string) => {
+    const at = body.indexOf('data-cid="bafya1"')
+    assert.notEqual(at, -1, 'the attestation card did not render')
+    const end = body.indexOf('</article>', at)
+    return body.slice(at, end)
+  }
+
+  test('a station record still gives the receiver its display name', async () => {
+    const { app } = await liveShaped({ handle: `example-air.${DOMAIN}`, name: 'Example Air' })
+    const who = card(await (await app.request('/')).text())
+    assert.match(who, /Example Air<\/strong> accepted this certificate/)
+  })
+
+  /**
+   * The reported regression. A receiver whose station record this observer has
+   * not indexed rendered as raw base32 in the middle of a sentence.
+   *
+   * A handle is the right thing to show instead: a domain its owner proved
+   * control of, which is a name, unlike an identifier nobody reads.
+   */
+  test('without a station record the receiver falls back to its handle', async () => {
+    const { app } = await liveShaped({ handle: `example-air.${DOMAIN}` })
+    const who = card(await (await app.request('/')).text())
+    assert.ok(
+      who.includes(`example-air.${DOMAIN}`),
+      `the receiver was not named by its handle: ${who.slice(0, 220)}`,
+    )
+  })
+
+  /**
+   * And the guard on the fallback. The index stores the DID in the handle
+   * column when resolution failed, so a fallback that trusted it blindly
+   * would swap a short DID for a long one and look identical to the bug.
+   */
+  test('a handle column holding a DID is not mistaken for a name', async () => {
+    const { app } = await liveShaped()
+    const who = card(await (await app.request('/')).text())
+    assert.ok(!who.includes(`>${OPERATOR}<`), 'the full DID was rendered as a name')
+    assert.match(who, /accepted this certificate/, 'the card did not render at all')
+  })
+
+  /**
+   * The viewpoint mark, over the shape that broke it. The visitor's handle is
+   * resolved to a DID and compared against the DID on the record, so nothing
+   * here depends on the index knowing a handle.
+   */
+  test('a card is marked as yours even though the index knows no handles', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
+
+    const cascadia = `cascadia-mro.${DOMAIN}`
+    const did = (await net.resolveHandle(cascadia))!
+    assert.ok(did)
+    // Every handle the index holds is a DID, as in production.
+    index.setHandle(did, did)
+    index.addRelease(release({ issuerDid: did, uri: `at://${did}/r/1` }))
+
+    const body = await (
+      await app.request('/', { headers: { cookie: `f8130_actor=${cascadia}` } })
+    ).text()
+    assert.match(body, /class="mine"/, 'the visitor\'s own release was not marked')
   })
 })
 

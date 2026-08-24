@@ -284,6 +284,31 @@ describe('browsing with an index', () => {
     assert.match(body, /Independently checked/)
   })
 
+  /**
+   * The one screen that is entirely about who is publishing named everybody by
+   * handle and nobody by name, even where a station record had said what the
+   * organization calls itself.
+   */
+  test('an issuer with a station record is named by it', async () => {
+    const { app } = await appWithNetwork(
+      emptyIndex({
+        issuerStats: async () => [
+          { did: 'did:plc:cs4gk2mp7yv6nbcdefghijkl', releases: 1, attested: 0 },
+        ],
+        handleFor: async () => 'cascadia-mro.f8130.cldixon.dev',
+        actorsFor: async (dids) =>
+          new Map(
+            dids.map((did) => [
+              did,
+              { did, displayName: 'Cascadia MRO', kind: 'mro' as const },
+            ]),
+          ),
+      }),
+    )
+    const body = await (await app.request('/parts')).text()
+    assert.match(body, /Cascadia MRO/)
+  })
+
   test('coverage is shown as a count against the total, not as a verdict', async () => {
     const { app } = await appWithNetwork(
       emptyIndex({

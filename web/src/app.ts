@@ -154,6 +154,35 @@ export function createApp(deps: AppDeps) {
     return out
   }
 
+  /**
+   * The DID the visitor is acting as.
+   *
+   * The viewpoint check compares this against the DID on a record, rather than
+   * comparing the visitor's handle against a handle in the index. That was the
+   * old arrangement and it could not work in production: nothing ever wrote a
+   * real handle into the index, so the comparison was handle-against-DID and
+   * never matched — no card in the live feed was ever marked as the visitor's.
+   *
+   * Resolved through the same port the verification pipeline uses, so this is
+   * a real handle resolution rather than a lookup in the shipped roster. It is
+   * cached because the roster is small, fixed for the life of the process, and
+   * every page render would otherwise pay for it.
+   */
+  const actingDids = new Map<string, string | null>()
+  async function actingDid(handle: string | undefined): Promise<string | undefined> {
+    if (!handle) return undefined
+    if (!actingDids.has(handle)) {
+      try {
+        actingDids.set(handle, await deps.resolver.resolveHandle(handle))
+      } catch {
+        // A name that will not resolve marks nothing, which is the safe way
+        // for this to fail: it under-claims rather than mislabelling a card.
+        actingDids.set(handle, null)
+      }
+    }
+    return actingDids.get(handle) ?? undefined
+  }
+
   /** Every party named by anything on screen. */
   function didsIn(events: FeedEvent[]): Set<string> {
     const dids = new Set<string>()
@@ -221,7 +250,7 @@ export function createApp(deps: AppDeps) {
         names: await namesFor(didsIn(events)),
         subjects: await subjectsFor(events),
         replies: await replyCounts(events),
-        current: currentActor(c),
+        current: await actingDid(currentActor(c)),
         hasIndex: Boolean(deps.index),
         live: Boolean(deps.index),
       }),
@@ -283,13 +312,13 @@ export function createApp(deps: AppDeps) {
    * Holding this connection open is also what tells the generator somebody is
    * watching. Close the tab and synthetic activity stops.
    */
-  app.get('/api/feed/stream', (c) => {
+  app.get('/api/feed/stream', async (c) => {
     if (!deps.index) return c.text('no index', 503)
     const index = deps.index
 
     // Fixed at connect time. The stream is per-connection, and switching
     // viewpoint reloads the page, which opens a new one.
-    const viewer = currentActor(c)
+    const viewer = await actingDid(currentActor(c))
 
     // A resumed stream picks up where the page left off. The client sends the
     // timestamp of the newest event it has drawn, so events another viewer's
@@ -379,12 +408,16 @@ export function createApp(deps: AppDeps) {
       )
     }
     const issuers = await deps.index.issuerStats()
-    const handles = await resolveHandles(deps.index, issuers.map((i) => i.did))
+    const dids = issuers.map((i) => i.did)
+    const handles = await resolveHandles(deps.index, dids)
     return c.html(
       dashboardPage({
         chrome: chrome(c, 'issuers'),
         issuers,
         handles,
+        // The table named everybody by handle and nobody by name, which is the
+        // one screen in the app that is entirely about who is publishing.
+        names: await namesFor(dids),
         indexAvailable: true,
         mode,
       }),
@@ -977,6 +1010,17 @@ export function createApp(deps: AppDeps) {
           agedDays: 0,
         })
       }
+
+      // Never cached, and this is not belt-and-braces.
+      //
+      // Every response here is a freshly generated certificate at a URL that
+      // never varies. With no Cache-Control, no ETag and no Last-Modified, a
+      // 200 GET is heuristically cacheable and fetch() reads the HTTP cache by
+      // default — so the second press of "New release" reopened the document
+      // the visitor had just signed and asked them to sign it again. The
+      // header is the fix; the fetch also asks for no-store, because either
+      // one alone leaves the other path relying on browser heuristics.
+      c.header('cache-control', 'no-store')
 
       // The modal asks for the body alone and wraps it itself, so the two
       // paths render the same markup rather than two templates that drift.

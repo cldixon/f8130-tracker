@@ -174,6 +174,20 @@ func (c *Consumer) handleCommit(ctx context.Context, evt *comatproto.SyncSubscri
 		return nil
 	}
 
+	// Who this repository belongs to, in the form a person can read.
+	//
+	// Resolved rather than read off a record, because no f8130 record carries
+	// a handle and one that did would be self-asserted. The directory is the
+	// same one the signature check just used and it caches, so this is not a
+	// lookup per commit in practice. A failure is not fatal: the handle is for
+	// reading, the DID is the identity, and an actor row keeps whatever it had.
+	if len(records) > 0 {
+		handle := c.handleFor(ctx, evt.Repo)
+		for i := range records {
+			records[i].Handle = handle
+		}
+	}
+
 	// The cursor still advances for a commit carrying nothing of ours,
 	// otherwise a quiet stretch of unrelated traffic would be replayed on
 	// every reconnect.
@@ -185,6 +199,27 @@ func (c *Consumer) handleCommit(ctx context.Context, evt *comatproto.SyncSubscri
 		log.Info("indexed records", "count", len(records))
 	}
 	return nil
+}
+
+// handleFor resolves a repository's DID to its handle, or "" if it cannot.
+//
+// A handle that has not been bi-directionally verified comes back from the
+// directory as the reserved `handle.invalid`, and that is not a name to show
+// anybody — it is discarded here rather than stored and rendered later.
+func (c *Consumer) handleFor(ctx context.Context, repoDID string) string {
+	did, err := syntax.ParseDID(repoDID)
+	if err != nil {
+		return ""
+	}
+	ident, err := c.Directory.LookupDID(ctx, did)
+	if err != nil || ident == nil {
+		c.logger().Debug("could not resolve handle", "did", repoDID, "error", err)
+		return ""
+	}
+	if ident.Handle == syntax.HandleInvalid {
+		return ""
+	}
+	return ident.Handle.String()
 }
 
 func (c *Consumer) extractRecords(

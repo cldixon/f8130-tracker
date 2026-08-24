@@ -838,7 +838,10 @@ const COMPOSER_SCRIPT = `
       e.preventDefault()
       dlg.showModal()
       working('Generating a synthetic 8130-3\u2026')
-      send(fetch('/issue?fragment'), 'Could not generate a certificate just now.')
+      // no-store: the URL never varies and every answer is a new certificate,
+      // so a cached one is the last document handed back as if it were new.
+      send(fetch('/issue?fragment', { cache: 'no-store' }),
+           'Could not generate a certificate just now.')
     })
   })
 
@@ -917,8 +920,6 @@ const CABINET_SCRIPT = `
     var all = read()
     all[out.dataset.uri] = out.value
     write(all)
-    var kept = out.parentNode && out.parentNode.querySelector('#kept')
-    if (kept) kept.hidden = false
   }
   window.f8130Keep(document.getElementById('out'))
 

@@ -188,6 +188,98 @@ func TestStationFillsInAnExistingActor(t *testing.T) {
 	}
 }
 
+// The handle column, which nothing ever wrote correctly.
+//
+// Both statements that touched it inserted VALUES ($1, $1), so an actor's
+// handle was its DID. Nothing failed. What broke was everything downstream
+// that reads the column: the feed's fallback from a display name to a handle
+// rendered base32, and the web tier's "is this mine" check compared a handle
+// against a DID and so marked nothing at all in production. Neither was
+// visible from Go, and neither was visible from the web tests either, because
+// the in-memory index they run against is handed real handles.
+func TestActorKeepsTheResolvedHandle(t *testing.T) {
+	s, ctx := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	rec := releaseRec("bafyh1", "at://"+cascadia+"/r/1", cascadia,
+		"NT882104", "SN000417", "NEW", now, nil)
+	rec.Handle = "cascadia-mro.f8130.cldixon.dev"
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{rec}); err != nil {
+		t.Fatal(err)
+	}
+
+	var handle string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT handle FROM actor WHERE did = $1`, cascadia).Scan(&handle); err != nil {
+		t.Fatal(err)
+	}
+	if handle != "cascadia-mro.f8130.cldixon.dev" {
+		t.Errorf("handle = %q, want the resolved handle", handle)
+	}
+}
+
+// A station record says nothing about handles, so indexing one must not
+// overwrite a handle that was resolved from the DID document.
+func TestStationDoesNotClobberTheHandle(t *testing.T) {
+	s, ctx := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	rec := releaseRec("bafyh2", "at://"+cascadia+"/r/1", cascadia,
+		"NT882104", "SN000417", "NEW", now, nil)
+	rec.Handle = "cascadia-mro.f8130.cldixon.dev"
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{rec}); err != nil {
+		t.Fatal(err)
+	}
+	// A later commit whose handle could not be resolved.
+	if err := s.ApplyCommit(ctx, 2, now, []IndexedRecord{
+		stationRec("at://"+cascadia+"/dev.cldixon.f8130.station/self", "Cascadia MRO", "mro"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var handle, name string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT handle, org_name FROM actor WHERE did = $1`, cascadia,
+	).Scan(&handle, &name); err != nil {
+		t.Fatal(err)
+	}
+	if handle != "cascadia-mro.f8130.cldixon.dev" {
+		t.Errorf("handle = %q; the station record overwrote a resolved handle", handle)
+	}
+	if name != "Cascadia MRO" {
+		t.Errorf("org_name = %q; the station record did not land", name)
+	}
+}
+
+// Resolution failing is this observer not knowing, which is not the same as
+// the account having no handle. The row must keep what it had.
+func TestUnresolvedHandleDoesNotBlankAKnownOne(t *testing.T) {
+	s, ctx := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	known := releaseRec("bafyh3", "at://"+cascadia+"/r/1", cascadia,
+		"NT882104", "SN000417", "NEW", now, nil)
+	known.Handle = "cascadia-mro.f8130.cldixon.dev"
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{known}); err != nil {
+		t.Fatal(err)
+	}
+
+	blank := releaseRec("bafyh4", "at://"+cascadia+"/r/2", cascadia,
+		"NT882104", "SN000418", "NEW", now, nil)
+	if err := s.ApplyCommit(ctx, 2, now, []IndexedRecord{blank}); err != nil {
+		t.Fatal(err)
+	}
+
+	var handle string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT handle FROM actor WHERE did = $1`, cascadia).Scan(&handle); err != nil {
+		t.Fatal(err)
+	}
+	if handle != "cascadia-mro.f8130.cldixon.dev" {
+		t.Errorf("handle = %q; a failed resolution erased a known handle", handle)
+	}
+}
+
 func TestCursorStartsUnset(t *testing.T) {
 	s, ctx := testStore(t)
 	seq, err := s.Cursor(ctx)
