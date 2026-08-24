@@ -627,7 +627,7 @@ describe('issuance', () => {
     })
     assert.equal(res.status, 200)
     const body = await res.text()
-    assert.match(body, /Issued/)
+    assert.match(body, /Released/)
     assert.match(body, /cannot be reconstructed/)
 
     assert.equal(calls.length, 1)
@@ -876,7 +876,9 @@ describe('issuing from a generated example', () => {
    */
   test('the rendered form offers an input for every committed field', async () => {
     const { app } = await appWithWriter()
-    const body = await (await app.request('/issue')).text()
+    const body = await (
+      await app.request('/issue', { headers: { cookie: ACTING } })
+    ).text()
     for (const spec of FIELDS) {
       assert.ok(
         body.includes(`name="${spec.name}"`),
@@ -887,7 +889,9 @@ describe('issuing from a generated example', () => {
 
   test('offers nothing that is not a committed field', async () => {
     const { app } = await appWithWriter()
-    const body = await (await app.request('/issue')).text()
+    const body = await (
+      await app.request('/issue', { headers: { cookie: ACTING } })
+    ).text()
     for (const gone of ['findings', 'workscope', 'costCents', 'customer']) {
       assert.ok(!body.includes(`name="${gone}"`), `${gone} is not a field any more`)
     }
@@ -896,7 +900,7 @@ describe('issuing from a generated example', () => {
   test('generates an example filled into every input', async () => {
     const { app } = await appWithWriter()
     const body = await (
-      await app.request('/issue?example=1', { headers: { cookie: ACTING } })
+      await app.request('/issue', { headers: { cookie: ACTING } })
     ).text()
     const empties = FIELDS.filter((f) =>
       f.name === 'remarks'
@@ -914,7 +918,7 @@ describe('issuing from a generated example', () => {
   test('a generated example issues without being edited', async () => {
     const { app, calls } = await appWithWriter()
     const page = await (
-      await app.request('/issue?example=1', { headers: { cookie: ACTING } })
+      await app.request('/issue', { headers: { cookie: ACTING } })
     ).text()
 
     const submitted = new URLSearchParams()
@@ -942,7 +946,7 @@ describe('issuing from a generated example', () => {
       body: submitted,
     })
     assert.equal(res.status, 200)
-    assert.match(await res.text(), /Issued/)
+    assert.match(await res.text(), /Released/)
     assert.equal(calls.length, 1)
 
     // Every block reached the writer, and the pair that has to agree does.
@@ -961,7 +965,7 @@ describe('issuing from a generated example', () => {
   test('the example is the acting organization issuing, so Block 4 is its own', async () => {
     const { app } = await appWithWriter()
     const body = await (
-      await app.request('/issue?example=1', { headers: { cookie: ACTING } })
+      await app.request('/issue', { headers: { cookie: ACTING } })
     ).text()
     const org = orgs('f8130.cldixon.dev').find(
       (o) => o.handle === 'cascadia-mro.f8130.cldixon.dev',

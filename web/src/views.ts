@@ -15,7 +15,7 @@ import type {
   IssuerStat,
   ReleaseRow,
 } from './index-port.js'
-import { bareLabel, fieldLabel, issueInputs, signingAs } from './compose.js'
+import { bareLabel, fieldLabel } from './compose.js'
 import { avatar, layout, type Chrome, type Mode } from './shell.js'
 import type { Arrival } from './dock.js'
 import type { Actor } from './writer.js'
@@ -1072,84 +1072,212 @@ export function feedPage(params: {
 
 /* ------------------------------------------------------------------ writing */
 
+/**
+ * One block of a draft, as something you can type into.
+ *
+ * The read-only twin of this — `block`, further down — draws a published
+ * record, where a withheld field is a hash and nothing is editable. Here the
+ * author holds every value because they are writing them, so all seventeen
+ * are open. Which of them the network will keep is deliberately not marked:
+ * that is the reveal on the next screen, and marking it here would spend it
+ * early.
+ *
+ * The control is chosen from the field spec rather than a list kept in step by
+ * hand. An enum typed into freely produces a record the lexicon rejects, and
+ * the spec already knows which fields those are.
+ */
+function draftBlock(field: string, value: unknown, span?: 2 | 4) {
+  const spec = FIELDS.find((f) => f.name === field)
+  const label = bareLabel(field)
+  const v = value === null || value === undefined ? '' : String(value)
+  const cls = ['blk', 'edit', span === 2 ? 'span2' : span === 4 ? 'span4' : '']
+    .filter(Boolean)
+    .join(' ')
+
+  const control =
+    spec?.kind === 'enum'
+      ? html`<select name="${field}">
+          ${(spec.values ?? []).map(
+            (opt) => html`<option value="${opt}" ${opt === v ? 'selected' : ''}>${opt}</option>`,
+          )}
+        </select>`
+      : field === 'remarks'
+        ? html`<textarea name="${field}" rows="2">${v}</textarea>`
+        : html`<input type="${spec?.kind === 'integer' ? 'number' : 'text'}"
+            name="${field}" value="${v}">`
+
+  return html`<label class="${cls}">
+    <span class="n">${spec ? `Block ${spec.block}` : ''} · ${label}</span>
+    ${control}
+  </label>`
+}
+
+/**
+ * A generated certificate, laid out as the document and open for editing.
+ *
+ * Not a pixel copy of the paper — the published view is that, and it is one
+ * click away once this is signed. What matters here is that a visitor is
+ * editing a form rather than filling in a list of seventeen labelled inputs,
+ * because the second is a chore nobody was ever going to do and the first
+ * takes ten seconds.
+ *
+ * The certification area collapses the two paper columns into one row. On
+ * paper a form uses column 13 or column 14 and leaves the other blank, which
+ * is a thing to *draw* and a poor thing to type into: without scripting the
+ * sheet cannot redraw when the choice changes, and a layout that lies about
+ * which half is live would be worse than one that does not try.
+ */
+export function draftSheet(values: Record<string, unknown>) {
+  return html`<div class="sheet draft">
+    <div class="stamp"><span>SYNTHETIC<br>NOT AN AIRWORTHINESS RECORD</span></div>
+    <div class="head">
+      <div class="t1">${String(values.approvingAuthority ?? 'FAA/United States')}</div>
+      <div class="t2">AUTHORIZED RELEASE CERTIFICATE</div>
+      <div class="t1">FAA Form 8130-3 · AIRWORTHINESS APPROVAL TAG</div>
+    </div>
+    <input type="hidden" name="approvingAuthority" value="${String(values.approvingAuthority ?? 'FAA/United States')}">
+    <div class="grid">
+      ${draftBlock('formNumber', values.formNumber, 2)}
+      ${draftBlock('workOrder', values.workOrder, 2)}
+      ${draftBlock('organizationName', values.organizationName, 2)}
+      ${draftBlock('organizationAddress', values.organizationAddress, 2)}
+      ${draftBlock('item', values.item)}
+      ${draftBlock('description', values.description)}
+      ${draftBlock('partNumber', values.partNumber)}
+      ${draftBlock('quantity', values.quantity)}
+      ${draftBlock('serialNumber', values.serialNumber, 2)}
+      ${draftBlock('status', values.status, 2)}
+      ${draftBlock('remarks', values.remarks, 4)}
+      ${draftBlock('certifyingBlock', values.certifyingBlock, 2)}
+      ${draftBlock('approvalBasis', values.approvalBasis, 2)}
+      ${draftBlock('signerCert', values.signerCert, 2)}
+      ${draftBlock('signerName', values.signerName, 2)}
+      ${draftBlock('completedAt', values.completedAt, 4)}
+    </div>
+  </div>`
+}
+
+/**
+ * What the network kept, and what it did not.
+ *
+ * The whole argument in one screen. A visitor has just typed seventeen blocks
+ * and pressed a button; this is where eight of them stop being visible to
+ * anybody but whoever holds the paper. Saying it in prose beforehand never
+ * landed — showing which lines went dark does.
+ */
+export function releasedSheet(values: Record<string, unknown>) {
+  return html`<div class="reveal">
+    ${FIELDS.map((f) => {
+      const v = values[f.name]
+      const shown = v === null || v === undefined || v === '' ? '—' : String(v)
+      return html`<div class="rev ${f.public ? 'pub' : 'priv'}">
+        <span class="n">Block ${f.block} · ${bareLabel(f.name)}</span>
+        <span class="v">${f.public ? shown : 'withheld'}</span>
+      </div>`
+    })}
+  </div>`
+}
+
 export function issuePage(params: {
   chrome?: Chrome
   mode?: Mode
   actors: Actor[]
   current?: string
-  issued?: { uri: string; bundle: unknown }
+  issued?: { uri: string; bundle: unknown; values: Record<string, unknown> }
   error?: string
-  /** A generated example, filled into the inputs. */
-  prefill?: Record<string, unknown> | null
+  /** The generated draft, which is the only way this form is ever filled. */
+  draft?: Record<string, unknown> | null
 }) {
-  const issued = params.issued
   const actor = params.actors.find((a) => a.handle === params.current)
-
   return layout(
     'Issue a release',
-    html`<h1>Issue a release certificate</h1>
-    <p class="sub">
-      Fields marked private never appear on the public record. Signing is done
-      by ${actor?.displayName ?? 'the issuer'}&rsquo;s own server; this service
-      holds no key.
-    </p>
-
-    ${signingAs(actor)}
-
-    ${params.error
-      ? html`<div class="verdict no" style="margin-top:1.25rem"><h2>Could not issue</h2><p>${params.error}</p></div>`
-      : ''}
-
-    ${issued
-      ? html`<div class="verdict ok" style="margin-top:1.25rem">
-          <h2>Issued</h2>
-          <p>The commitment is public. The bundle below is not — deliver it to your customer.</p>
-        </div>
-        <div class="card" style="padding:1.15rem">
-          <div class="detail mono" style="word-break:break-all">${issued.uri}</div>
-          <label for="out">Bundle — save this, it cannot be reconstructed</label>
-          <textarea id="out" readonly data-uri="${issued.uri}"
-            >${JSON.stringify(issued.bundle, null, 2)}</textarea>
-          <p class="sub" id="kept" hidden style="margin-top:.8rem">
-            Kept in <a href="/cabinet">this browser</a> — not on this server,
-            which must never hold a bundle. Clear your site data and it is gone
-            for good.
-          </p>
-          <p class="sub" style="margin-top:.8rem">
-            Paste it into <a href="/verify">verify</a> to see it check out, or
-            into <a href="/disclose">selective disclosure</a> to reveal one
-            field of it.
-          </p>
-        </div>`
-      : ''}
-
-    <h2>New release</h2>
-    <p class="sub" style="margin-bottom:.75rem">
-      Seventeen blocks is a lot to type. The generator fills them from the same
-      builder the seed job uses, so an example issued here is the same shape as
-      the demonstration data.
-    </p>
-    <form method="get" action="/issue" style="margin-bottom:1rem">
-      <input type="hidden" name="handle" value="${params.current ?? ''}">
-      <button type="submit" name="example" value="1"
-        ${actor ? '' : 'disabled'}>Generate a synthetic example</button>
-    </form>
-
-    <div class="card" style="padding:1.15rem">
-      <form method="post" action="/issue">
-        ${issueInputs(params.prefill ?? null)}
-        <label for="prevUri">Previous release URI (optional)</label>
-        <input type="text" id="prevUri" name="prevUri"
-          value="${String(params.prefill?.prevUri ?? '')}" placeholder="at://…">
-        <label for="prevCid">Previous release CID (optional)</label>
-        <input type="text" id="prevCid" name="prevCid"
-          value="${String(params.prefill?.prevCid ?? '')}" placeholder="bafyrei…">
-        <button type="submit" ${actor ? '' : 'disabled'}>Sign and publish</button>
-      </form>
-    </div>`,
+    issueBody({ ...params, actor }),
     params.mode,
     params.chrome,
   )
+}
+
+/**
+ * The body of the issue flow, without a page around it.
+ *
+ * Exported so the modal and the page render the same thing. The modal fetches
+ * this fragment rather than rebuilding the form in the client, which is the
+ * only way the scripted and unscripted paths stay honestly identical — the
+ * alternative is two templates that drift and only one of which anybody looks
+ * at.
+ */
+export function issueBody(params: {
+  actors: Actor[]
+  current?: string
+  actor?: Actor
+  issued?: { uri: string; bundle: unknown; values: Record<string, unknown> }
+  error?: string
+  draft?: Record<string, unknown> | null
+}) {
+  const actor = params.actor ?? params.actors.find((a) => a.handle === params.current)
+
+  if (params.issued) {
+    const withheld = FIELDS.filter((f) => !f.public).length
+    return html`<div class="issued">
+      <h1>Released</h1>
+      <p class="sub">
+        Signed by ${actor?.displayName ?? 'the issuer'}&rsquo;s own server and
+        published to their repository. It will reach the feed once an observer
+        has seen it, which takes a moment.
+      </p>
+
+      <h2>What the network can see</h2>
+      <p class="sub">
+        ${FIELDS.length - withheld} of ${FIELDS.length} blocks are on the public
+        record. The other ${withheld} are committed and withheld — the
+        commitment proves nobody changed them, and nobody can read them without
+        the document. Part and serial numbers lose their punctuation and case
+        on the way, so that two shops writing one serial differently still
+        write the same commitment.
+      </p>
+      ${releasedSheet(params.issued.values)}
+
+      <div class="seam">
+        <strong>The paper still travels with the part.</strong> Nothing here
+        replaces it. What has changed is that whoever receives it can check the
+        copy in their hands against what you just published, without asking you
+        or anybody else.
+      </div>
+
+      <div class="card" style="padding:1.15rem">
+        <div class="detail mono" style="word-break:break-all">${params.issued.uri}</div>
+        <label for="out">The document — save this, it cannot be reconstructed</label>
+        <textarea id="out" readonly data-uri="${params.issued.uri}"
+          >${JSON.stringify(params.issued.bundle, null, 2)}</textarea>
+        <p class="sub" id="kept" hidden style="margin-top:.8rem">
+          Kept in <a href="/cabinet">this browser</a> — never on this server.
+        </p>
+      </div>
+    </div>`
+  }
+
+  if (!actor) {
+    return html`<h1>Release a certificate</h1>
+      <div class="card"><div class="empty">
+        Choose an organization in the header first. The public cannot sign.
+      </div></div>`
+  }
+
+  return html`<h1>Release a certificate</h1>
+    <p class="sub">
+      A synthetic 8130-3, generated for ${actor.displayName}. Edit anything on
+      it. Releasing it publishes a real signed record to a real repository —
+      the data is invented, the cryptography is not.
+    </p>
+
+    ${params.error
+      ? html`<div class="verdict no" style="margin:1rem 0"><h2>Could not release</h2><p>${params.error}</p></div>`
+      : ''}
+
+    <form method="post" action="/issue" class="draftform">
+      ${draftSheet(params.draft ?? {})}
+      <button type="submit">Release this certificate</button>
+    </form>`
 }
 
 export type FormFold = { label: string; hash: string; side?: 'left' | 'right' }

@@ -477,6 +477,185 @@ describe('a part as a topic', () => {
   })
 })
 
+/**
+ * The values a draft arrived carrying, read back out of the rendered sheet.
+ *
+ * Scraped rather than fetched as data, deliberately. There is no data
+ * endpoint behind the composer any more — it asks for the same markup the
+ * page draws and drops it in — so a test that reads JSON from somewhere else
+ * would be checking a generator nothing renders. Reading the sheet is what
+ * the browser does, and it is the only thing that catches the form and the
+ * field set drifting apart.
+ */
+const unentity = (v: string) =>
+  v
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+
+async function draftValues(
+  app: ReturnType<typeof createApp>,
+  cookie: string,
+): Promise<Record<string, string>> {
+  const draft = await (
+    await app.request('/issue?fragment', { headers: { cookie } })
+  ).text()
+  const values: Record<string, string> = {}
+  for (const spec of FIELDS) {
+    if (spec.kind === 'enum') {
+      const m = /<option value="([^"]+)" selected>/.exec(
+        draft.slice(draft.indexOf(`name="${spec.name}"`)),
+      )
+      assert.ok(m, `${spec.name} had no selected option`)
+      values[spec.name] = unentity(m[1]!)
+    } else if (spec.name === 'remarks') {
+      const m = /name="remarks"[^>]*>([^<]*)<\/textarea>/.exec(draft)
+      assert.ok(m, 'remarks had no value')
+      values[spec.name] = unentity(m[1]!)
+    } else {
+      const m = new RegExp(`name="${spec.name}" value="([^"]*)"`).exec(draft)
+      assert.ok(m, `${spec.name} had no value`)
+      values[spec.name] = unentity(m[1]!)
+    }
+  }
+  return values
+}
+
+/**
+ * The composer, which is a dialog that fetches the same markup the page draws.
+ *
+ * Worth its own tests because nothing about the modal is visible to the
+ * server: it asks for `/issue?fragment`, drops the answer in, and the only
+ * thing keeping the two paths honest is that they call one function. If the
+ * fragment ever comes back wrapped in a layout, or comes back without the
+ * form, the dialog shows a page inside a page or an empty box — and neither
+ * fails anywhere a page test would look.
+ */
+describe('the composer fragment', () => {
+  const ACTS = `f8130_actor=cascadia-mro.${DOMAIN}`
+
+  const writerFor = async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
+    return { app, index }
+  }
+
+  test('is a body and not a page', async () => {
+    const { app } = await writerFor()
+    const body = await (
+      await app.request('/issue?fragment', { headers: { cookie: ACTS } })
+    ).text()
+    assert.ok(!body.includes('<!doctype'), 'the fragment carried a whole document')
+    assert.ok(!body.includes('<dialog id="composer">'), 'the dialog fetched itself')
+    assert.match(body, /class="draftform"/)
+  })
+
+  /**
+   * The dialog holds no template of its own, so a draft it cannot fill is a
+   * draft nobody can submit. Every block has to arrive filled from the server.
+   */
+  test('arrives generated, with every block filled', async () => {
+    const { app } = await writerFor()
+    const body = await (
+      await app.request('/issue?fragment', { headers: { cookie: ACTS } })
+    ).text()
+    for (const spec of FIELDS) {
+      assert.ok(body.includes(`name="${spec.name}"`), `no ${spec.name} (Block ${spec.block})`)
+      if (spec.kind === 'enum' || spec.name === 'remarks') continue
+      assert.ok(
+        !body.includes(`name="${spec.name}" value=""`),
+        `${spec.name} arrived blank`,
+      )
+    }
+  })
+
+  test('signing through the fragment publishes and confirms in place', async () => {
+    const { app, index } = await writerFor()
+    const submitted = new URLSearchParams(await draftValues(app, ACTS))
+
+    const res = await app.request('/issue?fragment', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTS },
+      body: submitted,
+    })
+    assert.equal(res.status, 200)
+    const done = await res.text()
+    assert.ok(!done.includes('<!doctype'), 'the confirmation carried a whole document')
+    assert.match(done, /Released/)
+    assert.equal(index.size.releases, 1, 'the fragment path did not actually publish')
+
+    // The bundle has to reach the browser here or nowhere: the dialog is the
+    // only place it is ever handed over, and it cannot be reissued.
+    assert.match(done, /id="out"/)
+    assert.match(done, /cannot be reconstructed/)
+  })
+
+  /**
+   * The confirmation is the argument, not a receipt. A visitor has just typed
+   * seventeen blocks and this is where eight of them stop being readable by
+   * anybody who was not handed the paper.
+   */
+  test('the confirmation shows which blocks the network kept', async () => {
+    const { app } = await writerFor()
+    const values = await draftValues(app, ACTS)
+    const remarks = values.remarks!
+    const submitted = new URLSearchParams(values)
+
+    const done = await (
+      await app.request('/issue?fragment', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTS },
+        body: submitted,
+      })
+    ).text()
+
+    const reveal = done.slice(done.indexOf('class="reveal"'), done.indexOf('class="seam"'))
+    const rows = reveal.split('<div class="rev ').slice(1)
+    assert.equal(rows.length, FIELDS.length, 'the reveal did not cover every block')
+    for (const spec of FIELDS) {
+      const row = rows.find((r) => r.includes(`Block ${spec.block} · `))
+      assert.ok(row, `Block ${spec.block} (${spec.name}) is not in the reveal`)
+      assert.equal(
+        row.includes('withheld'),
+        !spec.public,
+        `Block ${spec.block} (${spec.name}) is on the wrong side of the reveal`,
+      )
+    }
+    // And the withheld prose is genuinely absent, not merely labelled.
+    assert.ok(remarks.length > 0)
+    assert.ok(!reveal.includes(remarks), 'Block 12 was printed on the public side')
+  })
+
+  test('a rejected edit comes back as the draft with the reason on it', async () => {
+    const { app, index } = await writerFor()
+    const res = await app.request('/issue?fragment', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ACTS },
+      body: new URLSearchParams({ partNumber: 'PN-EDITED', completedAt: 'yesterday' }),
+    })
+    assert.equal(res.status, 400)
+    const body = await res.text()
+    assert.ok(!body.includes('<!doctype'))
+    assert.match(body, /Could not release/)
+    // Starting over would throw away sixteen blocks to fix one.
+    assert.match(body, /name="partNumber" value="PN-EDITED"/)
+    assert.equal(index.size.releases, 0)
+  })
+
+  test('the public gets no fragment to fill either', async () => {
+    const { app } = await writerFor()
+    const body = await (
+      await app.request('/issue?fragment', { headers: { cookie: 'f8130_actor=~public' } })
+    ).text()
+    assert.ok(!body.includes('class="draftform"'))
+    assert.match(body, /The public cannot sign/)
+  })
+})
+
 describe('the viewpoint control', () => {
   const writerFor = async () => {
     const { net } = await demoNetwork(DOMAIN)
@@ -526,7 +705,7 @@ describe('the viewpoint control', () => {
     const body = await (
       await app.request('/issue', { headers: { cookie: PUBLIC } })
     ).text()
-    assert.match(body, /viewing as the public/)
+    assert.match(body, /The public cannot sign/)
 
     const res = await app.request('/issue', {
       method: 'POST',
@@ -538,48 +717,18 @@ describe('the viewpoint control', () => {
   })
 
   /**
-   * The composer fills its inputs by field name, and one of the seventeen is
-   * called "item". Anything reaching for it through a form's element
-   * collection gets that collection's own item() method instead, so the field
-   * has to be in the payload for the browser-side fix to have something to
-   * find.
+   * Disabling the buttons is not the guard any more, and a disabled button
+   * never was one. A draft is generated for the acting organization, so with
+   * nobody acting there is no draft and therefore nothing to submit — the
+   * public is offered the picker instead of a form it cannot use.
    */
-  test('the generated example carries every field, Block 6 included', async () => {
-    const { app } = await writerFor()
-    const form = (await (await app.request('/api/example')).json()) as Record<string, unknown>
-    for (const spec of FIELDS) {
-      assert.ok(spec.name in form, `no ${spec.name} (Block ${spec.block})`)
-    }
-  })
-
-  test('the public is offered no example to generate either', async () => {
-    const { app } = await writerFor()
-    const res = await app.request('/api/example', { headers: { cookie: PUBLIC } })
-    assert.equal(res.status, 403)
-  })
-
-  test('the public viewpoint cannot press the buttons that sign', async () => {
+  test('the public viewpoint is offered no form at all', async () => {
     const { app } = await writerFor()
     const body = await (
       await app.request('/issue', { headers: { cookie: PUBLIC } })
     ).text()
-    assert.match(body, /name="example" value="1"\s*disabled/)
-    assert.match(body, /<button type="submit" disabled>Sign and publish/)
-  })
-
-  /**
-   * The date hint used to be interpolated as a fragment of markup, so its
-   * quotes were escaped and the browser rendered an attribute whose name
-   * contained the entities — the field displayed its own placeholder in
-   * quotation marks.
-   */
-  test('the date hint is a placeholder rather than escaped markup', async () => {
-    const { app } = await writerFor()
-    const body = await (
-      await app.request('/issue', { headers: { cookie: `f8130_actor=cascadia-mro.${DOMAIN}` } })
-    ).text()
-    assert.ok(!body.includes('&quot;2026'), 'the placeholder was escaped into the attribute name')
-    assert.match(body, /placeholder="2026-04-01T12:00:00Z"/)
+    assert.ok(!body.includes('class="draftform"'), 'the public was handed a draft')
+    assert.ok(!body.includes('name="partNumber"'), 'the public was handed blocks to fill')
   })
 
   test('choosing an organization sets the cookie; the public is also a choice', async () => {
@@ -607,7 +756,7 @@ describe('the viewpoint control', () => {
     const body = await (
       await app.request('/issue', { headers: { cookie: 'f8130_actor=attacker.example.com' } })
     ).text()
-    assert.match(body, /viewing as the public/)
+    assert.match(body, /The public cannot sign/)
     assert.ok(!body.includes('attacker.example.com'))
   })
 
@@ -616,21 +765,21 @@ describe('the viewpoint control', () => {
     const feed = await (await app.request('/')).text()
     assert.match(feed, /<dialog id="composer">/)
 
-    // Two seventeen-block forms in one document would mean duplicate ids.
+    // Except on /issue, where the page already is what the dialog fetches.
     const issue = await (await app.request('/issue')).text()
     assert.ok(!issue.includes('<dialog id="composer">'))
   })
 
   /**
-   * The reported bug, exactly: pick an organization, press generate, and the
-   * generated form must belong to that organization rather than to whoever
-   * the cookie happens to name.
+   * The reported bug, exactly: pick an organization, open the composer, and
+   * the generated form must belong to that organization rather than to
+   * whoever the cookie happens to name.
    */
-  test('the generate button issues as the organization it can see', async () => {
+  test('the composer issues as the organization it can see', async () => {
     const { app } = await writerFor()
     const vantage = orgs(DOMAIN).find((o) => o.key === 'vantage')!
     const res = await app.request(
-      `/issue?example=1&handle=${encodeURIComponent(vantage.handle)}`,
+      `/issue?handle=${encodeURIComponent(vantage.handle)}`,
       // A cookie still naming someone else, which is the state the bug needed.
       { headers: { cookie: `f8130_actor=cascadia-mro.${DOMAIN}` } },
     )
@@ -780,6 +929,7 @@ describe('narrated forms reaching the wire', () => {
     signerName: 'T. Almeida',
   }
   const stub: Narrator = { narrate: async () => NARRATION }
+  const MRO = `f8130_actor=cascadia-mro.${DOMAIN}`
 
   async function narratedApp(narrator: Narrator | null) {
     const { net } = await demoNetwork(DOMAIN)
@@ -789,9 +939,9 @@ describe('narrated forms reaching the wire', () => {
     return { app, index, writer, net }
   }
 
-  test('the composer offers a narrated example', async () => {
+  test('the composer offers a narrated draft', async () => {
     const { app } = await narratedApp(stub)
-    const form = (await (await app.request('/api/example')).json()) as Record<string, unknown>
+    const form = await draftValues(app, MRO)
 
     assert.equal(form.description, NARRATION.description)
     assert.equal(form.remarks, NARRATION.remarks)
@@ -808,7 +958,7 @@ describe('narrated forms reaching the wire', () => {
    */
   test('the identifiers still come from code, not from the narration', async () => {
     const { app } = await narratedApp(stub)
-    const form = (await (await app.request('/api/example')).json()) as Record<string, unknown>
+    const form = await draftValues(app, MRO)
     const org = orgs(DOMAIN).find((o) => o.kind === 'mro')!
 
     assert.equal(form.organizationName, org.displayName)
@@ -819,21 +969,15 @@ describe('narrated forms reaching the wire', () => {
 
   test('a narrated form commits and publishes like any other', async () => {
     const { app, index } = await narratedApp(stub)
-    const form = (await (await app.request('/api/example')).json()) as Record<string, string>
-
-    const body = new URLSearchParams()
-    for (const spec of FIELDS) body.set(spec.name, String(form[spec.name]))
+    const body = new URLSearchParams(await draftValues(app, MRO))
 
     const res = await app.request('/issue', {
       method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        cookie: `f8130_actor=cascadia-mro.${DOMAIN}`,
-      },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: MRO },
       body,
     })
     assert.equal(res.status, 200)
-    assert.match(await res.text(), /Issued/)
+    assert.match(await res.text(), /Released/)
     assert.equal(index.size.releases, 1)
   })
 
@@ -844,16 +988,10 @@ describe('narrated forms reaching the wire', () => {
    */
   test('narrated remarks stay off the public record', async () => {
     const { app, index } = await narratedApp(stub)
-    const form = (await (await app.request('/api/example')).json()) as Record<string, string>
-    const body = new URLSearchParams()
-    for (const spec of FIELDS) body.set(spec.name, String(form[spec.name]))
     await app.request('/issue', {
       method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        cookie: `f8130_actor=cascadia-mro.${DOMAIN}`,
-      },
-      body,
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: MRO },
+      body: new URLSearchParams(await draftValues(app, MRO)),
     })
 
     const feed = await (await app.request('/')).text()
@@ -863,19 +1001,20 @@ describe('narrated forms reaching the wire', () => {
     assert.match(feed, /Hydraulic reservoir assembly/)
   })
 
-  test('no narrator means the catalogue, and the endpoint still answers', async () => {
+  test('no narrator means the catalogue, and a draft still arrives', async () => {
     const { app } = await narratedApp(null)
-    const res = await app.request('/api/example')
-    assert.equal(res.status, 200)
-    const form = (await res.json()) as Record<string, unknown>
+    const form = await draftValues(app, MRO)
     for (const spec of FIELDS) assert.ok(spec.name in form)
   })
 
-  test('a narrator that fails is invisible to the caller', async () => {
+  /**
+   * A model that is down, slow or refusing must not be able to stop somebody
+   * releasing a certificate. The catalogue answers instead and the visitor
+   * cannot tell — which is the point, because both are a valid form.
+   */
+  test('a narrator that fails is invisible to the visitor', async () => {
     const { app } = await narratedApp({ narrate: async () => null })
-    const res = await app.request('/api/example')
-    assert.equal(res.status, 200)
-    const form = (await res.json()) as Record<string, unknown>
+    const form = await draftValues(app, MRO)
     for (const spec of FIELDS) assert.ok(spec.name in form)
   })
 })
@@ -1502,39 +1641,20 @@ describe('a certificate signed by hand', () => {
     const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
     const mro = orgs(DOMAIN).find((o) => o.kind === 'mro')!
 
-    const res = await app.request('/api/example', {
-      headers: { cookie: `f8130_actor=${mro.handle}` },
-    })
-    assert.equal(res.status, 200)
-    const form = (await res.json()) as Record<string, unknown>
+    const form = await draftValues(app, `f8130_actor=${mro.handle}`)
 
     // A feed card shows the date on the certificate rather than the moment
     // the record arrived, so a form generated for somebody to sign now has to
     // claim now. Left to the catalogue's default it lands anywhere in the last
     // ninety days, and a release published by hand appeared in the feed
     // seventeen days old.
+    //
+    // There used to be two prefill paths and the same omission in both; the
+    // scripted one now fetches this very markup, so there is one thing to get
+    // right and one test standing over it.
     const claimed = new Date(String(form.completedAt)).getTime()
     const ageDays = (Date.now() - claimed) / 86_400_000
     assert.ok(ageDays < 1, `a form to be signed now claims ${ageDays.toFixed(1)}d ago`)
     assert.ok(claimed <= Date.now(), 'a certificate cannot be signed in the future')
-  })
-
-  test('the no-script prefill claims today too', async () => {
-    const { net } = await demoNetwork(DOMAIN)
-    const index = new MemoryIndex()
-    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
-    const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
-    const mro = orgs(DOMAIN).find((o) => o.kind === 'mro')!
-
-    const body = await (
-      await app.request('/issue?example', { headers: { cookie: `f8130_actor=${mro.handle}` } })
-    ).text()
-
-    // Both prefill paths had the same omission; fixing only the scripted one
-    // would leave the fallback quietly wrong.
-    const m = body.match(/name="completedAt"[^>]*value="([^"]+)"/)
-    assert.ok(m, 'no completedAt was prefilled')
-    const ageDays = (Date.now() - new Date(m![1]!).getTime()) / 86_400_000
-    assert.ok(ageDays < 1, `the fallback prefill claims ${ageDays.toFixed(1)}d ago`)
   })
 })
