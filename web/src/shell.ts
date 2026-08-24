@@ -242,6 +242,62 @@ select { padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 6p
 .cert .stmt { padding: .45rem .55rem; font-size: .74rem; }
 .cert .stmt.on { font-weight: 600; }
 
+/* The same sheet with its blocks open for typing.
+   Deliberately not styled as a stack of form controls. A visitor editing the
+   document is meant to feel like somebody amending a form, not like somebody
+   completing seventeen labelled inputs — which is the version nobody finished.
+   The stamp shrinks because at full size it sits across the fields you are
+   trying to read while you type in them. */
+.sheet.draft .stamp span { font-size: clamp(.75rem, 2vw, 1.15rem); opacity: .6; }
+.blk.edit { cursor: default; }
+.blk.edit:hover { background: transparent; }
+.blk.edit input, .blk.edit select, .blk.edit textarea {
+  width: 100%; margin: 0; padding: .1rem .1rem .15rem; font: inherit;
+  font-size: .87rem; color: inherit; background: transparent;
+  border: 0; border-bottom: 1px dashed var(--line); border-radius: 0;
+}
+.blk.edit textarea { resize: vertical; min-height: 2.4rem; }
+.blk.edit input:focus, .blk.edit select:focus, .blk.edit textarea:focus {
+  outline: none; border-bottom-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+form.draftform button[type=submit] { margin-top: 1rem; }
+
+/* What the network kept, and what it did not.
+   Two tones and nothing else: the argument is which lines went dark, and a
+   legend or a badge per row would bury it under decoration. */
+.reveal {
+  display: grid; gap: 1px; background: var(--line);
+  border: 1px solid var(--line); border-radius: 4px; overflow: hidden;
+}
+.rev { display: flex; gap: .8rem; align-items: baseline; padding: .45rem .65rem; background: var(--card); }
+.rev .n {
+  flex: 0 0 40%; font-size: .62rem; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--muted);
+}
+.rev .v { font-size: .85rem; word-break: break-word; }
+.rev.priv { background: color-mix(in srgb, var(--muted) 12%, var(--card)); }
+.rev.priv .v { color: var(--muted); font-style: italic; }
+@media (max-width: 34rem) {
+  .rev { display: block; }
+  .rev .n { display: block; margin-bottom: .15rem; }
+}
+
+/* Waiting on a generated form. It is a call to a model, so it takes a second
+   or two, and a blank dialog for that long reads as broken rather than busy. */
+.working {
+  display: flex; flex-direction: column; align-items: center; gap: .9rem;
+  padding: 3.5rem 1rem; color: var(--muted); text-align: center;
+}
+.working p { margin: 0; font-size: .9rem; }
+.spinner {
+  width: 1.5rem; height: 1.5rem; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+
 /* panes */
 .panes { display: grid; gap: 1rem; grid-template-columns: 1fr; }
 @media (min-width: 60rem) { .panes { grid-template-columns: 1fr 1fr; } }
@@ -503,7 +559,7 @@ a.tag:hover { border-bottom-color: var(--accent); }
 
 /* composer */
 dialog#composer {
-  width: min(38rem, calc(100vw - 2rem)); max-height: 86vh; padding: 0;
+  width: min(48rem, calc(100vw - 2rem)); max-height: 86vh; padding: 0;
   border: 1px solid var(--line); border-radius: 12px;
   background: var(--card); color: var(--fg); overflow: hidden;
 }
@@ -708,38 +764,87 @@ function identity(chrome: Chrome) {
 }
 
 /**
- * Wiring for the composer, and nothing else.
+ * Wiring for the composer.
  *
  * Every entry point into it is an ordinary link to `/issue`, upgraded here to
  * open the dialog in place. With scripting off the links still work and the
- * page they land on is the same form, so the composer is an improvement on the
- * application rather than a requirement of it.
+ * page they land on is the same markup, so the composer is an improvement on
+ * the application rather than a requirement of it.
+ *
+ * Nothing here builds a form. The dialog fetches `/issue?fragment` and drops
+ * in whatever comes back — a generated draft, the confirmation after it is
+ * signed, or the draft again with an error on it. That keeps the modal and
+ * the page rendering one template instead of two, which is the arrangement
+ * the old generate-example button did not have: it filled inputs in the
+ * client, and the client's idea of the field set drifted from the schema's
+ * twice before anybody noticed.
  */
 const COMPOSER_SCRIPT = `
 (function () {
   var dlg = document.getElementById('composer')
   if (!dlg || !dlg.showModal) return
+  var body = dlg.querySelector('.cbody')
+  if (!body) return
+  var RESTING = body.innerHTML
+
+  function working(message) {
+    body.innerHTML = RESTING
+    var p = body.querySelector('.working p')
+    if (p) p.textContent = message
+  }
+
+  function failed(message) {
+    body.innerHTML = ''
+    var box = document.createElement('div')
+    box.className = 'empty'
+    box.textContent = message
+    var link = document.createElement('p')
+    link.innerHTML = '<a href="/issue">Open the full page instead</a>'
+    body.appendChild(box)
+    body.appendChild(link)
+  }
+
+  // Whatever came back is live markup now: the draft's form has to submit
+  // into the dialog rather than navigate, and a confirmation carries a bundle
+  // that has to reach the browser's store before the visitor closes the box.
+  function settle() {
+    body.scrollTop = 0
+    var out = body.querySelector('#out')
+    if (out && window.f8130Keep) window.f8130Keep(out)
+    var form = body.querySelector('form.draftform')
+    if (!form) return
+    form.addEventListener('submit', function (e) {
+      e.preventDefault()
+      working('Signing and publishing\u2026')
+      send(fetch('/issue?fragment', { method: 'POST', body: new FormData(form) }),
+           'Could not publish that certificate.')
+    })
+  }
+
+  function send(pending, whenBroken) {
+    pending.then(function (r) {
+      // A 400 is the server handing back the draft with what went wrong on
+      // it, which is a page worth showing. Anything else is not.
+      if (!r.ok && r.status !== 400) throw new Error('bad status')
+      return r.text()
+    }).then(function (markup) {
+      body.innerHTML = markup
+      settle()
+    }).catch(function () { failed(whenBroken) })
+  }
+
   document.querySelectorAll('[data-compose]').forEach(function (el) {
-    el.addEventListener('click', function (e) { e.preventDefault(); dlg.showModal() })
+    el.addEventListener('click', function (e) {
+      e.preventDefault()
+      dlg.showModal()
+      working('Generating a synthetic 8130-3\u2026')
+      send(fetch('/issue?fragment'), 'Could not generate a certificate just now.')
+    })
   })
-  var gen = document.getElementById('gen')
-  if (gen) gen.addEventListener('click', function () {
-    gen.disabled = true
-    fetch('/api/example').then(function (r) {
-      if (!r.ok) throw new Error('no example')
-      return r.json()
-    }).then(function (form) {
-      var f = document.getElementById('composeForm')
-      Object.keys(form).forEach(function (k) {
-        // querySelector rather than f.elements[k]: the collection's named
-        // access collides with its own item() method, so Block 6 — whose
-        // field is literally called "item" — assigned onto a function and
-        // silently stayed blank.
-        var input = f.querySelector('[name="' + k + '"]')
-        if (input) input.value = form[k]
-      })
-    }).catch(function () {}).then(function () { gen.disabled = false })
-  })
+
+  // Back to the loader on the way out, so the next open does not flash the
+  // last visitor's certificate before its replacement arrives.
+  dlg.addEventListener('close', function () { body.innerHTML = RESTING })
 })()
 `
 
@@ -802,14 +907,20 @@ const CABINET_SCRIPT = `
   }
 
   // Keep a bundle the moment it is handed over. It cannot be reconstructed.
-  var out = document.getElementById('out')
-  if (out && out.dataset.uri) {
+  //
+  // Exported rather than run once at load, because the composer is handed its
+  // bundle after this script has finished: the confirmation arrives as markup
+  // fetched into a dialog, and a document that is only stored on a full page
+  // load is a document lost every time somebody uses the modal.
+  window.f8130Keep = function (out) {
+    if (!out || !out.dataset.uri) return
     var all = read()
     all[out.dataset.uri] = out.value
     write(all)
-    var kept = document.getElementById('kept')
+    var kept = out.parentNode && out.parentNode.querySelector('#kept')
     if (kept) kept.hidden = false
   }
+  window.f8130Keep(document.getElementById('out'))
 
   // On a record page, open it if this browser happens to hold its bundle.
   var opener = document.getElementById('opener')
@@ -910,7 +1021,7 @@ export function layout(
     <footer>Demonstration only · this service holds no signing keys</footer>
   </main>
 </div>
-${withComposer ? composer(me) : ''}
+${withComposer ? composer() : ''}
 ${withComposer ? html`${raw(`<script>${COMPOSER_SCRIPT}</script>`)}` : ''}
 ${raw(`<script>${CABINET_SCRIPT}</script>`)}
 ${actors.length > 0 ? html`${raw(`<script>${SWITCHER_SCRIPT}</script>`)}` : ''}

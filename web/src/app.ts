@@ -43,6 +43,7 @@ import {
   feedPage,
   formPage,
   inboxPage,
+  issueBody,
   issuePage,
   partPage,
   threadPage,
@@ -901,41 +902,6 @@ export function createApp(deps: AppDeps) {
     })
 
     /**
-     * A generated example, as data.
-     *
-     * The composer fills its own inputs from this rather than round-tripping,
-     * because a round trip closes the dialog. Same builder the seed job and
-     * the full page use — a second one would drift the way the roster and the
-     * record shape both did, quietly, and only visibly once something failed.
-     */
-    app.get('/api/example', async (c) => {
-      const handle = currentActor(c)
-      if (!handle) return c.json({ error: 'the public cannot sign' }, 403)
-      const org = orgs(process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev').find(
-        (o) => o.handle === handle,
-      )
-      if (!org) return c.json({ error: 'unknown organization' }, 404)
-      // Narrated when a narrator is configured, drawn from the catalogue when
-      // it is not or when the call fails. The caller cannot tell, and both are
-      // a valid seventeen-block form.
-      return c.json(
-        await narratedForm({
-          org,
-          seed: Math.floor(Math.random() * 1e9),
-          narrator: deps.narrator ?? null,
-          // Today. Somebody is filling this in to sign it now, so the work it
-          // describes finished now. Left to the catalogue's default it lands
-          // anywhere in the last ninety days, and since a feed card shows the
-          // date on the certificate rather than the moment the record arrived,
-          // a release published by hand appeared in the feed seventeen days
-          // old. The generator sets this deliberately for its seeded history;
-          // this path had never been given a figure at all.
-          agedDays: 0,
-        }),
-      )
-    })
-
-    /**
      * Publishing a successful check.
      *
      * Only successes reach here, and the lexicon has no failing counterpart.
@@ -972,11 +938,10 @@ export function createApp(deps: AppDeps) {
       }
     })
 
-    app.get('/issue', (c) => {
-      // The example button submits the handle it can see, and the handle it
-      // can see wins. Reading only the cookie is what let a visitor pick an
-      // organization, press generate, and get a form belonging to whoever was
-      // first in the roster.
+    app.get('/issue', async (c) => {
+      // A handle on the query wins over the cookie. Reading only the cookie
+      // is what let a visitor pick an organization, press generate, and get a
+      // form belonging to whoever was first in the roster.
       const asked = c.req.query('handle')
       const handle =
         asked && writer.actors().some((a) => a.handle === asked)
@@ -991,25 +956,34 @@ export function createApp(deps: AppDeps) {
         )
       }
 
-      // The generated example is issued BY the acting organization, so its
-      // Block 4 is that organization's own — the one thing on the form a shop
-      // could not plausibly get wrong about itself.
-      let prefill: Record<string, unknown> | null = null
-      if (handle && c.req.query('example') !== undefined) {
-        const org = orgs(process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev').find(
-          (o) => o.handle === handle,
+      // Always generated, never blank. Seventeen empty blocks is a chore
+      // nobody was going to complete to see an idea, and the point of this
+      // screen is the idea. The draft is issued BY the acting organization, so
+      // its Block 4 is that organization's own — the one thing on a form a
+      // shop could not plausibly get wrong about itself.
+      //
+      // agedDays: 0 because the work is finishing now; it is being signed now.
+      let draft: Record<string, unknown> | null = null
+      const org = handle
+        ? orgs(process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev').find(
+            (o) => o.handle === handle,
+          )
+        : undefined
+      if (org) {
+        draft = await narratedForm({
+          org,
+          seed: Math.floor(Math.random() * 1e9),
+          narrator: deps.narrator ?? null,
+          agedDays: 0,
+        })
+      }
+
+      // The modal asks for the body alone and wraps it itself, so the two
+      // paths render the same markup rather than two templates that drift.
+      if (c.req.query('fragment') !== undefined) {
+        return c.html(
+          issueBody({ actors: writer.actors(), current: handle, draft }),
         )
-        if (org) {
-          // A fresh seed per request, so clicking twice gives two parts. The
-          // generator is deterministic in it, which is what tests pin.
-          // agedDays: 0 for the same reason as the scripted path above — the
-          // work is finishing now, because it is being signed now.
-          prefill = syntheticForm({
-            org,
-            seed: Math.floor(Math.random() * 1e9),
-            agedDays: 0,
-          })
-        }
       }
 
       return c.html(
@@ -1018,7 +992,7 @@ export function createApp(deps: AppDeps) {
           chrome: { actors: writer.actors(), current: handle, composer: false },
           actors: writer.actors(),
           current: handle,
-          prefill,
+          draft,
         }),
       )
     })
@@ -1061,22 +1035,50 @@ export function createApp(deps: AppDeps) {
           form: raw,
           prev: prevUri && prevCid ? { uri: prevUri, cid: prevCid } : undefined,
         })
+        const done = {
+          uri: issued.uri,
+          bundle: issued.bundle,
+          // What they actually wrote, so the reveal shows their form rather
+          // than a re-read of the public record — which is the half of it the
+          // screen exists to contrast against.
+          values: issued.bundle.values as Record<string, unknown>,
+        }
+        if (c.req.query('fragment') !== undefined) {
+          return c.html(
+            issueBody({ actors: writer.actors(), current: handle, issued: done }),
+          )
+        }
         return c.html(
           issuePage({
             mode,
             chrome: { ...chrome(c), composer: false },
             actors: writer.actors(),
             current: handle,
-            issued: { uri: issued.uri, bundle: issued.bundle },
+            issued: done,
           }),
         )
       } catch (err) {
+        // Rendered back with what they typed, so a rejected edit is a
+        // correction rather than starting over.
+        const back = { ...raw }
+        if (c.req.query('fragment') !== undefined) {
+          return c.html(
+            issueBody({
+              actors: writer.actors(),
+              current: handle,
+              draft: back,
+              error: describe(err),
+            }),
+            400,
+          )
+        }
         return c.html(
           issuePage({
             mode,
             chrome: { ...chrome(c), composer: false },
             actors: writer.actors(),
             current: handle,
+            draft: back,
             error: describe(err),
           }),
           400,
