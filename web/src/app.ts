@@ -923,6 +923,14 @@ export function createApp(deps: AppDeps) {
           org,
           seed: Math.floor(Math.random() * 1e9),
           narrator: deps.narrator ?? null,
+          // Today. Somebody is filling this in to sign it now, so the work it
+          // describes finished now. Left to the catalogue's default it lands
+          // anywhere in the last ninety days, and since a feed card shows the
+          // date on the certificate rather than the moment the record arrived,
+          // a release published by hand appeared in the feed seventeen days
+          // old. The generator sets this deliberately for its seeded history;
+          // this path had never been given a figure at all.
+          agedDays: 0,
         }),
       )
     })
@@ -994,7 +1002,13 @@ export function createApp(deps: AppDeps) {
         if (org) {
           // A fresh seed per request, so clicking twice gives two parts. The
           // generator is deterministic in it, which is what tests pin.
-          prefill = syntheticForm({ org, seed: Math.floor(Math.random() * 1e9) })
+          // agedDays: 0 for the same reason as the scripted path above — the
+          // work is finishing now, because it is being signed now.
+          prefill = syntheticForm({
+            org,
+            seed: Math.floor(Math.random() * 1e9),
+            agedDays: 0,
+          })
         }
       }
 

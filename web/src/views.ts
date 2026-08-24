@@ -681,7 +681,7 @@ export function feedCard(
   return html`<article class="event attested" data-cid="${t.cid}">
     <div class="who">
       ${avatar(nameOf(t.verifierDid), true)}
-      ${byline(t.verifierDid)} checked this document
+      ${byline(t.verifierDid)} accepted this certificate
       <span class="when"><a href="${postPath(t.subjectUri)}"
         >${ago(t.verifiedAt, now)}</a></span>
     </div>
@@ -780,7 +780,7 @@ export function threadPage(params: {
             (a) => html`<article class="event attested reply" data-cid="${a.cid}">
               <div class="who">
                 ${avatar(nameOf(a.verifierDid), true)}
-                <strong>${nameOf(a.verifierDid)}</strong> checked this document
+                <strong>${nameOf(a.verifierDid)}</strong> accepted this certificate
                 <span class="when">${ago(a.verifiedAt, now)}</span>
               </div>
               <div class="meta">

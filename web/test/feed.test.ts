@@ -142,7 +142,7 @@ describe('the feed page', () => {
     const body = await (await app.request('/')).text()
     assert.match(body, /issued a release certificate/)
     assert.match(body, /rejected/)
-    assert.match(body, /checked this document/)
+    assert.match(body, /accepted this certificate/)
     // A verdict record carries no name for either party, so this reads
     // properly only if the observer indexed the station profile they
     // published.
@@ -284,12 +284,12 @@ describe('threads', () => {
     const body = await (await app.request(PERMALINK)).text()
 
     assert.match(body, /Fuel control unit/)
-    assert.match(body, /checked this document/)
+    assert.match(body, /accepted this certificate/)
 
     // The order is the argument: the check sits under the release it covers,
     // in a repository the issuer does not control.
     assert.ok(
-      body.indexOf('Fuel control unit') < body.indexOf('checked this document'),
+      body.indexOf('Fuel control unit') < body.indexOf('accepted this certificate'),
       'the check must come after the release it covers',
     )
   })
@@ -1491,5 +1491,50 @@ describe('publishing a check', () => {
     const issuerDid = rel.uri.split('/')[2]
     assert.notEqual(written.verifierDid, issuerDid, 'the issuer vouched for itself')
     assert.equal(written.subjectUri, rel.uri)
+  })
+})
+
+describe('a certificate signed by hand', () => {
+  test('claims today, so the feed shows it as just happened', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
+    const mro = orgs(DOMAIN).find((o) => o.kind === 'mro')!
+
+    const res = await app.request('/api/example', {
+      headers: { cookie: `f8130_actor=${mro.handle}` },
+    })
+    assert.equal(res.status, 200)
+    const form = (await res.json()) as Record<string, unknown>
+
+    // A feed card shows the date on the certificate rather than the moment
+    // the record arrived, so a form generated for somebody to sign now has to
+    // claim now. Left to the catalogue's default it lands anywhere in the last
+    // ninety days, and a release published by hand appeared in the feed
+    // seventeen days old.
+    const claimed = new Date(String(form.completedAt)).getTime()
+    const ageDays = (Date.now() - claimed) / 86_400_000
+    assert.ok(ageDays < 1, `a form to be signed now claims ${ageDays.toFixed(1)}d ago`)
+    assert.ok(claimed <= Date.now(), 'a certificate cannot be signed in the future')
+  })
+
+  test('the no-script prefill claims today too', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const app = createApp({ resolver: net, repo: net, index, writer, mode: 'live' })
+    const mro = orgs(DOMAIN).find((o) => o.kind === 'mro')!
+
+    const body = await (
+      await app.request('/issue?example', { headers: { cookie: `f8130_actor=${mro.handle}` } })
+    ).text()
+
+    // Both prefill paths had the same omission; fixing only the scripted one
+    // would leave the fallback quietly wrong.
+    const m = body.match(/name="completedAt"[^>]*value="([^"]+)"/)
+    assert.ok(m, 'no completedAt was prefilled')
+    const ageDays = (Date.now() - new Date(m![1]!).getTime()) / 86_400_000
+    assert.ok(ageDays < 1, `the fallback prefill claims ${ageDays.toFixed(1)}d ago`)
   })
 })
