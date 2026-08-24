@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -36,6 +37,23 @@ type Consumer struct {
 
 	// Now is injectable so tests can pin the notary timestamp.
 	Now func() time.Time
+
+	// HTTPClient fetches proofs for records the firehose will not replay.
+	// Injectable so a test can answer without a server.
+	HTTPClient *http.Client
+
+	// Repositories already asked for a profile, so one that has never
+	// published a station record is asked once per process and not once per
+	// commit. Absence is the common case for an organization that simply has
+	// no profile, and it is not worth a request each time it publishes.
+	askedForProfile map[string]bool
+}
+
+func (c *Consumer) httpClient() *http.Client {
+	if c.HTTPClient != nil {
+		return c.HTTPClient
+	}
+	return &http.Client{Timeout: 15 * time.Second}
 }
 
 func (c *Consumer) now() time.Time {
@@ -186,6 +204,9 @@ func (c *Consumer) handleCommit(ctx context.Context, evt *comatproto.SyncSubscri
 		for i := range records {
 			records[i].Handle = handle
 		}
+		if rec := c.backfillProfile(ctx, evt.Repo); rec != nil {
+			records = append(records, *rec)
+		}
 	}
 
 	// The cursor still advances for a commit carrying nothing of ours,
@@ -199,6 +220,49 @@ func (c *Consumer) handleCommit(ctx context.Context, evt *comatproto.SyncSubscri
 		log.Info("indexed records", "count", len(records))
 	}
 	return nil
+}
+
+// backfillProfile recovers a display name the firehose is never going to send.
+//
+// A station record is published once and the firehose only carries changes, so
+// a rebuilt index has no way to learn a name it did not happen to catch the
+// first time. Rather than wait for an organization to republish — which it has
+// no reason to ever do — the observer notices it is missing a profile and goes
+// and gets it, verified.
+//
+// Asked at most once per repository per process, whether or not it worked. An
+// organization with no profile is an ordinary thing to be, and re-asking on
+// every commit would turn that into a request per record forever.
+func (c *Consumer) backfillProfile(ctx context.Context, repoDID string) *IndexedRecord {
+	if c.askedForProfile == nil {
+		c.askedForProfile = map[string]bool{}
+	}
+	if c.askedForProfile[repoDID] {
+		return nil
+	}
+	has, err := c.Store.HasProfile(ctx, repoDID)
+	if err != nil || has {
+		// An error here is a database problem the caller is about to hit
+		// anyway on the write it actually cares about. Not this path's to
+		// report, and not a reason to skip indexing the commit.
+		return nil
+	}
+	c.askedForProfile[repoDID] = true
+
+	st, err := c.fetchStation(ctx, repoDID)
+	if err != nil {
+		c.logger().Info("no profile available for repository",
+			"did", repoDID, "error", err)
+		return nil
+	}
+	c.logger().Info("recovered a station profile the firehose had not replayed",
+		"did", repoDID, "name", st.DisplayName)
+	return &IndexedRecord{
+		URI:        fmt.Sprintf("at://%s/%s/%s", repoDID, StationNSID, stationRkey),
+		Collection: StationNSID,
+		Station:    st,
+		Handle:     c.handleFor(ctx, repoDID),
+	}
 }
 
 // handleFor resolves a repository's DID to its handle, or "" if it cannot.

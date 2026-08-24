@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -246,6 +247,24 @@ func upsertStation(ctx context.Context, tx pgx.Tx, rec IndexedRecord) error {
 			cert_number = EXCLUDED.cert_number
 	`, did, handle, st.DisplayName, st.Kind, nullIfEmpty(st.Certificate))
 	return err
+}
+
+// HasProfile reports whether this index holds a display name for a DID.
+//
+// Used to decide whether a profile is worth fetching. A row can exist without
+// one — ensureActor creates it the first time a repository publishes anything
+// — so the question is about org_name and not about the row.
+func (s *Store) HasProfile(ctx context.Context, did string) (bool, error) {
+	var name *string
+	err := s.pool.QueryRow(ctx,
+		`SELECT org_name FROM actor WHERE did = $1`, did).Scan(&name)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return name != nil && *name != "", nil
 }
 
 // authorOf pulls the repository DID out of an at:// URI.
