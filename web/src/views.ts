@@ -992,8 +992,8 @@ export function feedPage(params: {
   const body = html`
     <h1>Activity</h1>
     <p class="sub">
-      Every release and every verdict this observer has seen. Dates are what
-      the document claims; the order is this observer&rsquo;s own clock.
+      Every certificate published to the network, and everyone who has checked
+      one against the form that arrived with the part.
       ${params.live
         ? html`<span class="pulse" id="pulse">live</span>`
         : ''}
