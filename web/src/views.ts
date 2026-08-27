@@ -959,19 +959,22 @@ const VERIFY_SCRIPT = `
   form.addEventListener('submit', function (e) {
     e.preventDefault()
 
-    var panel = document.createElement('div')
-    panel.className = 'checking'
-    panel.innerHTML =
-      '<h2 class="sect">Verifying</h2>' +
+    // Only the zone under the document changes. The heading, the component
+    // and the form itself stay exactly where the reader left them, which is
+    // what makes this read as something happening to the document in front of
+    // them rather than as a page swap.
+    var zone = document.querySelector('[data-zone]')
+    if (!zone) return
+    zone.innerHTML =
+      '<div class="checking"><h2 class="sect">Verifying</h2>' +
       '<ol class="steps">' +
       CHECKS.map(function (c) {
         return '<li><span class="tick" aria-hidden="true"></span>' + c + '</li>'
       }).join('') +
-      '</ol>'
-    form.parentNode.replaceChild(panel, form)
-    panel.scrollIntoView({ block: 'nearest' })
+      '</ol></div>'
+    zone.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 
-    var items = panel.querySelectorAll('.steps li')
+    var items = zone.querySelectorAll('.steps li')
     var i = 0
     var pacedDone = false
     var markup = null
@@ -980,7 +983,10 @@ const VERIFY_SCRIPT = `
       if (!pacedDone || markup === null) return
       var main = document.querySelector('main')
       if (!main) return
+      // The whole body this time: the heading changes to the outcome and the
+      // document folds away, so there is more to replace than the zone.
       main.innerHTML = markup
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     }
 
     function step() {
@@ -995,8 +1001,8 @@ const VERIFY_SCRIPT = `
       .then(function (r) { return r.text() })
       .then(function (h) { markup = h; finish() })
       .catch(function () {
-        markup = '<div class="empty">The check could not be run. ' +
-          '<a href="/inbox">Back to receiving</a></div>'
+        markup = '<p class="backlink"><a href="/inbox">&larr; Receiving</a></p>' +
+          '<div class="empty">The check could not be run.</div>'
         finish()
       })
   })
@@ -1049,30 +1055,192 @@ export function paperSheet(values: Record<string, unknown>) {
 }
 
 /**
- * The document as the loading dock scanned it, before anybody has checked it.
+ * Receiving a certificate: one page, three states.
  *
- * Two artefacts came in the crate and this is what the dock made of them: a
- * code carrying the release this shipment belongs to, and the printed form
- * beside it. The person reading this screen is not the person who opened the
- * box — that handover is the ordinary division between goods-in and records,
- * and it is the reason the document is simply here rather than being asked for.
+ * Received, checking, and the outcome are the same screen rather than three,
+ * because they are one act. The frame holds still — the way back, the heading,
+ * the component, the document — and only the block underneath changes. That is
+ * what makes the checks read as something happening to the document in front
+ * of you rather than as a different page that happens to mention it.
  *
- * Every block is legible because this is the recipient's own copy. The paper
- * has all seventeen printed on it and the code that opens the withheld ones
- * travelled with it, which is the only way a receiver could ever check them.
- * None of that is a disclosure: it is the crate's contents, read by the party
- * the crate was sent to.
+ * They were separate before and the seams showed: a verdict arrived above the
+ * evidence for it, the document a reader had just been studying reappeared
+ * buried in the middle of the result, and the stage rows sat underneath the
+ * decision they were supposed to justify.
+ *
+ * The document folds away once there is a result. It is the subject of the
+ * page until the check runs and the outcome is the subject afterwards, so
+ * leaving seventeen blocks expanded between the reader and the thing they now
+ * have to decide would be keeping the wrong half open.
+ *
+ * Only the first two states are rendered here as such — the middle one is
+ * assembled in the browser, because it exists only while a request is in
+ * flight. Without scripting there are two states and a navigation between
+ * them, which is the same page either way.
  */
-export function inboxScanBody(params: { actor: Actor; arrival: Arrival }) {
+export function receivedBody(params: {
+  actor: Actor
+  arrival: Arrival
+  report?: VerificationReport
+  published?: string
+}) {
   const a = params.arrival
+  const report = params.report
+  // The scanned paperwork, which the recipient holds in full. Rendering it is
+  // not a disclosure: the bundle came in the crate and the paper it was
+  // stapled to has all seventeen blocks printed on it.
   const scanned = (a.bundle as { values?: Record<string, unknown> } | null)?.values ?? null
+  const settled = Boolean(report || params.published)
+  const verified = report ? report.verified : true
+
+  const byName = new Map((report?.stages ?? []).map((st) => [st.name, st]))
+  const sig = byName.get('signature')
+  const recompute = byName.get('recompute')
+
+  /*
+   * What this observer can say about a document that did not match.
+   *
+   * The nine public blocks are on the record in the clear, so a disagreement
+   * in one of them can be named exactly. The other eight exist on the record
+   * only underneath the commitment, so the same check can establish that the
+   * document is not what was published and cannot say which line is wrong —
+   * the root is one hash over all seventeen and it does not decompose.
+   */
+  const agree = byName.get('agree')
+  const named = (agree?.status === 'fail' ? (agree.data?.fields as string[]) : null) ?? []
+  const recordSide = (agree?.data?.record ?? {}) as Record<string, unknown>
+  const bundleSide = (agree?.data?.bundle ?? {}) as Record<string, unknown>
+
+  const title = params.published
+    ? 'Attestation published'
+    : !report
+      ? 'Received 8130 Certificate'
+      : verified
+        ? 'Certificate verified'
+        : 'Form does not match'
+
+  const tagline = params.published
+    ? html`Published to ${params.actor.displayName}&rsquo;s own repository, under
+        their own key. ${a.issuerName} cannot remove it.`
+    : !report
+      ? html`This is the received 8130-3 form, included in the component
+          shipment. We must verify the paper document matches what the issuer
+          submitted.`
+      : verified
+        ? html`The 8130 form we received matches what ${a.issuerName} submitted
+            to the network when they released the part.`
+        : html`The 8130 form we received does not match what the issuer
+            submitted to the network on release. We will need to contact them
+            directly to resolve the discrepancy.`
+
+  /* ------------------------------------------------ what to do about it */
+
+  const publishedBlock = html`<div class="outcome">
+    <p class="mono ref">${params.published}</p>
+    <p><a href="/">Back to the feed</a> — it will appear there once an observer
+      has seen it.</p>
+  </div>`
+
+  const attestBlock = html`<div class="outcome">
+    <p class="caveat">
+      A verified document is not the same as the part being what the document
+      says. This checks paperwork against a signed record; nothing here has
+      inspected a component.
+    </p>
+    <h2 class="sect">Say so in public</h2>
+    <p class="sub">
+      Publishes a record in ${params.actor.displayName}&rsquo;s own repository
+      saying this document checked out. It names no findings and carries no
+      part number — only which release was checked, and when. The check has
+      already happened either way; this is whether anybody else gets to know
+      it did.
+    </p>
+    <div class="choose">
+      <form method="post" action="/attest">
+        <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+        <input type="hidden" name="subjectCid" value="${a.subject.cid}">
+        <button type="submit">Publish an attestation</button>
+      </form>
+      <form method="post" action="/inbox/clear">
+        <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+        <button type="submit" class="ghost">Accept without publishing</button>
+      </form>
+    </div>
+    <p class="meta">
+      Declining publishes nothing at all. An absence on the network is not a
+      claim that anything was wrong — most checks in a real supply chain would
+      never be announced.
+    </p>
+  </div>`
+
+  const mismatchBlock = html`<div class="outcome">
+    <div class="mismatch">
+      ${named.length > 0
+        ? html`<p>
+              The document disagrees with the published record on
+              ${named.length === 1 ? 'a block' : 'blocks'} the record carries in
+              the clear, so the difference can be shown:
+            </p>
+            <dl class="diff">
+              ${named.map(
+                (f) => html`<div>
+                  <dt>${fieldLabel(f)}</dt>
+                  <dd>
+                    <span class="was">${String(recordSide[f] ?? '—')}</span>
+                    <span class="sep">published</span>
+                  </dd>
+                  <dd>
+                    <span class="is">${String(bundleSide[f] ?? '—')}</span>
+                    <span class="sep">in the crate</span>
+                  </dd>
+                </div>`,
+              )}
+            </dl>`
+        : html`<p>
+            The difference is in one of the eight blocks the record keeps under
+            its commitment, so this observer cannot say which line is wrong —
+            and neither can anyone else. The commitment is a single hash over
+            all seventeen blocks; it establishes that the document is not the
+            one ${a.issuerName} published, and it does not decompose into which
+            part of it changed.
+          </p>`}
+      <p>
+        There is nothing to publish. A document that fails to recompute proves
+        only that some document fails, and anyone can produce one, so this is
+        evidence to you and to nobody else.
+      </p>
+    </div>
+
+    ${sig?.status === 'pass' && recompute?.status === 'fail'
+      ? html`<div class="contrast">
+          <strong>Read these two together.</strong> The signature is genuine —
+          ${a.issuerName} really did sign a release for this part. The
+          commitment is not: the document in this crate is no longer the one
+          they signed.
+        </div>`
+      : ''}
+
+    <form method="post" action="/inbox/clear" class="checkrow">
+      <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+      <button type="submit" class="ghost">Mark as handled</button>
+      <span class="meta">Takes it off your list. Nothing is published either way.</span>
+    </form>
+  </div>`
+
+  const zone = params.published
+    ? publishedBlock
+    : !report
+      ? html`<form method="post" action="/inbox/check" class="startcheck" data-verify>
+          <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+          <button type="submit">Verify this document</button>
+        </form>`
+      : verified
+        ? attestBlock
+        : mismatchBlock
 
   return html`<p class="backlink"><a href="/inbox">&larr; Receiving</a></p>
-    <h1>Received 8130 Certificate</h1>
-    <p class="sub">
-      This is the received 8130-3 form, included in the component shipment. We
-      must verify the paper document matches what the issuer submitted.
-    </p>
+    <h1 class="${settled ? (verified ? 'ok' : 'no') : ''}">${title}</h1>
+    <p class="sub">${tagline}</p>
 
     <h2 class="sect">The component</h2>
     ${dataplate({
@@ -1083,16 +1251,26 @@ export function inboxScanBody(params: { actor: Actor; arrival: Arrival }) {
     })}
 
     ${scanned
-      ? html`<h2 class="sect">Scanned 8130</h2>
-          ${paperSheet(scanned)}
-          <form method="post" action="/inbox/check" class="startcheck" data-verify>
-            <input type="hidden" name="subjectUri" value="${a.subject.uri}">
-            <button type="submit">Verify this document</button>
-          </form>
-          ${raw(`<script>${VERIFY_SCRIPT}</script>`)}`
+      ? settled
+        ? html`<details class="scan">
+            <summary>Scanned 8130</summary>
+            ${paperSheet(scanned)}
+          </details>`
+        : html`<h2 class="sect">Scanned 8130</h2>${paperSheet(scanned)}`
       : html`<div class="card"><div class="empty">
           No document was scanned with this shipment.
-        </div></div>`}`
+        </div></div>`}
+
+    <div data-zone>${scanned ? zone : ''}</div>
+
+    ${report
+      ? html`<details class="scan">
+          <summary>What was checked</summary>
+          <div class="card">${report.stages.map(stageRow)}</div>
+        </details>`
+      : ''}
+
+    ${scanned && !settled ? raw(`<script>${VERIFY_SCRIPT}</script>`) : ''}`
 }
 
 /** Nothing was published, the crate is off the list, and that is the whole of it. */
@@ -1114,7 +1292,7 @@ export function inboxScanPage(params: {
   actor: Actor
   arrival: Arrival
 }) {
-  return layout('Scanned on receipt', inboxScanBody(params), params.mode, params.chrome)
+  return layout('Received certificate', receivedBody(params), params.mode, params.chrome)
 }
 
 export function inboxCheckPage(params: {
@@ -1127,216 +1305,17 @@ export function inboxCheckPage(params: {
 }) {
   const verified = params.report ? params.report.verified : true
   return layout(
-    params.published ? 'Published' : verified ? 'Checks out' : 'Does not check out',
-    inboxCheckBody(params),
+    params.published ? 'Published' : verified ? 'Certificate verified' : 'Form does not match',
+    receivedBody(params),
     params.mode,
     params.chrome,
   )
 }
 
-/**
- * The body of a check, without a page around it.
- *
- * Exported so the dialog and the page render the same markup rather than two
- * templates that drift — the arrangement the composer already uses, and for
- * the same reason.
- */
-export function inboxCheckBody(params: {
-  actor: Actor
-  arrival: Arrival
-  /**
-   * Absent on the receipt shown after publishing, where the stages have
-   * already been read and redrawing them would bury the one new fact.
-   */
-  report?: VerificationReport
-  published?: string
-}) {
-  const { arrival: a } = params
-  const report = params.report
-  // The scanned paperwork, which the recipient holds in full. Rendering it is
-  // not a disclosure: the bundle came in the crate and the paper it was
-  // stapled to has all seventeen blocks printed on it.
-  const scanned = (a.bundle as { values?: Record<string, unknown> } | null)?.values ?? null
-
-  const byName = new Map((report?.stages ?? []).map((st) => [st.name, st]))
-  const sig = byName.get('signature')
-  const recompute = byName.get('recompute')
-  const forged =
-    sig?.status === 'pass' && recompute?.status === 'fail'
-      ? html`<div class="contrast">
-          <strong>Read these two together.</strong> The signature is genuine —
-          ${a.issuerName} really did sign a release for this part. The
-          commitment is not: the document in this crate is no longer the one
-          they signed.
-        </div>`
-      : ''
-
-  const verified = report ? report.verified : true
-
-  /*
-   * What this observer can say about a document that did not match.
-   *
-   * The nine public blocks are on the record in the clear, so a disagreement
-   * in one of them can be named exactly: the record says this, your document
-   * says that. The other eight exist on the record only underneath the
-   * commitment, so the same check can establish that the document is not what
-   * was published and cannot say which line is wrong — the root is one hash
-   * over all seventeen, and it does not decompose.
-   *
-   * That second case is the one people find surprising and it is the honest
-   * shape of the guarantee, so the screen says which of the two it is in
-   * rather than leaving a reader to assume the app is withholding a detail it
-   * actually does not have.
-   */
-  const agree = byName.get('agree')
-  const named = (agree?.status === 'fail' ? (agree.data?.fields as string[]) : null) ?? []
-  const recordSide = (agree?.data?.record ?? {}) as Record<string, unknown>
-  const bundleSide = (agree?.data?.bundle ?? {}) as Record<string, unknown>
-
-  const body = html`<p class="backlink"><a href="/inbox">&larr; Receiving</a></p>
-    <h1>${
-    params.published ? 'Published' : verified ? 'Certificate verified' : 'Form does not match'
-  }</h1>
-    <p class="sub">
-      ${verified
-        ? html`The 8130 form we received matches what ${a.issuerName} submitted
-            to the network when they released the part.`
-        : html`The 8130 form we received does not match what the issuer
-            submitted to the network on release. We will need to contact them
-            directly to resolve the discrepancy.`}
-    </p>
-
-    ${dataplate({
-      description: a.description,
-      partNumber: a.partNumber,
-      serialNumber: a.serialNumber,
-      href: postPath(a.subject.uri),
-    })}
-
-    ${scanned && report
-      ? html`<details class="scan">
-          <summary>The document from the crate, as it was scanned</summary>
-          <p class="sub">
-            All seventeen blocks, because this is your copy: it came in the box
-            with the part, and the codes that open the withheld ones came with
-            it. Only nine of these are on the public record.
-          </p>
-          ${paperSheet(scanned)}
-        </details>`
-      : ''}
-
-    ${report
-      ? html`<div class="verdict ${report.verified ? 'ok' : 'no'}" style="margin-top:1rem">
-          <h2>${report.verified ? 'Verified' : 'Not verified'}</h2>
-          <p>
-            ${report.verified
-              ? html`This document is what ${a.issuerName} published, and the
-                  serial on it matches the part.`
-              : 'At least one check failed. The stages below say which.'}
-          </p>
-          ${report.verified
-            ? html`<p class="caveat">
-                Which is not the same as the part being what the document says.
-                This checks paperwork against a signed record; nothing here has
-                inspected a component.
-              </p>`
-            : ''}
-        </div>`
-      : ''}
-
-    ${params.published
-      ? html`<div class="verdict ok" style="margin-top:1rem">
-          <h2>Published</h2>
-          <p class="mono" style="word-break:break-all">${params.published}</p>
-          <p>
-            It is in ${params.actor.displayName}&rsquo;s repository now, under
-            their own key. ${a.issuerName} cannot remove it.
-            <a href="/">Back to the feed</a> — it will appear there once an
-            observer has seen it.
-          </p>
-        </div>`
-      : verified
-        ? html`<div class="card" style="margin-top:1rem;padding:1.15rem">
-            <h2 style="margin-top:0">Say so in public</h2>
-            <p class="sub">
-              Publishes a record in ${params.actor.displayName}&rsquo;s own
-              repository saying this document checked out. It names no findings
-              and carries no part number — only which release was checked, and
-              when. The check has already happened either way; this is whether
-              anybody else gets to know it did.
-            </p>
-            <div class="choose">
-              <form method="post" action="/attest">
-                <input type="hidden" name="subjectUri" value="${a.subject.uri}">
-                <input type="hidden" name="subjectCid" value="${a.subject.cid}">
-                <button type="submit">Publish an attestation</button>
-              </form>
-              <form method="post" action="/inbox/clear">
-                <input type="hidden" name="subjectUri" value="${a.subject.uri}">
-                <button type="submit" class="ghost">Accept without publishing</button>
-              </form>
-            </div>
-            <p class="meta">
-              Declining publishes nothing at all. An absence on the network is
-              not a claim that anything was wrong — most checks in a real
-              supply chain would never be announced.
-            </p>
-          </div>`
-        : html`<div class="mismatch">
-            <h2>What this tells you</h2>
-            ${named.length > 0
-              ? html`<p>
-                    The document disagrees with the published record on
-                    ${named.length === 1 ? 'a block' : 'blocks'} the record
-                    carries in the clear, so the difference can be shown:
-                  </p>
-                  <dl class="diff">
-                    ${named.map(
-                      (f) => html`<div>
-                        <dt>${fieldLabel(f)}</dt>
-                        <dd>
-                          <span class="was">${String(recordSide[f] ?? '—')}</span>
-                          <span class="sep">published</span>
-                        </dd>
-                        <dd>
-                          <span class="is">${String(bundleSide[f] ?? '—')}</span>
-                          <span class="sep">in the crate</span>
-                        </dd>
-                      </div>`,
-                    )}
-                  </dl>`
-              : html`<p>
-                  The difference is in one of the eight blocks the record keeps
-                  under its commitment, so this observer cannot say which line
-                  is wrong — and neither can anyone else. The commitment is a
-                  single hash over all seventeen blocks; it establishes that
-                  the document is not the one ${a.issuerName} published, and it
-                  does not decompose into which part of it changed.
-                </p>`}
-            <p>
-              Take it up with ${a.issuerName} directly. There is nothing to
-              publish here: a document that fails to recompute proves only that
-              some document fails, and anyone can produce one, so this is
-              evidence to you and to nobody else.
-            </p>
-            <form method="post" action="/inbox/clear" class="checkrow">
-              <input type="hidden" name="subjectUri" value="${a.subject.uri}">
-              <button type="submit" class="ghost">Mark as handled</button>
-              <span class="meta">
-                Takes it off your list. Nothing is published either way.
-              </span>
-            </form>
-          </div>`}
-
-    ${report
-      ? html`<div class="card" style="margin-top:1rem">${report.stages.map(stageRow)}</div>`
-      : ''}
-    ${forged}
-
-`
-
-  return body
-}
+/** The body of a check, without a page around it. */
+export const inboxCheckBody = receivedBody
+/** The received certificate, without a page around it. */
+export const inboxScanBody = receivedBody
 
 /* --------------------------------------------------------------- cabinet */
 

@@ -1103,7 +1103,7 @@ describe('goods in', () => {
     })
     assert.equal(checked.status, 200)
     const report = await checked.text()
-    assert.match(report, /Verified/)
+    assert.match(report, /Certificate verified/)
     assert.match(report, /Publish an attestation/)
 
     const published = await app.request('/attest', {
@@ -1228,7 +1228,7 @@ describe('goods in', () => {
       })
     ).text()
 
-    assert.match(body, /Does not check out/)
+    assert.match(body, /Form does not match/)
     assert.match(body, /can be shown/)
     assert.match(body, /Something else entirely/, 'the crate value was not shown')
     assert.match(body, new RegExp(values.description!), 'the published value was not shown')
@@ -1278,7 +1278,7 @@ describe('goods in', () => {
       })
     ).text()
 
-    assert.match(body, /Does not check out/)
+    assert.match(body, /Form does not match/)
     assert.match(body, /cannot say which line/)
     assert.ok(!body.includes('can be shown'), 'it claimed to be able to name the block')
     // And the observer genuinely does not have the published prose to compare

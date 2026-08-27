@@ -323,6 +323,18 @@ a.button:hover { filter: brightness(1.08); }
 .sheet.paper .blk { cursor: default; }
 .sheet.paper .blk:hover { background: transparent; }
 
+/* The outcome carries its state in the heading rather than in a banner
+   underneath one — a page that says "Form does not match" does not also need
+   a box saying not verified. */
+h1.ok { color: var(--pass); }
+h1.no { color: var(--fail); }
+.outcome { margin-top: 1.25rem; }
+.outcome .ref {
+  word-break: break-all; font-size: .78rem; color: var(--muted);
+  background: var(--skip-bg); border-radius: 4px; padding: .5rem .7rem;
+}
+.outcome .sect:first-child { margin-top: 0; }
+
 /* A section heading inside a page, quieter than an h2 between sections. */
 .sect {
   font-size: .72rem; text-transform: uppercase; letter-spacing: .08em;
