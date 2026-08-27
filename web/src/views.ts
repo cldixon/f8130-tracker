@@ -864,12 +864,12 @@ export function inboxPage(params: {
   const now = params.now ?? new Date()
 
   const body = !params.actor
-    ? html`<h1>Parts Receiving</h1>
+    ? html`<h1>Receiving</h1>
       <div class="needs-actor">
         You are watching as the public, which receives nothing. Switch to an
         organization in the rail to see what is waiting for it.
       </div>`
-    : html`<h1>Parts Receiving</h1>
+    : html`<h1>Receiving</h1>
       <p class="sub">
         Parts delivered to ${params.actor.displayName}, with the 8130 paperwork
         that arrived in the crate. Check the document against the record issued
@@ -908,7 +908,7 @@ export function inboxPage(params: {
             )}
           </div>`}`
 
-  return layout('Parts Receiving', body, params.mode, params.chrome)
+  return layout('Receiving', body, params.mode, params.chrome)
 }
 
 /**
@@ -1018,7 +1018,7 @@ export function inboxCheckPage(params: {
     ${forged}
 
     <p class="sub" style="margin-top:1.25rem">
-      <a href="/inbox">Back to parts receiving</a>
+      <a href="/inbox">Back to receiving</a>
     </p>`
 
   return layout(

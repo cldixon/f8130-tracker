@@ -972,7 +972,7 @@ export function layout(
   <aside class="rail">
     <div class="brand">OffWing<br><span>FAA 8130-3 certificates on atproto</span></div>
     <!-- Four destinations, and each answers a different question. Home: what
-         is happening. Parts Receiving: what is waiting on me. Issuers: who is
+         is happening. Receiving: what is waiting on me. Issuers: who is
          publishing, and whose paperwork other parties reject. Documents: what
          I am holding, and the things I can do with it.
 
@@ -988,8 +988,8 @@ export function layout(
       <a href="/" class="${on('home')}"><span class="ico">◎</span>
         <span class="full">Home</span><span class="tab">Home</span></a>
       ${me
-        ? html`<a href="/inbox" class="${on('inbox')}"><span class="ico">▼</span>
-            <span class="full">Parts Receiving</span><span class="tab">Receiving</span>
+        ? html`<a href="/inbox" class="${on('inbox')}"><span class="ico">⤓</span>
+            <span class="full">Receiving</span><span class="tab">Receiving</span>
             <!-- Always in the markup, hidden at zero, so the live stream has
                  something to write into rather than a node it has to create in
                  the right place in the rail. -->
