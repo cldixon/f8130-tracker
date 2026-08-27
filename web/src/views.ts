@@ -871,8 +871,9 @@ export function inboxPage(params: {
       </div>`
     : html`<h1>Goods in</h1>
       <p class="sub">
-        Parts delivered to ${params.actor.displayName} that nobody has published
-        a verdict on yet.
+        Parts delivered to ${params.actor.displayName}, with the paperwork that
+        came in the crate. Check a document against the record its issuer
+        published, and say so publicly if it holds up.
       </p>
 
       <div class="seam">
@@ -900,27 +901,137 @@ export function inboxPage(params: {
                     >${a.partNumber}</a>
                   · s/n <span class="mono">${a.serialNumber}</span>
                 </div>
-                <form method="post" action="/accept" class="verdict-row">
+                <form method="post" action="/inbox/check" class="checkrow">
                   <input type="hidden" name="subjectUri" value="${a.subject.uri}">
-                  <input type="hidden" name="subjectCid" value="${a.subject.cid}">
-                  <input type="hidden" name="from" value="inbox">
-                  <select name="outcome" aria-label="Outcome">
-                    <option value="accepted">accepted</option>
-                    <option value="rejected">rejected</option>
-                    <option value="discrepancy">discrepancy</option>
-                  </select>
-                  <input type="text" name="note" placeholder="Stated reason (optional)">
-                  <button type="submit">Publish verdict</button>
+                  <button type="submit">Check this certificate</button>
+                  <span class="meta">
+                    Recomputes the document you were sent and compares it with
+                    what ${a.issuerName} signed.
+                  </span>
                 </form>
-                <div class="meta">
-                  The verdict goes in <strong>your</strong> repository under your
-                  own key. ${a.issuerName} cannot delete it — only answer it.
-                </div>
               </article>`,
             )}
           </div>`}`
 
   return layout('Goods in', body, params.mode, params.chrome)
+}
+
+/**
+ * The result of checking a document that arrived with a part.
+ *
+ * The same pipeline and the same stage rows as the verify page, without the
+ * textarea. That absence is the point of the screen: a recipient holding a
+ * crate has the paperwork already, and making them paste a file they were
+ * handed is a step that exists in this application and in no warehouse.
+ *
+ * What is not skipped is the check. Every stage below ran against the live
+ * network — the issuer's DID resolved, their repository fetched, the commit
+ * signature verified against the key their DID document declares, and the
+ * document recomputed to the commitment in the record. A demonstration that
+ * drew a green tick without doing that would be demonstrating a green tick.
+ */
+export function inboxCheckPage(params: {
+  chrome?: Chrome
+  mode?: Mode
+  actor: Actor
+  arrival: Arrival
+  /**
+   * Absent on the receipt shown after publishing, where the stages have
+   * already been read and redrawing them would bury the one new fact.
+   */
+  report?: VerificationReport
+  published?: string
+}) {
+  const { arrival: a } = params
+  const report = params.report
+
+  const byName = new Map((report?.stages ?? []).map((st) => [st.name, st]))
+  const sig = byName.get('signature')
+  const recompute = byName.get('recompute')
+  const forged =
+    sig?.status === 'pass' && recompute?.status === 'fail'
+      ? html`<div class="contrast">
+          <strong>Read these two together.</strong> The signature is genuine —
+          ${a.issuerName} really did sign a release for this part. The
+          commitment is not: the document in this crate is no longer the one
+          they signed.
+        </div>`
+      : ''
+
+  const verified = report ? report.verified : true
+  const body = html`<h1>${
+    params.published ? 'Published' : verified ? 'Checks out' : 'Does not check out'
+  }</h1>
+    <p class="sub">
+      The paperwork that arrived with ${a.description}, against what
+      ${a.issuerName} published.
+    </p>
+
+    ${dataplate({
+      description: a.description,
+      partNumber: a.partNumber,
+      serialNumber: a.serialNumber,
+      href: postPath(a.subject.uri),
+    })}
+
+    ${report
+      ? html`<div class="verdict ${report.verified ? 'ok' : 'no'}" style="margin-top:1rem">
+          <h2>${report.verified ? 'Verified' : 'Not verified'}</h2>
+          <p>
+            ${report.verified
+              ? html`This document is what ${a.issuerName} published, and the
+                  serial on it matches the part.`
+              : 'At least one check failed. The stages below say which.'}
+          </p>
+        </div>`
+      : ''}
+
+    ${params.published
+      ? html`<div class="verdict ok" style="margin-top:1rem">
+          <h2>Published</h2>
+          <p class="mono" style="word-break:break-all">${params.published}</p>
+          <p>
+            It is in ${params.actor.displayName}&rsquo;s repository now, under
+            their own key. ${a.issuerName} cannot remove it.
+            <a href="/">Back to the feed</a> — it will appear there once an
+            observer has seen it.
+          </p>
+        </div>`
+      : verified
+        ? html`<form method="post" action="/attest" class="card" style="margin-top:1rem;padding:1.15rem">
+            <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+            <input type="hidden" name="subjectCid" value="${a.subject.cid}">
+            <h2 style="margin-top:0">Say so in public</h2>
+            <p class="sub">
+              Publishes a record in ${params.actor.displayName}&rsquo;s own
+              repository saying this document checked out. It names no findings
+              and carries no part number — only which release was checked, and
+              when. Optional: the check has already happened either way.
+            </p>
+            <button type="submit">Publish an attestation</button>
+          </form>`
+        : html`<div class="meta" style="margin-top:1rem">
+            There is nothing to publish. A document that fails to recompute
+            proves only that some document fails, and anyone can produce one —
+            so this is evidence to you and to nobody else. Take it up with
+            ${a.issuerName} directly.
+          </div>`}
+
+    ${report
+      ? html`<div class="card" style="margin-top:1rem">${report.stages.map(stageRow)}</div>`
+      : ''}
+    ${forged}
+
+    <p class="sub" style="margin-top:1.25rem">
+      <a href="/inbox">Back to goods in</a>
+    </p>`
+
+  return layout(
+    params.published ? 'Published' : verified ? 'Checks out' : 'Does not check out',
+    body,
+    params.mode,
+    params.chrome,
+  )
 }
 
 /* --------------------------------------------------------------- cabinet */

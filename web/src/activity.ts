@@ -113,6 +113,7 @@ export type ActivityOptions = {
       serialNumber: string
       description: string
       at: Date
+      bundle: unknown
     }): void
     settle(releaseUri: string): void
   }
@@ -121,6 +122,14 @@ export type ActivityOptions = {
 // Paced for someone who is actually looking. A visitor spends well under a
 // minute on a feed, so a ninety-second gap means most of them see nothing
 // happen at all and conclude the page is static.
+/**
+ * How often a part goes to somebody who is actually looking at the screen.
+ *
+ * The rest go to whoever chance picks, so the feed still reads as a network
+ * with other people in it rather than as a stream addressed to the visitor.
+ */
+const WATCHED_SHARE = 0.55
+
 const DEFAULT_MIN_GAP = 12_000
 const DEFAULT_MAX_GAP = 45_000
 const DEFAULT_FIRST_GAP = 4_000
@@ -253,7 +262,22 @@ export class ActivityGenerator {
     return this.viewers
   }
 
-  viewerJoined(): void {
+  /**
+   * Organizations somebody is currently watching as, as a multiset.
+   *
+   * Counted rather than set-membership because two tabs are two viewers and
+   * closing one must not make the other stop existing.
+   */
+  private readonly watching = new Map<string, number>()
+
+  /** An operator somebody is looking at the application as, if there is one. */
+  private watchingOperator(operators: Org[]): Org | undefined {
+    const candidates = operators.filter((o) => (this.watching.get(o.handle) ?? 0) > 0)
+    return candidates.length > 0 ? this.pickOne(candidates) : undefined
+  }
+
+  viewerJoined(handle?: string): void {
+    if (handle) this.watching.set(handle, (this.watching.get(handle) ?? 0) + 1)
     this.viewers++
     if (this.viewers !== 1) return
     this.seeding = true
@@ -274,7 +298,12 @@ export class ActivityGenerator {
       })
   }
 
-  viewerLeft(): void {
+  viewerLeft(handle?: string): void {
+    if (handle) {
+      const n = (this.watching.get(handle) ?? 0) - 1
+      if (n > 0) this.watching.set(handle, n)
+      else this.watching.delete(handle)
+    }
     this.viewers = Math.max(0, this.viewers - 1)
     if (this.viewers === 0) this.stop()
   }
@@ -506,7 +535,17 @@ export class ActivityGenerator {
       (o) => (o.kind === 'operator' || o.kind === 'lessor') && this.known(o.handle),
     )
     const issuer = this.pickOne(issuers)
-    const operator = this.pickOne(operators)
+    // Whoever is watching gets the part more often than chance would give
+    // them. With a dozen operators on the roster, a visitor sitting on the
+    // feed as one of them would wait through eleven crates going somewhere
+    // else before anything reached their own goods-in — which reads as the
+    // page being broken rather than as a supply chain being wide.
+    //
+    // Not always, because an inbox that fills every single time is a different
+    // lie: most parts in a network are somebody else's.
+    const operator =
+      (this.rand() < WATCHED_SHARE ? this.watchingOperator(operators) : undefined) ??
+      this.pickOne(operators)
     if (!issuer || !operator) return null
 
     // Sometimes a part already in service comes back in for more work. An
@@ -573,6 +612,11 @@ export class ActivityGenerator {
       if (this.inService.length > 30) this.inService.shift()
     }
 
+    // The crate and the paperwork travel together, which is the whole
+    // arrangement an 8130-3 describes. Handing the part over without the
+    // document would leave the recipient with something to inspect and no way
+    // to check it, and asking a visitor to produce the document themselves is
+    // asking them for a file they were never given.
     this.opts.dock?.handOver(operator.handle, {
       subject: { uri: written.uri, cid: written.cid },
       issuerDid: written.uri.split('/')[2] ?? '',
@@ -581,6 +625,7 @@ export class ActivityGenerator {
       serialNumber: String(form.serialNumber),
       description: String(form.description ?? ''),
       at: new Date(this.now()),
+      bundle: written.bundle,
     })
 
     // Decide now whether anybody will ever vouch for this one, rather than

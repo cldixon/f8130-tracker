@@ -43,6 +43,7 @@ import {
   feedPage,
   formPage,
   inboxPage,
+  inboxCheckPage,
   issueBody,
   issuePage,
   partPage,
@@ -93,8 +94,8 @@ export type AppDeps = {
    * what to write are entirely the generator's business.
    */
   activity?: {
-    viewerJoined(): void
-    viewerLeft(): void
+    viewerJoined(handle?: string): void
+    viewerLeft(handle?: string): void
   } | null
   /**
    * Parts that physically arrived, awaiting inspection.
@@ -337,7 +338,7 @@ export function createApp(deps: AppDeps) {
           if (!closed) controller.enqueue(enc.encode(chunk))
         }
 
-        deps.activity?.viewerJoined()
+        deps.activity?.viewerJoined(viewer)
         send(': connected\n\n')
 
         const poll = setInterval(async () => {
@@ -373,7 +374,7 @@ export function createApp(deps: AppDeps) {
           if (closed) return
           closed = true
           clearInterval(poll)
-          deps.activity?.viewerLeft()
+          deps.activity?.viewerLeft(viewer)
           try {
             controller.close()
           } catch {
@@ -959,10 +960,34 @@ export function createApp(deps: AppDeps) {
       }
 
       try {
+        // Read the dock before writing, because publishing clears it: an
+        // attestation is the fact that the part was dealt with, so the crate
+        // stops waiting. Without this the part stayed in Goods in forever and
+        // could be attested again and again.
+        const arrival = deps.dock?.arrival(handle, subjectUri)
+
         const written = await writer.createAttestation({
           handle,
           subject: { uri: subjectUri, cid: subjectCid },
         })
+        deps.dock?.settle(subjectUri)
+
+        // Somebody who came from their own goods-in gets a receipt for the
+        // crate they were looking at. Landing them back on the Verify page,
+        // with its empty textarea asking for a document they have already
+        // checked, is a worse answer to "what happened".
+        if (arrival) {
+          const actor = writer.actors().find((a) => a.handle === handle)!
+          return c.html(
+            inboxCheckPage({
+              mode,
+              chrome: chrome(c, 'inbox'),
+              actor,
+              arrival,
+              published: written.uri,
+            }),
+          )
+        }
         return c.html(
           verifyPage(mode, undefined, undefined, chrome(c, 'docs'), null, written.uri),
         )
@@ -1140,6 +1165,59 @@ export function createApp(deps: AppDeps) {
           arrivals: deps.dock?.awaiting(handle) ?? [],
         }),
       )
+    })
+
+    /**
+     * Check the paperwork that came with a part.
+     *
+     * Takes a release URI and nothing else. The document is looked up in the
+     * dock under the acting organization, so a caller cannot check a bundle it
+     * supplies, cannot check one addressed to somebody else, and cannot use
+     * this route to have the service open a document it was not sent.
+     *
+     * The check itself is the ordinary pipeline against the live network. It
+     * is not scripted to pass: the point of the screen is that a recomputed
+     * commitment matches a signed record, and a demonstration that faked that
+     * step would be demonstrating nothing. What is spared the visitor is the
+     * typing, not the arithmetic.
+     */
+    app.post('/inbox/check', async (c) => {
+      const form = await c.req.parseBody()
+      const handle = currentActor(c)
+      const actor = writer.actors().find((a) => a.handle === handle)
+      if (!actor) {
+        return c.html(errorPage(403, 'Only an organization receives parts.'), 403)
+      }
+
+      const subjectUri = typeof form.subjectUri === 'string' ? form.subjectUri : ''
+      const arrival = deps.dock?.arrival(handle, subjectUri)
+      if (!arrival) {
+        return c.html(errorPage(404, 'Nothing by that name is waiting for you.'), 404)
+      }
+
+      try {
+        const bundle = parseBundle(arrival.bundle)
+        const report = await verifyBundle({
+          bundle,
+          // The serial stamped on the part itself, which in a real goods-in is
+          // read off the dataplate rather than off the form. Here the crate
+          // and the paperwork agree because the same generator wrote both.
+          stampedSerial: arrival.serialNumber,
+          resolver: deps.resolver,
+          repo: deps.repo,
+        })
+        return c.html(
+          inboxCheckPage({
+            mode,
+            chrome: chrome(c, 'inbox'),
+            actor,
+            arrival,
+            report,
+          }),
+        )
+      } catch (err) {
+        return c.html(errorPage(400, describe(err)), 400)
+      }
     })
 
   }

@@ -64,14 +64,9 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
   background: var(--card); border: 1px solid var(--line); border-radius: 8px;
   padding: .8rem .95rem;
 }
-.event.rejected { border-left: 3px solid var(--fail); }
-.event.discrepancy { border-left: 3px solid var(--warn); }
 .event .who { font-size: .92rem; display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; }
 .event .who .when { margin-left: auto; color: var(--muted); font-size: .76rem; white-space: nowrap; }
 .event .dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--accent); flex: 0 0 auto; align-self: center; }
-.event .dot.accepted { background: var(--pass); }
-.event .dot.rejected { background: var(--fail); }
-.event .dot.discrepancy { background: var(--warn); }
 .event .mine {
   font-size: .64rem; text-transform: uppercase; letter-spacing: .06em;
   color: var(--accent); border: 1px solid var(--accent); border-radius: 3px;
@@ -147,7 +142,6 @@ table { width: 100%; border-collapse: collapse; font-size: .89rem; }
 th { text-align: left; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: .6rem 1.15rem; border-bottom: 1px solid var(--line); font-weight: 600; }
 td { padding: .65rem 1.15rem; border-bottom: 1px solid var(--line); }
 tr:last-child td { border-bottom: 0; }
-.flagged { color: var(--fail); font-weight: 600; }
 .scroll { overflow-x: auto; }
 
 textarea { width: 100%; min-height: 11rem; font-family: ui-monospace, monospace; font-size: .82rem;
@@ -282,6 +276,12 @@ form.draftform button[type=submit] { margin-top: 1rem; }
   .rev { display: block; }
   .rev .n { display: block; margin-bottom: .15rem; }
 }
+
+/* The action on a goods-in card. The explanation sits beside the button
+   rather than under it, so a card stays one glance tall. */
+.checkrow { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin-top: .6rem; }
+.checkrow button { margin: 0; flex: 0 0 auto; }
+.checkrow .meta { margin: 0; flex: 1 1 14rem; min-width: 0; }
 
 /* Waiting on a generated form. It is a call to a model, so it takes a second
    or two, and a blank dialog for that long reads as broken rather than busy. */
@@ -516,13 +516,6 @@ a.tag:hover { border-bottom-color: var(--accent); }
   display: block; margin-top: .45rem; padding-top: .45rem;
   border-top: 1px dashed var(--line); font-style: italic;
 }
-.verdict-row {
-  display: flex; gap: .45rem; align-items: center; flex-wrap: wrap;
-  margin-top: .6rem;
-}
-.verdict-row select { width: auto; min-width: 8rem; }
-.verdict-row input[type=text] { flex: 1; min-width: 12rem; max-width: none; }
-.verdict-row button { margin-top: 0; padding: .4rem .8rem; font-size: .85rem; }
 
 .rail nav a .badge {
   margin-left: auto; font-size: .68rem; font-weight: 700;
