@@ -992,7 +992,11 @@ export function layout(
       ${me
         ? html`<a href="/inbox" class="${on('inbox')}"><span class="ico">▼</span>
             <span class="full">Goods in</span><span class="tab">Goods</span>
-            ${chrome?.waiting ? html`<span class="badge">${chrome.waiting}</span>` : ''}
+            <!-- Always in the markup, hidden at zero, so the live stream has
+                 something to write into rather than a node it has to create in
+                 the right place in the rail. -->
+            <span class="badge" id="waiting" ${chrome?.waiting ? '' : 'hidden'}
+              >${chrome?.waiting ?? 0}</span>
           </a>`
         : ''}
       <a href="/parts" class="${on('issuers')}"><span class="ico">▤</span>

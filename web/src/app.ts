@@ -331,6 +331,11 @@ export function createApp(deps: AppDeps) {
       parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date()
     let closed = false
 
+    // -1 rather than 0, so the first poll always reports — including a count
+    // of zero, which is the correct answer for a page rendered when something
+    // was waiting and then cleared.
+    let lastWaiting = -1
+
     const stream = new ReadableStream({
       start(controller) {
         const enc = new TextEncoder()
@@ -364,6 +369,23 @@ export function createApp(deps: AppDeps) {
               // Keeps proxies from closing an idle connection, and is how the
               // generator learns the viewer is still there.
               send(': keep-alive\n\n')
+            }
+
+            // What is waiting on the dock, whenever it changes.
+            //
+            // Sent on this stream rather than polled on its own, because the
+            // arrival that changes it is produced by the same generator this
+            // stream is keeping alive. Only on a change: an unchanged number
+            // every three seconds is a message the client would spend its time
+            // discarding.
+            //
+            // A count and nothing else. What is waiting is addressed to one
+            // organization, and the stream is public — the number is the most
+            // that can be said without saying whose part it is.
+            const waiting = deps.dock?.count(viewer) ?? 0
+            if (waiting !== lastWaiting) {
+              lastWaiting = waiting
+              send(`event: waiting\ndata: ${waiting}\n\n`)
             }
           } catch {
             // A transient index error should drop one poll, not the stream.

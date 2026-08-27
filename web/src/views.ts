@@ -1187,6 +1187,17 @@ export function feedPage(params: {
       lastSeen = new Date().toISOString()
       render(m.data)
     })
+    // What is waiting on the dock. The rail is outside the feed, so this is
+    // the one thing on the page the stream updates that is not a card — and
+    // it is the point of the badge: a part arriving for you while you are
+    // reading should be visible without reloading to find out.
+    es.addEventListener('waiting', function (m) {
+      var b = document.getElementById('waiting')
+      if (!b) return
+      var n = parseInt(m.data, 10)
+      b.textContent = String(n)
+      b.hidden = !(n > 0)
+    })
     es.onerror = function () { if (pulse) pulse.textContent = 'reconnecting' }
     if (pulse) { pulse.textContent = 'live'; pulse.classList.remove('idle') }
   }

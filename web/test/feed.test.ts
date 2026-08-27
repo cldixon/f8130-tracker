@@ -1102,21 +1102,29 @@ describe('goods in', () => {
    */
   test('a document is never rendered to an organization it was not sent to', async () => {
     const { app, dock } = await dockApp()
-    const secret = 'NONCE-THAT-MUST-NEVER-LEAVE-THE-RECIPIENT'
+    // Markers rather than realistic values. What is asserted is that these
+    // strings do not appear, so their content is irrelevant — and a literal
+    // that looked like a real nonce would be sixty-four hex characters in a
+    // variable called something like "secret", which is a private key to every
+    // scanner that ever reads this repository. It would be flagged, correctly,
+    // and the next person would have to prove it was nothing.
+    const NONCE = 'NONCE-THAT-MUST-NEVER-LEAVE-THE-RECIPIENT'
+    const WITHHELD = 'WITHHELD-BLOCK-12-PROSE'
+
     dock.handOver(`example-air.${DOMAIN}`, arrival({
       bundle: { synthetic: 'S', version: 1, uri: 'at://x', issuerHandle: 'x',
-                values: { remarks: 'WITHHELD PROSE' }, nonces: [secret] },
+                values: { remarks: WITHHELD }, nonces: [NONCE] },
     }))
 
     for (const cookie of [`f8130_actor=southpoint-air.${DOMAIN}`, PUBLIC, AS_OPERATOR]) {
       const body = await (await app.request('/inbox', { headers: { cookie } })).text()
-      assert.ok(!body.includes(secret), `a nonce was rendered for ${cookie}`)
-      assert.ok(!body.includes('WITHHELD PROSE'), `withheld prose rendered for ${cookie}`)
+      assert.ok(!body.includes(NONCE), `a nonce was rendered for ${cookie}`)
+      assert.ok(!body.includes(WITHHELD), `withheld prose rendered for ${cookie}`)
     }
 
     // Nor onto the public feed, which is the other page that lists releases.
     const feed = await (await app.request('/')).text()
-    assert.ok(!feed.includes(secret), 'a nonce reached the feed')
+    assert.ok(!feed.includes(NONCE), 'a nonce reached the feed')
   })
 
   test('another organization cannot check a document it was not sent', async () => {
@@ -1169,7 +1177,22 @@ describe('goods in', () => {
       subject: { uri: 'at://did:plc:issuer/dev.cldixon.f8130.release/3b', cid: 'bafy2' },
     }))
     const body = await (await app.request('/', { headers: { cookie: AS_OPERATOR } })).text()
-    assert.match(body, /<span class="badge">2<\/span>/)
+    assert.match(body, /id="waiting"[^>]*>2</)
+    assert.ok(!/id="waiting"[^>]*\shidden/.test(body), 'a real count was hidden')
+  })
+
+  /**
+   * The badge is always in the markup, hidden at zero.
+   *
+   * The live stream writes into it, and a node that only exists once something
+   * is waiting is a node the stream would have to create in the right place in
+   * the rail — which is how a count ends up appended to the wrong nav item.
+   */
+  test('the badge is present but hidden when nothing is waiting', async () => {
+    const { app } = await dockApp()
+    const body = await (await app.request('/', { headers: { cookie: AS_OPERATOR } })).text()
+    assert.match(body, /id="waiting"/)
+    assert.match(body, /id="waiting"[^>]*\shidden/)
   })
 
   test('an answered part comes off the dock', async () => {
