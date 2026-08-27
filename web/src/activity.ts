@@ -120,6 +120,8 @@ export type ActivityOptions = {
    * a live feed is for. Later events settle into the ordinary cadence.
    */
   firstGap?: number
+  /** Gap used for a visitor who arrived to an empty list. */
+  greetingGap?: number
   /** Injected so tests can drive the clock and the dice. */
   now?: () => number
   random?: () => number
@@ -143,6 +145,8 @@ export type ActivityOptions = {
       bundle: unknown
     }): void
     settle(releaseUri: string): void
+    /** What is already waiting, so an arrival is not owed a second crate. */
+    count(handle: string): number
   }
 }
 
@@ -173,6 +177,22 @@ const MISMATCH_RATE = 1 / 3
 const DEFAULT_MIN_GAP = 12_000
 const DEFAULT_MAX_GAP = 45_000
 const DEFAULT_FIRST_GAP = 4_000
+
+/**
+ * How soon a part reaches somebody who has just opened the page with nothing
+ * waiting for them.
+ *
+ * The ordinary cadence is a release every twelve to forty-five seconds, of
+ * which some are checks rather than releases and most go to one of the other
+ * two dozen organizations. That works out at an expected minute and a half
+ * before anything lands in a particular inbox, with a long tail behind it —
+ * long enough that a visitor concludes the page is broken rather than quiet.
+ *
+ * So the first one is not left to chance. Only the first: once there is
+ * something on the list, the ordinary rate is what the network actually looks
+ * like and speeding it up would be a different kind of lie.
+ */
+const GREETING_GAP = 6_000
 
 /**
  * How much of a station's output somebody independently checks and says so.
@@ -310,6 +330,14 @@ export class ActivityGenerator {
    */
   private readonly watching = new Map<string, number>()
 
+  /**
+   * Organizations that opened the page to an empty list and are owed one.
+   *
+   * A list rather than a flag because two people can arrive at once, and each
+   * of them is owed a crate of their own.
+   */
+  private readonly promised: string[] = []
+
   /** An organization somebody is looking at the application as, if any. */
   private watchingOperator(among: Org[]): Org | undefined {
     const candidates = among.filter((o) => (this.watching.get(o.handle) ?? 0) > 0)
@@ -317,9 +345,25 @@ export class ActivityGenerator {
   }
 
   viewerJoined(handle?: string): void {
-    if (handle) this.watching.set(handle, (this.watching.get(handle) ?? 0) + 1)
+    if (handle) {
+      this.watching.set(handle, (this.watching.get(handle) ?? 0) + 1)
+      // Nothing waiting means nothing to look at, on the one page that is
+      // about looking at what is waiting. Somebody who has already got a
+      // crate is owed nothing and gets the ordinary rate.
+      if (
+        (this.opts.dock?.count(handle) ?? 0) === 0 &&
+        !this.promised.includes(handle)
+      ) {
+        this.promised.push(handle)
+      }
+    }
     this.viewers++
-    if (this.viewers !== 1) return
+    if (this.viewers !== 1) {
+      // A second tab does not restart the generator, so the timer it is
+      // already running has to be brought forward or the promise is not kept.
+      this.hurry()
+      return
+    }
     this.seeding = true
 
     // The stock in transit has to exist before the first live event, or the
@@ -336,6 +380,19 @@ export class ActivityGenerator {
         this.seeding = false
         this.schedule(this.opts.firstGap ?? DEFAULT_FIRST_GAP)
       })
+  }
+
+  /**
+   * Bring the next tick forward for somebody who is owed a crate.
+   *
+   * Does nothing while seeding, because the first tick is already scheduled
+   * behind it at a short gap, and nothing when no promise is outstanding.
+   */
+  private hurry(): void {
+    if (this.seeding || this.promised.length === 0 || !this.timer) return
+    clearTimeout(this.timer)
+    this.timer = null
+    this.schedule(this.opts.greetingGap ?? GREETING_GAP)
   }
 
   viewerLeft(handle?: string): void {
@@ -421,7 +478,15 @@ export class ActivityGenerator {
       // Check an old part, or release a new one. The oldest waiting part
       // first, which with a backlog in place means one that has genuinely been
       // in transit for days rather than the one released a tick ago.
-      if (this.pending.length > 0 && this.rand() < ATTEST_ROLL) {
+      //
+      // Unless somebody is owed a crate, in which case this tick releases:
+      // spending it on a check would leave the empty list empty for another
+      // half a minute, which is the wait this exists to remove.
+      if (
+        this.promised.length === 0 &&
+        this.pending.length > 0 &&
+        this.rand() < ATTEST_ROLL
+      ) {
         const item = this.pending.shift()!
         if (this.known(item.operatorHandle)) {
           await this.attest(item)
@@ -618,7 +683,20 @@ export class ActivityGenerator {
     const recipients = cast.filter(
       (o) => o.kind !== 'oem' && this.known(o.handle),
     )
-    const issuer = this.pickOne(issuers)
+    // Somebody who opened the page to an empty list is owed this one, and is
+    // taken off the list whether or not they can actually receive — an entry
+    // that never resolves would sit at the head of the queue for ever.
+    let promised: Org | undefined
+    while (this.promised.length > 0 && !promised) {
+      const handle = this.promised.shift()!
+      promised = recipients.find((o) => o.handle === handle)
+    }
+
+    // A station cannot release to itself, so being owed a crate takes it out
+    // of the running to sign this one.
+    const issuer = this.pickOne(
+      promised ? issuers.filter((o) => o.handle !== promised!.handle) : issuers,
+    )
 
     // Whoever is watching gets the part more often than chance would give
     // them. Spread across the roster, a visitor sitting on the feed would wait
@@ -636,6 +714,7 @@ export class ActivityGenerator {
       ? recipients.filter((o) => o.handle !== issuer.handle)
       : recipients
     const operator =
+      promised ??
       (this.rand() < WATCHED_SHARE ? this.watchingOperator(candidates) : undefined) ??
       this.pickOne(candidates)
     if (!issuer || !operator) return null

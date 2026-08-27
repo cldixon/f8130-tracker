@@ -1870,6 +1870,96 @@ describe('the synthetic generator', () => {
   })
 
   /**
+   * The wait this exists to remove.
+   *
+   * Left to the ordinary cadence, a release lands every twelve to forty-five
+   * seconds, some ticks publish a check instead, and most crates go to one of
+   * the other two dozen organizations. The expected wait before anything
+   * reaches a particular inbox is about a minute and a half with a long tail —
+   * long enough that a visitor concludes the page is broken rather than quiet.
+   */
+  test('somebody who arrives to an empty list gets the very next release', async () => {
+    const { writer } = recorder()
+    const dock = new Dock(200)
+    const shop = demoActors(DOMAIN).find((a) => a.kind === 'mro')!
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null,
+      // Above WATCHED_SHARE and above ATTEST_ROLL, so neither the watcher bias
+      // nor the release-rather-than-check roll can be what makes this pass.
+      random: () => 0.99,
+    })
+    g.viewerJoined(shop.handle)
+    await g.tick()
+
+    assert.equal(
+      dock.count(shop.handle), 1,
+      'the first release after arriving went somewhere else',
+    )
+  })
+
+  /** And only the first: after that the ordinary rate is the honest one. */
+  test('the promise is kept once, not on every release', async () => {
+    const { writer } = recorder()
+    const dock = new Dock(200)
+    const shop = demoActors(DOMAIN).find((a) => a.kind === 'mro')!
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.99,
+    })
+    g.viewerJoined(shop.handle)
+    for (let i = 0; i < 6; i++) await g.tick()
+
+    assert.equal(
+      dock.count(shop.handle), 1,
+      'every release was steered to the visitor, which is not a network',
+    )
+  })
+
+  /** Somebody who already has something waiting is owed nothing. */
+  test('an arrival with a crate already waiting is not given another', async () => {
+    const { writer } = recorder()
+    const dock = new Dock(200)
+    const shop = demoActors(DOMAIN).find((a) => a.kind === 'mro')!
+
+    dock.handOver(shop.handle, {
+      subject: { uri: 'at://did:plc:x/dev.cldixon.f8130.release/3z', cid: 'bafyz' },
+      issuerDid: 'did:plc:x', issuerName: 'Somebody', partNumber: 'P', serialNumber: 'S',
+      description: 'D', at: new Date(), bundle: null,
+    })
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.99,
+    })
+    g.viewerJoined(shop.handle)
+    await g.tick()
+
+    assert.equal(dock.count(shop.handle), 1, 'a second crate was forced on them')
+  })
+
+  /**
+   * The promise cannot be kept by handing somebody their own release, so being
+   * owed one takes a station out of the running to sign it.
+   */
+  test('a station owed a crate does not sign it itself', async () => {
+    const { writer, calls } = recorder()
+    const dock = new Dock(200)
+    const shop = demoActors(DOMAIN).find((a) => a.kind === 'mro')!
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.99,
+    })
+    g.viewerJoined(shop.handle)
+    await g.tick()
+
+    const [arrival] = dock.awaiting(shop.handle)
+    assert.ok(arrival, 'nothing arrived')
+    const release = calls.find((c) => c.kind === 'release' && c.uri === arrival.subject.uri)
+    assert.ok(release, 'the arrival matches no release')
+    assert.notEqual(release.handle, shop.handle, 'it signed its own crate')
+  })
+
+  /**
    * A constant die, which is position-independent.
    *
    * Scripted roll arrays pinned the exact order the generator consumes
