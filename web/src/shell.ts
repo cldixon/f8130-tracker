@@ -360,9 +360,9 @@ a.button:hover { filter: brightness(1.08); }
    a tick already says. */
 .panel.ok .pmark { color: var(--pass); }
 .panel.no .pmark { color: var(--fail); }
-/* Publishing is not a third verdict. The check already passed and said so in
-   green; this is the separate act of telling everyone. */
-.panel.told .pmark { color: var(--accent); }
+/* Publishing is not a verdict at all — the check already passed and said so
+   in green. Telling everyone is a separate act with no condition of its own,
+   so its mark is the same grey as every other section heading. */
 
 /* Stage rows sit flush inside a panel rather than in a card of their own. */
 .panel .stages {
@@ -1199,10 +1199,10 @@ export function layout(
     ${actors.length > 0
       ? me
         ? html`<a href="/issue" class="newpost" ${withComposer ? 'data-compose' : ''}
-            aria-label="New release"><span class="full">New release</span
+            aria-label="Create release"><span class="full">Create release</span
             ><span class="tab">+</span></a>`
         : html`<span class="newpost off" title="The public cannot sign"
-            ><span class="full">New release</span><span class="tab">+</span></span>`
+            ><span class="full">Create release</span><span class="tab">+</span></span>`
       : ''}
     ${actors.length > 0 ? identity(chrome!) : ''}
   </aside>

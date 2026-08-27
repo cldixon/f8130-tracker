@@ -1763,7 +1763,7 @@ describe('the shape on a phone', () => {
 
     // A circle has room for a plus and not for two words, but the control
     // still has to announce itself.
-    assert.match(body, /aria-label="New release"/)
+    assert.match(body, /aria-label="Create release"/)
     assert.match(body, /<span class="tab">\+<\/span>/)
   })
 

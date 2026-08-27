@@ -1077,7 +1077,7 @@ function panel(params: {
   /** Icon name, or none for a section that has no condition to report. */
   mark?: string
   /** Green, red, or the accent. Absent is neutral. */
-  tone?: 'ok' | 'no' | 'told'
+  tone?: 'ok' | 'no'
   open?: boolean
   body: unknown
 }) {
@@ -1355,8 +1355,11 @@ export function receivedSections(params: {
         title: 'Verification',
         mark: verified ? 'check' : 'cross',
         tone: verified ? 'ok' : 'no',
-        // Folded once the attestation is the news, open while the result is.
-        open: !params.published,
+        // Open only when something went wrong. A passing check has nothing in
+        // it a reader needs — the tick says it — and leaving seven green rows
+        // expanded pushes the decision they came for off the screen. A failing
+        // one is the evidence for what the outcome above it just claimed.
+        open: !verified,
         body: html`<div class="stages">${report.stages.map(stageRow)}</div>`,
       })
     : ''
@@ -1370,7 +1373,7 @@ export function receivedSections(params: {
             ? 'Certificate verified'
             : 'Form does not match',
         mark: params.published ? 'megaphone' : verified ? 'check' : 'cross',
-        tone: params.published ? 'told' : verified ? 'ok' : 'no',
+        tone: params.published ? undefined : verified ? 'ok' : 'no',
         open: true,
         body: html`<p class="sub">
             ${params.published
