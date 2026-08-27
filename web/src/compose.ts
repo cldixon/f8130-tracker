@@ -81,3 +81,27 @@ export function composer() {
     </div>
   </dialog>`
 }
+
+/**
+ * The receiving dialog, as a frame with nothing in it.
+ *
+ * Empty for the same reason the composer is: everything inside — the scanned
+ * document, the checks running, the result, the receipt — is rendered by the
+ * routes under /inbox and fetched in, so the dialog and the pages cannot
+ * disagree about what a check looks like.
+ */
+export function checker() {
+  return html`<dialog id="checker">
+    <div class="chead">
+      <strong>Receiving</strong>
+      <form method="dialog"><button class="ghost" aria-label="Close">&times;</button></form>
+    </div>
+    <div class="cbody">
+      <div class="working">
+        <span class="spinner" aria-hidden="true"></span>
+        <p>Opening the paperwork&hellip;</p>
+        <div class="detail"></div>
+      </div>
+    </div>
+  </dialog>`
+}

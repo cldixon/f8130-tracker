@@ -896,14 +896,15 @@ export function inboxPage(params: {
                     >${a.partNumber}</a>
                   · s/n <span class="mono">${a.serialNumber}</span>
                 </div>
-                <form method="post" action="/inbox/check" class="checkrow">
-                  <input type="hidden" name="subjectUri" value="${a.subject.uri}">
-                  <button type="submit">Check this certificate</button>
+                <div class="checkrow">
+                  <a class="button" data-check
+                    href="/inbox/scan?uri=${encodeURIComponent(a.subject.uri)}"
+                    >Open the paperwork</a>
                   <span class="meta">
-                    Recomputes the document you were sent and compares it with
-                    what ${a.issuerName} signed.
+                    Read what goods-in scanned, then check it against what
+                    ${a.issuerName} signed.
                   </span>
-                </form>
+                </div>
               </article>`,
             )}
           </div>`}`
@@ -925,9 +926,111 @@ export function inboxPage(params: {
  * document recomputed to the commitment in the record. A demonstration that
  * drew a green tick without doing that would be demonstrating a green tick.
  */
+/**
+ * The document as the loading dock scanned it, before anybody has checked it.
+ *
+ * Two artefacts came in the crate and this is what the dock made of them: a
+ * code carrying the release this shipment belongs to, and the printed form
+ * beside it. The person reading this screen is not the person who opened the
+ * box — that handover is the ordinary division between goods-in and records,
+ * and it is the reason the document is simply here rather than being asked for.
+ *
+ * Every block is legible because this is the recipient's own copy. The paper
+ * has all seventeen printed on it and the code that opens the withheld ones
+ * travelled with it, which is the only way a receiver could ever check them.
+ * None of that is a disclosure: it is the crate's contents, read by the party
+ * the crate was sent to.
+ */
+export function inboxScanBody(params: { actor: Actor; arrival: Arrival }) {
+  const a = params.arrival
+  const scanned = (a.bundle as { values?: Record<string, unknown> } | null)?.values ?? null
+
+  return html`<h1>Scanned on receipt</h1>
+    <p class="sub">
+      Booked in by goods-in against a shipment from ${a.issuerName}. Nothing has
+      been checked yet.
+    </p>
+
+    ${dataplate({
+      description: a.description,
+      partNumber: a.partNumber,
+      serialNumber: a.serialNumber,
+      href: postPath(a.subject.uri),
+    })}
+
+    ${scanned
+      ? html`<div class="scanhead">
+            <span>The form, as scanned</span>
+            <span class="meta">17 blocks · 8 of them withheld on the record</span>
+          </div>
+          ${releasedSheet(scanned, { all: true })}`
+      : html`<div class="card"><div class="empty">
+          No document was scanned with this shipment.
+        </div></div>`}
+
+    ${scanned
+      ? html`<form method="post" action="/inbox/check" class="startcheck">
+          <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+          <button type="submit">Verify this document</button>
+          <p class="meta">
+            Seven checks against the live network: resolve ${a.issuerName}&rsquo;s
+            identity, fetch the release from their repository, verify the
+            signature on it against the key their identity document declares,
+            recompute this form&rsquo;s commitment and compare, check the public
+            blocks agree, check the serial against the part, and walk the
+            history back as far as it goes.
+          </p>
+        </form>`
+      : ''}`
+}
+
+/** Nothing was published, the crate is off the list, and that is the whole of it. */
+export function inboxDoneBody(params: { back: string }) {
+  return html`<div class="issued">
+    <h1>Handled</h1>
+    <p class="sub">
+      Off your list. Nothing was published — an absence on the network is not a
+      claim that anything was wrong, and most checks in a real supply chain
+      would never be announced.
+    </p>
+    <p><a href="${params.back}">Back to receiving</a></p>
+  </div>`
+}
+
+export function inboxScanPage(params: {
+  chrome?: Chrome
+  mode?: Mode
+  actor: Actor
+  arrival: Arrival
+}) {
+  return layout('Scanned on receipt', inboxScanBody(params), params.mode, params.chrome)
+}
+
 export function inboxCheckPage(params: {
   chrome?: Chrome
   mode?: Mode
+  actor: Actor
+  arrival: Arrival
+  report?: VerificationReport
+  published?: string
+}) {
+  const verified = params.report ? params.report.verified : true
+  return layout(
+    params.published ? 'Published' : verified ? 'Checks out' : 'Does not check out',
+    inboxCheckBody(params),
+    params.mode,
+    params.chrome,
+  )
+}
+
+/**
+ * The body of a check, without a page around it.
+ *
+ * Exported so the dialog and the page render the same markup rather than two
+ * templates that drift — the arrangement the composer already uses, and for
+ * the same reason.
+ */
+export function inboxCheckBody(params: {
   actor: Actor
   arrival: Arrival
   /**
@@ -983,7 +1086,7 @@ export function inboxCheckPage(params: {
     params.published ? 'Published' : verified ? 'Checks out' : 'Does not check out'
   }</h1>
     <p class="sub">
-      The paperwork that arrived with ${a.description}, against what
+      The paperwork that arrived with the following part, against what
       ${a.issuerName} published.
     </p>
 
@@ -994,8 +1097,8 @@ export function inboxCheckPage(params: {
       href: postPath(a.subject.uri),
     })}
 
-    ${scanned
-      ? html`<details class="scan" ${report ? '' : 'open'}>
+    ${scanned && report
+      ? html`<details class="scan">
           <summary>The document from the crate, as it was scanned</summary>
           <p class="sub">
             All seventeen blocks, because this is your copy: it came in the box
@@ -1118,12 +1221,7 @@ export function inboxCheckPage(params: {
       <a href="/inbox">Back to receiving</a>
     </p>`
 
-  return layout(
-    params.published ? 'Published' : verified ? 'Checks out' : 'Does not check out',
-    body,
-    params.mode,
-    params.chrome,
-  )
+  return body
 }
 
 /* --------------------------------------------------------------- cabinet */

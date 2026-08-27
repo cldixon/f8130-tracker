@@ -1269,6 +1269,79 @@ describe('goods in', () => {
     assert.equal(dock.count(`example-air.${DOMAIN}`), 1, 'somebody else cleared it')
   })
 
+  /**
+   * The dialog and the page render the same markup.
+   *
+   * Kept honest the way the composer is: the fragment is the page's own body,
+   * so a check cannot look like one thing in the modal and another on the
+   * screen it degrades to when scripting is off.
+   */
+  test('the scan step is a body, not a page, when asked for a fragment', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival({
+      bundle: { synthetic: 'S', version: 1, uri: 'at://x', issuerHandle: 'x',
+                values: { description: 'Fuel control unit', remarks: 'Bench tested.' },
+                nonces: [] },
+    }))
+    const uri = encodeURIComponent(arrival().subject.uri)
+
+    const frag = await (
+      await app.request(`/inbox/scan?uri=${uri}&fragment`, { headers: { cookie: AS_OPERATOR } })
+    ).text()
+    assert.ok(!frag.includes('<!doctype'), 'the fragment carried a whole document')
+    assert.match(frag, /Scanned on receipt/)
+    assert.match(frag, /Verify this document/)
+
+    const page = await (
+      await app.request(`/inbox/scan?uri=${uri}`, { headers: { cookie: AS_OPERATOR } })
+    ).text()
+    assert.match(page, /<!doctype/)
+    assert.match(page, /Scanned on receipt/)
+  })
+
+  /**
+   * The whole document, because it is the recipient's own.
+   *
+   * A withheld block is withheld from the network, not from the party the
+   * crate was sent to — the paper in the box has all seventeen printed on it.
+   * Showing less here would be modelling a restriction that does not exist.
+   */
+  test('the scan shows every block, including the withheld ones', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival({
+      bundle: { synthetic: 'S', version: 1, uri: 'at://x', issuerHandle: 'x',
+                values: { remarks: 'Bladder replaced per CMM 29-11-08.' }, nonces: [] },
+    }))
+    const body = await (
+      await app.request(
+        `/inbox/scan?uri=${encodeURIComponent(arrival().subject.uri)}&fragment`,
+        { headers: { cookie: AS_OPERATOR } },
+      )
+    ).text()
+    assert.match(body, /Bladder replaced per CMM 29-11-08/, 'Block 12 was hidden from its holder')
+    assert.ok(!body.includes('>withheld<'), 'a block was marked withheld to its own recipient')
+  })
+
+  test('another organization cannot open a document it was not sent', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    const res = await app.request(
+      `/inbox/scan?uri=${encodeURIComponent(arrival().subject.uri)}`,
+      { headers: { cookie: `f8130_actor=southpoint-air.${DOMAIN}` } },
+    )
+    assert.equal(res.status, 404)
+  })
+
+  test('the public cannot open one at all', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    const res = await app.request(
+      `/inbox/scan?uri=${encodeURIComponent(arrival().subject.uri)}`,
+      { headers: { cookie: PUBLIC } },
+    )
+    assert.equal(res.status, 403)
+  })
+
   /** The dead form this page carried for six releases. */
   test('offers no verdict form, which is a route that no longer exists', async () => {
     const { app, dock } = await dockApp()
@@ -1281,7 +1354,7 @@ describe('goods in', () => {
     for (const gone of ['Publish verdict', 'discrepancy', 'name="outcome"']) {
       assert.ok(!body.includes(gone), `${gone} outlived verdicts`)
     }
-    assert.match(body, /Check this certificate/)
+    assert.match(body, /Open the paperwork/)
   })
 
   test('the rail carries the count for the acting organization', async () => {

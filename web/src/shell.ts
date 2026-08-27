@@ -18,7 +18,7 @@
 import { html, raw } from 'hono/html'
 import type { HtmlEscapedString } from 'hono/utils/html'
 
-import { composer } from './compose.js'
+import { checker, composer } from './compose.js'
 import type { Actor } from './writer.js'
 
 const STYLES = `
@@ -280,6 +280,42 @@ form.draftform button[type=submit] { margin-top: 1rem; }
 .checkrow { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin-top: .6rem; }
 .checkrow button { margin: 0; flex: 0 0 auto; }
 .checkrow .meta { margin: 0; flex: 1 1 14rem; min-width: 0; }
+
+/* A link that behaves as the action it is. */
+a.button {
+  display: inline-block; text-decoration: none; text-align: center;
+  background: var(--accent); color: var(--bg); border: 0; border-radius: 6px;
+  padding: .5rem .9rem; font-size: .9rem; font-weight: 600;
+}
+a.button:hover { filter: brightness(1.08); }
+
+#checker { width: min(46rem, calc(100vw - 2rem)); }
+#checker .cbody h1 { font-size: 1.25rem; }
+
+/* What is being done while it is being done. Named, not timed: the server
+   answers when all seven are finished, and animating them in sequence would
+   be inventing progress the page cannot observe. */
+.checks-running {
+  list-style: none; margin: .9rem 0 0; padding: 0; text-align: left;
+  display: grid; gap: .3rem;
+}
+.checks-running li {
+  font-size: .82rem; color: var(--muted); padding-left: 1.1rem; position: relative;
+}
+.checks-running li::before {
+  content: "·"; position: absolute; left: .3rem; color: var(--accent);
+  font-weight: 700;
+}
+.working .detail { width: 100%; }
+
+.scanhead {
+  display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap;
+  margin: 1.1rem 0 .5rem; font-size: .9rem; font-weight: 600;
+}
+.scanhead .meta { margin: 0; font-weight: 400; }
+.startcheck { margin-top: 1.1rem; }
+.startcheck button { margin: 0; }
+.startcheck .meta { margin-top: .5rem; }
 
 /* The scanned document, folded away once a result is on screen. */
 .scan { margin-top: 1rem; }
@@ -796,6 +832,107 @@ function identity(chrome: Chrome) {
 }
 
 /**
+ * Wiring for the receiving dialog.
+ *
+ * The same arrangement as the composer and for the same reason: every entry
+ * point is an ordinary link to a page that works without scripting, upgraded
+ * here to open over the list instead of navigating away from it. The dialog
+ * holds no markup of its own — it asks the server for the same body the page
+ * renders, so there is one template rather than two that drift.
+ *
+ * Where it differs is that a check is a sequence. Scanned document, then the
+ * checks running, then the result, then publishing or not. Each of those is a
+ * fragment fetched in turn, and the dialog is just the frame they arrive in.
+ */
+const CHECKER_SCRIPT = `
+(function () {
+  var dlg = document.getElementById('checker')
+  if (!dlg || !dlg.showModal) return
+  var body = dlg.querySelector('.cbody')
+  if (!body) return
+  var RESTING = body.innerHTML
+
+  function working(message, detail) {
+    body.innerHTML = RESTING
+    var p = body.querySelector('.working p')
+    if (p) p.textContent = message
+    var d = body.querySelector('.working .detail')
+    if (d && detail) d.innerHTML = detail
+  }
+
+  function failed(message) {
+    body.innerHTML = ''
+    var box = document.createElement('div')
+    box.className = 'empty'
+    box.textContent = message
+    body.appendChild(box)
+  }
+
+  // The seven checks, named while they run. Not a progress bar: the server
+  // answers when all of them are done, and pretending to know which one is
+  // in flight would be inventing a fact the page does not have. What it says
+  // is what is being done, which is true from the moment it starts.
+  var CHECKS = [
+    'Resolving the issuer&rsquo;s identity',
+    'Fetching the release from their repository',
+    'Verifying the signature against their declared key',
+    'Recomputing this document&rsquo;s commitment',
+    'Comparing the blocks published in the clear',
+    'Checking the serial against the part',
+    'Walking the history back'
+  ]
+
+  function send(pending, whenBroken) {
+    pending.then(function (r) {
+      if (!r.ok && r.status !== 400 && r.status !== 404) throw new Error('bad status')
+      return r.text()
+    }).then(function (markup) {
+      body.innerHTML = markup
+      body.scrollTop = 0
+      wire()
+    }).catch(function () { failed(whenBroken) })
+  }
+
+  function wire() {
+    var forms = body.querySelectorAll('form')
+    Array.prototype.forEach.call(forms, function (form) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault()
+        var action = form.getAttribute('action') || ''
+        if (action.indexOf('/inbox/check') === 0) {
+          working('Checking the document against the network\\u2026',
+            '<ul class="checks-running"><li>' + CHECKS.join('</li><li>') + '</li></ul>')
+        } else {
+          working('Publishing\\u2026', '')
+        }
+        var url = action + (action.indexOf('?') < 0 ? '?fragment' : '&fragment')
+        send(fetch(url, { method: 'POST', body: new FormData(form) }),
+             'That did not go through.')
+      })
+    })
+  }
+
+  document.querySelectorAll('[data-check]').forEach(function (el) {
+    el.addEventListener('click', function (e) {
+      e.preventDefault()
+      dlg.showModal()
+      working('Opening the paperwork\\u2026', '')
+      var href = el.getAttribute('href')
+      send(fetch(href + '&fragment', { cache: 'no-store' }),
+           'Could not open that document.')
+    })
+  })
+
+  // A crate that was dealt with is no longer on the list behind the dialog,
+  // so the list is stale the moment this closes.
+  dlg.addEventListener('close', function () {
+    if (body.querySelector('.issued')) { window.location.reload(); return }
+    body.innerHTML = RESTING
+  })
+})()
+`
+
+/**
  * Wiring for the composer.
  *
  * Every entry point into it is an ordinary link to `/issue`, upgraded here to
@@ -1058,7 +1195,9 @@ export function layout(
   </main>
 </div>
 ${withComposer ? composer() : ''}
+${me ? checker() : ''}
 ${withComposer ? html`${raw(`<script>${COMPOSER_SCRIPT}</script>`)}` : ''}
+${me ? html`${raw(`<script>${CHECKER_SCRIPT}</script>`)}` : ''}
 ${raw(`<script>${CABINET_SCRIPT}</script>`)}
 ${actors.length > 0 ? html`${raw(`<script>${SWITCHER_SCRIPT}</script>`)}` : ''}
 </body>

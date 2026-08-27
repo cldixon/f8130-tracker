@@ -44,6 +44,10 @@ import {
   formPage,
   inboxPage,
   inboxCheckPage,
+  inboxCheckBody,
+  inboxScanPage,
+  inboxScanBody,
+  inboxDoneBody,
   issueBody,
   issuePage,
   partPage,
@@ -1000,14 +1004,12 @@ export function createApp(deps: AppDeps) {
         // checked, is a worse answer to "what happened".
         if (arrival) {
           const actor = writer.actors().find((a) => a.handle === handle)!
+          const done = { actor, arrival, published: written.uri }
+          if (c.req.query('fragment') !== undefined) {
+            return c.html(inboxCheckBody(done))
+          }
           return c.html(
-            inboxCheckPage({
-              mode,
-              chrome: chrome(c, 'inbox'),
-              actor,
-              arrival,
-              published: written.uri,
-            }),
+            inboxCheckPage({ mode, chrome: chrome(c, 'inbox'), ...done }),
           )
         }
         return c.html(
@@ -1190,6 +1192,34 @@ export function createApp(deps: AppDeps) {
     })
 
     /**
+     * What the loading dock booked in, before anybody has checked it.
+     *
+     * Its own screen rather than a section of the result, because it is a
+     * different question: this is "here is what arrived", and the check is
+     * "and here is whether it holds up". Reading the document before running
+     * anything against it is the order a records desk works in.
+     */
+    app.get('/inbox/scan', (c) => {
+      const handle = currentActor(c)
+      const actor = writer.actors().find((a) => a.handle === handle)
+      if (!actor) {
+        return c.html(errorPage(403, 'Only an organization receives parts.'), 403)
+      }
+      const arrival = deps.dock?.arrival(handle, c.req.query('uri') ?? '')
+      if (!arrival) {
+        return c.html(errorPage(404, 'Nothing by that name is waiting for you.'), 404)
+      }
+      // Never cached: the list it came from changes as crates are dealt with.
+      c.header('cache-control', 'no-store')
+      if (c.req.query('fragment') !== undefined) {
+        return c.html(inboxScanBody({ actor, arrival }))
+      }
+      return c.html(
+        inboxScanPage({ mode, chrome: chrome(c, 'inbox'), actor, arrival }),
+      )
+    })
+
+    /**
      * Take a part off the list without publishing anything.
      *
      * The two ways a check ends without an attestation — the document did not
@@ -1208,6 +1238,9 @@ export function createApp(deps: AppDeps) {
       // Only ever from the acting organization's own dock, so a caller cannot
       // clear a crate that was never theirs.
       if (deps.dock?.arrival(handle, subjectUri)) deps.dock.settle(subjectUri)
+      if (c.req.query('fragment') !== undefined) {
+        return c.html(inboxDoneBody({ back: '/inbox' }))
+      }
       return c.redirect('/inbox', 303)
     })
 
@@ -1250,6 +1283,9 @@ export function createApp(deps: AppDeps) {
           resolver: deps.resolver,
           repo: deps.repo,
         })
+        if (c.req.query('fragment') !== undefined) {
+          return c.html(inboxCheckBody({ actor, arrival, report }))
+        }
         return c.html(
           inboxCheckPage({
             mode,
