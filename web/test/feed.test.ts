@@ -1226,10 +1226,14 @@ describe('goods in', () => {
     })
     await g.tick()
 
-    // Exactly one operator is holding exactly one crate.
+    // Exactly one organization is holding exactly one crate, and it is not
+    // the factory. Asserted by what the roles mean rather than by listing the
+    // kinds that may receive: that list has changed once and would have
+    // silently pinned this test to the old model again.
     const holders = orgs(DOMAIN).filter((o) => dock.count(o.handle) > 0)
     assert.equal(holders.length, 1)
-    assert.ok(['operator', 'lessor'].includes(holders[0]!.kind))
+    assert.notEqual(holders[0]!.kind, 'oem', 'a manufacturer was sent a used part')
+    assert.equal(dock.count(holders[0]!.handle), 1)
   })
 })
 
@@ -1673,6 +1677,85 @@ describe('the synthetic generator', () => {
   })
 
   /**
+   * The bug that made the front door lead to an empty page.
+   *
+   * Recipients used to be operators and lessors only, so a repair station —
+   * which is what a fresh visit arrives as — could never be sent anything. No
+   * amount of waiting would have produced a notification, because there was no
+   * arrangement under which one could arrive.
+   */
+  test('a repair station can be sent a part', async () => {
+    const { writer } = recorder()
+    const dock = new Dock(500)
+    const shop = demoActors(DOMAIN).find((a) => a.kind === 'mro')!
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.5,
+    })
+    g.viewerJoined(shop.handle)
+    for (let i = 0; i < 8; i++) await g.tick()
+
+    assert.ok(
+      dock.count(shop.handle) > 0,
+      'a repair station watching the feed was never sent anything',
+    )
+  })
+
+  /**
+   * A manufacturer is the exception, and stays one.
+   *
+   * An OEM certifies new manufacture under Block 13; a used part arriving at
+   * the factory is a different story than this one tells.
+   */
+  test('a manufacturer is never sent a part', async () => {
+    const { writer, calls } = recorder()
+    const dock = new Dock(500)
+    const oems = demoActors(DOMAIN).filter((a) => a.kind === 'oem')
+    assert.ok(oems.length > 0, 'the roster has no manufacturers to check')
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.5,
+    })
+    g.viewerJoined(oems[0]!.handle)
+    for (let i = 0; i < 12; i++) await g.tick()
+
+    for (const oem of oems) {
+      assert.equal(dock.count(oem.handle), 0, `${oem.displayName} was sent a part`)
+    }
+    assert.ok(calls.length > 0, 'nothing was issued at all, so this proved nothing')
+  })
+
+  /**
+   * A release is a handover. A document saying a station released a part to
+   * itself describes nothing, and with shops now in the recipient pool it is
+   * a thing the picker could otherwise produce.
+   */
+  test('a station is never handed the part it just signed', async () => {
+    const { writer, calls } = recorder()
+    const dock = new Dock(500)
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.5,
+    })
+    g.viewerJoined()
+    for (let i = 0; i < 12; i++) await g.tick()
+
+    const issuedBy = new Map<string, string>()
+    for (const c of calls) {
+      if (c.kind === 'release') issuedBy.set(c.uri, c.handle)
+    }
+    let checked = 0
+    for (const a of demoActors(DOMAIN)) {
+      for (const arrival of dock.awaiting(a.handle)) {
+        const signer = issuedBy.get(arrival.subject.uri)
+        if (!signer) continue
+        checked++
+        assert.notEqual(signer, a.handle, `${a.handle} was handed its own release`)
+      }
+    }
+    assert.ok(checked > 0, 'no handover was actually inspected')
+  })
+
+  /**
    * A constant die, which is position-independent.
    *
    * Scripted roll arrays pinned the exact order the generator consumes
@@ -1837,7 +1920,7 @@ describe('the synthetic generator', () => {
     assert.equal(calls[0].form.organizationAddress, issuer.address)
   })
 
-  test('a release is later checked by the operator who received it', async () => {
+  test('a release is later checked by whoever received it, never by its issuer', async () => {
     const { g, calls } = gen([], { random: WALK_THE_THREAD })
     await g.tick()
     await g.tick()
@@ -1847,10 +1930,16 @@ describe('the synthetic generator', () => {
     assert.equal(att.kind, 'attestation')
     assert.equal(att.subject.uri, rel.uri, 'the check must name the release it covers')
 
-    // The check is published by the operator, not by the issuer: a receipt the
-    // issuer could write is not a receipt.
-    const verifier = orgs(DOMAIN).find((o) => o.handle === att.handle)!
-    assert.ok(['operator', 'lessor'].includes(verifier.kind))
+    // The property that matters, stated as itself: a receipt the issuer could
+    // write is not a receipt. It used to be checked by asserting the verifier's
+    // kind, which tested the roster's shape rather than the claim — and broke
+    // the moment repair stations could receive parts, without the claim having
+    // changed at all.
+    assert.notEqual(att.handle, rel.handle, 'the issuer vouched for itself')
+    assert.ok(
+      orgs(DOMAIN).some((o) => o.handle === att.handle),
+      'the check came from somebody not on the roster',
+    )
     assert.notEqual(att.handle, rel.handle)
   })
 

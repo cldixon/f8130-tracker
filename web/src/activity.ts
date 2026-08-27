@@ -270,9 +270,9 @@ export class ActivityGenerator {
    */
   private readonly watching = new Map<string, number>()
 
-  /** An operator somebody is looking at the application as, if there is one. */
-  private watchingOperator(operators: Org[]): Org | undefined {
-    const candidates = operators.filter((o) => (this.watching.get(o.handle) ?? 0) > 0)
+  /** An organization somebody is looking at the application as, if any. */
+  private watchingOperator(among: Org[]): Org | undefined {
+    const candidates = among.filter((o) => (this.watching.get(o.handle) ?? 0) > 0)
     return candidates.length > 0 ? this.pickOne(candidates) : undefined
   }
 
@@ -523,7 +523,7 @@ export class ActivityGenerator {
     }
   }
 
-  /** A repair station or manufacturer releases a part to an operator. */
+  /** A repair station or manufacturer releases a part to whoever receives it. */
   private async issue(
     opts: { agedDays?: number; narrate?: boolean } = {},
   ): Promise<Pending | null> {
@@ -531,21 +531,48 @@ export class ActivityGenerator {
     const issuers = cast.filter(
       (o) => (o.kind === 'mro' || o.kind === 'oem') && this.known(o.handle),
     )
-    const operators = cast.filter(
-      (o) => (o.kind === 'operator' || o.kind === 'lessor') && this.known(o.handle),
+
+    // Everyone but a manufacturer can be sent a part.
+    //
+    // This used to be operators and lessors only, which made a repair station
+    // the one thing on the roster that could never receive anything — and a
+    // repair station is what a visitor arrives as. The front door led to a
+    // page that was empty by construction, and no amount of waiting would
+    // have changed it.
+    //
+    // It was also at odds with the rest of the simulation. A part comes back
+    // for more work at a different shop, which is what `inService` exists to
+    // model, so components already move between stations here; the dock was
+    // simply never told. A shop receiving a component to work on is the most
+    // ordinary event in the industry, and a broker receiving stock to resell
+    // is its whole business.
+    //
+    // Manufacturers stay out. An OEM certifies new manufacture under Block 13,
+    // and a used part arriving at the factory is a different story than this
+    // one is telling.
+    const recipients = cast.filter(
+      (o) => o.kind !== 'oem' && this.known(o.handle),
     )
     const issuer = this.pickOne(issuers)
+
     // Whoever is watching gets the part more often than chance would give
-    // them. With a dozen operators on the roster, a visitor sitting on the
-    // feed as one of them would wait through eleven crates going somewhere
-    // else before anything reached their own goods-in — which reads as the
-    // page being broken rather than as a supply chain being wide.
+    // them. Spread across the roster, a visitor sitting on the feed would wait
+    // through a great many crates going somewhere else before one reached
+    // their own goods-in — which reads as the page being broken rather than as
+    // a supply chain being wide.
     //
     // Not always, because an inbox that fills every single time is a different
     // lie: most parts in a network are somebody else's.
+    //
+    // Never back to the shop that just signed it, whichever way it was picked.
+    // A release is a handover, and a document saying a station released a part
+    // to itself describes nothing.
+    const candidates = issuer
+      ? recipients.filter((o) => o.handle !== issuer.handle)
+      : recipients
     const operator =
-      (this.rand() < WATCHED_SHARE ? this.watchingOperator(operators) : undefined) ??
-      this.pickOne(operators)
+      (this.rand() < WATCHED_SHARE ? this.watchingOperator(candidates) : undefined) ??
+      this.pickOne(candidates)
     if (!issuer || !operator) return null
 
     // Sometimes a part already in service comes back in for more work. An
