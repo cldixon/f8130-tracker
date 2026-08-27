@@ -1147,8 +1147,6 @@ export function receivedSections(params: {
   const verified = report ? report.verified : true
 
   const byName = new Map((report?.stages ?? []).map((st) => [st.name, st]))
-  const sig = byName.get('signature')
-  const recompute = byName.get('recompute')
 
   /*
    * What this observer can say about a document that did not match.
@@ -1186,30 +1184,24 @@ export function receivedSections(params: {
       ensures the information on the form matches what the issuer released. We
       must still perform all required inspections on the part itself.
     </p>
-    <h2 class="sect">Say so in public</h2>
+    <h2 class="sect">Optional: Issue Public Attestation</h2>
     <p class="sub">
-      Publishes a record in ${params.actor.displayName}&rsquo;s own repository
-      saying this document checked out. It names no findings and carries no
-      part number — only which release was checked, and when. The check has
-      already happened either way; this is whether anybody else gets to know
-      it did.
+      Only publishes that we received and successfully verified the issued
+      certificate. No additional proprietary details are provided. Builds the
+      public record of how much of this issuer&rsquo;s output has been
+      independently checked, which is what makes certificate fraud detectable.
     </p>
     <div class="choose">
       <form method="post" action="/attest">
         <input type="hidden" name="subjectUri" value="${a.subject.uri}">
         <input type="hidden" name="subjectCid" value="${a.subject.cid}">
-        <button type="submit">Publish an attestation</button>
+        <button type="submit">Publish attestation</button>
       </form>
       <form method="post" action="/inbox/clear">
         <input type="hidden" name="subjectUri" value="${a.subject.uri}">
         <button type="submit" class="ghost">Accept without publishing</button>
       </form>
     </div>
-    <p class="meta">
-      Declining publishes nothing at all. An absence on the network is not a
-      claim that anything was wrong — most checks in a real supply chain would
-      never be announced.
-    </p>
   </div>`
 
   const mismatchBlock = html`<div class="outcome">
@@ -1243,21 +1235,7 @@ export function receivedSections(params: {
             one ${a.issuerName} published, and it does not decompose into which
             part of it changed.
           </p>`}
-      <p>
-        There is nothing to publish. A document that fails to recompute proves
-        only that some document fails, and anyone can produce one, so this is
-        evidence to you and to nobody else.
-      </p>
     </div>
-
-    ${sig?.status === 'pass' && recompute?.status === 'fail'
-      ? html`<div class="contrast">
-          <strong>Read these two together.</strong> The signature is genuine —
-          ${a.issuerName} really did sign a release for this part. The
-          commitment is not: the document in this crate is no longer the one
-          they signed.
-        </div>`
-      : ''}
 
     <form method="post" action="/inbox/clear" class="checkrow">
       <input type="hidden" name="subjectUri" value="${a.subject.uri}">

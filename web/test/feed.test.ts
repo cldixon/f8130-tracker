@@ -1104,7 +1104,7 @@ describe('goods in', () => {
     assert.equal(checked.status, 200)
     const report = await checked.text()
     assert.match(report, /Certificate verified/)
-    assert.match(report, /Publish an attestation/)
+    assert.match(report, /Publish attestation/)
 
     const published = await app.request('/attest', {
       method: 'POST',
@@ -1232,7 +1232,7 @@ describe('goods in', () => {
     assert.match(body, /can be shown/)
     assert.match(body, /Something else entirely/, 'the crate value was not shown')
     assert.match(body, new RegExp(values.description!), 'the published value was not shown')
-    assert.ok(!body.includes('Publish an attestation'), 'a failure offered to vouch')
+    assert.ok(!body.includes('Publish attestation'), 'a failure offered to vouch')
   })
 
   /**
@@ -1284,7 +1284,7 @@ describe('goods in', () => {
     // And the observer genuinely does not have the published prose to compare
     // against: the record never carried it.
     assert.ok(!body.includes(secretBefore), 'withheld prose from the record leaked')
-    assert.ok(!body.includes('Publish an attestation'))
+    assert.ok(!body.includes('Publish attestation'))
   })
 
   test('clearing takes the part off the list and publishes nothing', async () => {
