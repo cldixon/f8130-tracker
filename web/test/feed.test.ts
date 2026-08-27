@@ -1279,7 +1279,7 @@ describe('goods in', () => {
     ).text()
 
     assert.match(body, /Form does not match/)
-    assert.match(body, /cannot say which line/)
+    assert.match(body, /does not reveal any more details/)
     assert.ok(!body.includes('can be shown'), 'it claimed to be able to name the block')
     // And the observer genuinely does not have the published prose to compare
     // against: the record never carried it.
@@ -1358,9 +1358,14 @@ describe('goods in', () => {
       })
     ).text()
 
-    assert.match(body, /Attestation published/)
-    assert.match(body, /<summary>Verification<\/summary>/, 'the checks are not on the receipt')
-    assert.equal((body.match(/class="stage/g) ?? []).length, 7, 'not every stage survived')
+    assert.match(body, /class="ptitle">Attestation</)
+    assert.match(body, /Published to the network/)
+    assert.match(body, /class="ptitle">Verification</, 'the checks are not on the receipt')
+    // The wrapper is class="stages"; the rows are class="stage".
+    assert.equal(
+      (body.match(/class="stage"/g) ?? []).length, 7,
+      'not every stage survived onto the receipt',
+    )
   })
 
   test('clearing takes the part off the list and publishes nothing', async () => {

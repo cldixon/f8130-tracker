@@ -326,18 +326,61 @@ a.button:hover { filter: brightness(1.08); }
 /* The outcome carries its state in the heading rather than in a banner
    underneath one — a page that says "Form does not match" does not also need
    a box saying not verified. */
-.verdict-head {
-  display: flex; align-items: center; gap: .5rem;
-  font-size: 1.2rem; margin: 2rem 0 .35rem;
+/* Sections, all built the same way.
+   They used to be a mixture — a heading with a card under it, a summary
+   nobody would notice, a coloured heading with nothing to fold — so the page
+   read as a pile of unrelated things rather than a sequence of steps with
+   states. The condition lives in the summary so it survives being closed: a
+   section somebody folded away can still tell them it passed. */
+.panel {
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  margin-top: .8rem; overflow: hidden;
 }
-.verdict-head .ic { flex: 0 0 auto; font-size: 1.05em; line-height: 1; }
-.verdict-head.ok { color: var(--pass); }
-.verdict-head.no { color: var(--fail); }
+.panel > summary {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .8rem 1rem; cursor: pointer; list-style: none;
+  font-size: .95rem; user-select: none;
+}
+.panel > summary::-webkit-details-marker { display: none; }
+.panel > summary:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.panel .pmark { flex: 0 0 auto; display: flex; color: var(--muted); }
+.panel .ico-svg { width: 1.15rem; height: 1.15rem; display: block; }
+.panel .ptitle { font-weight: 600; }
+.panel .pstate {
+  margin-left: auto; color: var(--muted); font-size: .8rem;
+  text-align: right; min-width: 0;
+}
+.panel .pchev {
+  flex: 0 0 auto; display: flex; color: var(--muted);
+  transition: transform .18s ease-out;
+}
+.panel .pchev svg { width: 1.05rem; height: 1.05rem; display: block; }
+.panel[open] > summary .pchev { transform: rotate(180deg); }
+.panel .pbody { padding: 0 1rem 1rem; }
+.panel .pbody > .sub:first-child { margin-top: 0; }
+
+/* The condition, carried by the icon and the border rather than by colouring
+   a whole block — a section that passed should read as calm. */
+.panel.ok { border-left: 3px solid var(--pass); }
+.panel.ok .pmark { color: var(--pass); }
+.panel.no { border-left: 3px solid var(--fail); }
+.panel.no .pmark { color: var(--fail); }
 /* Publishing is not a third verdict. The check already passed and said so in
-   green; this is the separate act of telling everyone, so it is the accent
-   colour rather than another shade of pass. */
-.verdict-head.told { color: var(--accent); }
-.verdict-head + .sub { margin-bottom: 1rem; }
+   green; this is the separate act of telling everyone. */
+.panel.told { border-left: 3px solid var(--accent); }
+.panel.told .pmark { color: var(--accent); }
+
+/* Stage rows sit flush inside a panel rather than in a card of their own. */
+.panel .stages {
+  border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+}
+.panel .stages .stage { padding: .7rem .9rem; }
+
+.withheld-list {
+  margin: .2rem 0 .8rem; padding-left: 1.1rem; font-size: .87rem;
+  color: var(--muted); columns: 2; column-gap: 1.5rem;
+}
+@media (max-width: 34rem) { .withheld-list { columns: 1; } }
 
 /* The document, folded once it has been read and the decision is below it. */
 .sheetfold > summary { font-weight: 600; color: var(--fg); }

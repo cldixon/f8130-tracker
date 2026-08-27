@@ -988,9 +988,9 @@ const VERIFY_SCRIPT = `
       zone.innerHTML = markup
       // The document has been read by now and the decision is below it, so it
       // folds out of the way. It is still there and still openable.
-      var sheet = document.querySelector('[data-sheet]')
+      var sheet = document.querySelector('[data-sheet] details')
       if (sheet) sheet.removeAttribute('open')
-      var head = zone.querySelector('.verdict-head')
+      var head = zone.querySelector('.panel')
       if (head) head.scrollIntoView({ block: 'center', behavior: 'smooth' })
     }
 
@@ -1012,6 +1012,80 @@ const VERIFY_SCRIPT = `
   })
 })()
 `
+
+/**
+ * The icon set, inline.
+ *
+ * SVG rather than emoji. An emoji is a different typeface on every platform,
+ * carries its own colour whatever the surrounding text is doing, and the one
+ * for a megaphone renders as a trumpet on half the machines that see it. These
+ * are drawn in currentColor, so a section that is green is green all the way
+ * through and a section that is not says so in one glance.
+ */
+const ICONS: Record<string, string> = {
+  check:
+    '<path d="M20 6 9 17l-5-5"/>',
+  cross:
+    '<path d="M18 6 6 18M6 6l12 12"/>',
+  megaphone:
+    '<path d="M3 11v2a1 1 0 0 0 1 1h2l3.5 4.5a1 1 0 0 0 1.8-.6V6.1a1 1 0 0 0-1.8-.6L6 10H4a1 1 0 0 0-1 1Z"/>' +
+    '<path d="M16 8a4 4 0 0 1 0 8"/><path d="M19 5a8 8 0 0 1 0 14"/>',
+  document:
+    '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/>' +
+    '<path d="M14 3v5h5"/>',
+  part:
+    '<path d="M12 2 3 7v10l9 5 9-5V7Z"/><path d="M3 7l9 5 9-5"/><path d="M12 12v10"/>',
+  shield:
+    '<path d="M12 3 5 6v6c0 4.5 3 8 7 9 4-1 7-4.5 7-9V6Z"/>',
+}
+
+function icon(name: string) {
+  return raw(
+    `<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+      `stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+      (ICONS[name] ?? '') +
+      `</svg>`,
+  )
+}
+
+/**
+ * A section of a page: named, collapsible, and stating its own condition.
+ *
+ * Every block on the receiving screen is one of these, which is the point.
+ * They were a mixture before — a heading with a card under it, a summary
+ * nobody would notice, a coloured heading with nothing to fold — so the page
+ * read as a pile of unrelated things rather than as a sequence of steps with
+ * states. A reader should be able to run an eye down the left edge and see
+ * what happened without opening anything.
+ *
+ * The state sits in the summary rather than inside, so it survives being
+ * closed. A section a reader has folded away should still be able to tell them
+ * it passed.
+ */
+function panel(params: {
+  title: string
+  /** Icon name, or none for a section that has no condition to report. */
+  mark?: string
+  /** Green, red, or the accent. Absent is neutral. */
+  tone?: 'ok' | 'no' | 'told'
+  /** The short statement of condition, shown beside the title. */
+  state?: unknown
+  open?: boolean
+  body: unknown
+}) {
+  return html`<details class="panel ${params.tone ?? ''}" ${params.open ? 'open' : ''}>
+    <summary>
+      <span class="pmark">${params.mark ? icon(params.mark) : ''}</span>
+      <span class="ptitle">${params.title}</span>
+      ${params.state ? html`<span class="pstate">${params.state}</span>` : ''}
+      <span class="pchev" aria-hidden="true">${raw(
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+          'stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+      )}</span>
+    </summary>
+    <div class="pbody">${params.body}</div>
+  </details>`
+}
 
 /**
  * A certificate drawn as the document it is, read-only.
@@ -1105,19 +1179,29 @@ export function receivedBody(params: {
       must verify the paper document matches what the issuer submitted.
     </p>
 
-    <h2 class="sect">The component</h2>
-    ${dataplate({
-      description: a.description,
-      partNumber: a.partNumber,
-      serialNumber: a.serialNumber,
-      href: postPath(a.subject.uri),
+    ${panel({
+      title: 'The component',
+      mark: 'part',
+      state: a.description,
+      open: true,
+      body: dataplate({
+        description: a.description,
+        partNumber: a.partNumber,
+        serialNumber: a.serialNumber,
+        href: postPath(a.subject.uri),
+      }),
     })}
 
     ${scanned
-      ? html`<details class="scan sheetfold" data-sheet ${settled ? '' : 'open'}>
-          <summary>Scanned 8130</summary>
-          ${paperSheet(scanned)}
-        </details>`
+      ? html`<div data-sheet>${panel({
+          title: 'Scanned 8130',
+          mark: 'document',
+          state: `${FIELDS.length} blocks · ${FIELDS.filter((f) => !f.public).length} withheld on the record`,
+          // The document is the subject until the check runs, and the outcome
+          // is afterwards, so it opens first and folds once there is a result.
+          open: !settled,
+          body: paperSheet(scanned),
+        })}</div>`
       : html`<div class="card"><div class="empty">
           No document was scanned with this shipment.
         </div></div>`}
@@ -1227,13 +1311,16 @@ export function receivedSections(params: {
               )}
             </dl>`
         : html`<p>
-            The difference is in one of the eight blocks the record keeps under
-            its commitment, so this observer cannot say which line is wrong —
-            and neither can anyone else. The commitment is a single hash over
-            all seventeen blocks; it establishes that the document is not the
-            one ${a.issuerName} published, and it does not decompose into which
-            part of it changed.
-          </p>`}
+              Verification identified a discrepancy between our form and the
+              issuer&rsquo;s published record. The discrepancy likely
+              originates in one of the non-public fields, but the cryptographic
+              process does not reveal any more details than that.
+            </p>
+            <ul class="withheld-list">
+              ${FIELDS.filter((f) => !f.public).map(
+                (f) => html`<li>Block ${f.block} · ${bareLabel(f.name)}</li>`,
+              )}
+            </ul>`}
     </div>
 
     <form method="post" action="/inbox/clear" class="checkrow">
@@ -1261,40 +1348,53 @@ export function receivedSections(params: {
   // Once the attestation is the news, the checks fold rather than vanish. A
   // reader who wants to see what was verified before they published should
   // not have to take the receipt's word for it.
+  const passed = (report?.stages ?? []).filter((st) => st.status === 'pass').length
+  const total = report?.stages.length ?? 0
+
   const checks = report
-    ? params.published
-      ? html`<details class="scan">
-          <summary>Verification</summary>
-          <div class="card">${report.stages.map(stageRow)}</div>
-        </details>`
-      : html`<h2 class="sect">Verification</h2>
-          <div class="card">${report.stages.map(stageRow)}</div>`
+    ? panel({
+        title: 'Verification',
+        mark: verified ? 'check' : 'cross',
+        tone: verified ? 'ok' : 'no',
+        state: `${passed} of ${total} checks passed`,
+        // Folded once the attestation is the news, open while the result is.
+        open: !params.published,
+        body: html`<div class="stages">${report.stages.map(stageRow)}</div>`,
+      })
     : ''
 
   const sections = settled
     ? html`${checks}
-      <h2 class="verdict-head ${params.published ? 'told' : verified ? 'ok' : 'no'}">
-        <span class="ic" aria-hidden="true"
-          >${params.published ? '📣' : verified ? '✓' : '✕'}</span>
-        ${params.published
-          ? 'Attestation published'
+      ${panel({
+        title: params.published
+          ? 'Attestation'
           : verified
             ? 'Certificate verified'
-            : 'Form does not match'}
-      </h2>
-      <p class="sub">
-        ${params.published
-          ? html`Published to ${params.actor.displayName}&rsquo;s own
-              repository, under their own key. ${a.issuerName} cannot remove
-              it.`
+            : 'Form does not match',
+        mark: params.published ? 'megaphone' : verified ? 'check' : 'cross',
+        tone: params.published ? 'told' : verified ? 'ok' : 'no',
+        state: params.published
+          ? 'Published to the network'
           : verified
-            ? html`The 8130 form we received matches what ${a.issuerName}
-                submitted to the network when they released the part.`
-            : html`The 8130 form we received does not match what the issuer
-                submitted to the network on release. We will need to contact
-                them directly to resolve the discrepancy.`}
-      </p>
-      ${outcome}`
+            // A literal character rather than an entity: this is a plain
+            // string, not markup, so an entity is escaped and shown as one.
+            ? 'Matches the issuer’s record'
+            : 'Does not match',
+        open: true,
+        body: html`<p class="sub">
+            ${params.published
+              ? html`Published to ${params.actor.displayName}&rsquo;s own
+                  repository, under their own key. ${a.issuerName} cannot
+                  remove it.`
+              : verified
+                ? html`The 8130 form we received matches what ${a.issuerName}
+                    submitted to the network when they released the part.`
+                : html`The 8130 form we received does not match what the issuer
+                    submitted to the network on release. We will need to
+                    contact them directly to resolve the discrepancy.`}
+          </p>
+          ${outcome}`,
+      })}`
     : html`<form method="post" action="/inbox/check" class="startcheck" data-verify>
         <input type="hidden" name="subjectUri" value="${a.subject.uri}">
         <button type="submit">Verify this document</button>
