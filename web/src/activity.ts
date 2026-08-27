@@ -25,14 +25,41 @@
  */
 
 import {
+  FIELDS,
   narratedForm,
   orgs,
+  type Bundle,
+  type FieldSpec,
   type Narrator,
   type Org,
   type RawForm,
 } from '@f8130/core'
 
 import type { RecordWriter, StrongRef } from './writer.js'
+
+/**
+ * The same value, altered enough to break a hash and little enough to look
+ * like a mistake somebody could actually make.
+ */
+function nudge(value: string | number | null, spec: FieldSpec): string | number {
+  if (spec.kind === 'integer') return Number(value ?? 0) + 1
+  if (spec.kind === 'enum') {
+    const others = (spec.values ?? []).filter((v) => v !== value)
+    return others[0] ?? String(value)
+  }
+  if (spec.kind === 'timestamp') {
+    const t = Date.parse(String(value))
+    return Number.isNaN(t)
+      ? String(value)
+      : new Date(t - 86_400_000).toISOString().replace(/\.\d+Z$/, 'Z')
+  }
+  // Text and identifiers: change the last digit, or append one. A serial that
+  // reads SN-000418 instead of SN-000417 is the kind of thing that happens.
+  const str = String(value ?? '')
+  return /\d$/.test(str)
+    ? str.slice(0, -1) + String((Number(str.slice(-1)) + 1) % 10)
+    : str + '1'
+}
 
 /** A release waiting for the operator who received it to say something. */
 /** A part handed to an operator, waiting for somebody to check its paperwork. */
@@ -129,6 +156,19 @@ export type ActivityOptions = {
  * with other people in it rather than as a stream addressed to the visitor.
  */
 const WATCHED_SHARE = 0.55
+
+/**
+ * How often the paperwork in the crate does not match what was published.
+ *
+ * Everything handed over used to be the exact bundle the generator had just
+ * signed, so every check passed and the screen that explains a failure was
+ * unreachable. A demonstration where nothing ever goes wrong demonstrates
+ * half of the idea.
+ *
+ * A third is far above any real rate and deliberately so: somebody looking
+ * around for a few minutes should meet both outcomes without hunting.
+ */
+const MISMATCH_RATE = 1 / 3
 
 const DEFAULT_MIN_GAP = 12_000
 const DEFAULT_MAX_GAP = 45_000
@@ -523,6 +563,31 @@ export class ActivityGenerator {
     }
   }
 
+  /**
+   * One value changed, so the document no longer recomputes.
+   *
+   * Which half it lands in is left to chance, because the two failures teach
+   * different things. A public block — a part number, a description — is on
+   * the record in the clear, so an observer can name exactly what differs. A
+   * withheld block is only under the commitment, so the same check can say
+   * that the document is not what was published and cannot say which line is
+   * wrong. That second case is the one people find surprising, and it is the
+   * honest shape of the guarantee.
+   *
+   * The change is small on purpose. A transcription slip and a deliberate
+   * alteration are indistinguishable to the arithmetic, which is the point:
+   * the commitment does not know why a document differs, only that it does.
+   */
+  private misread(bundle: Bundle): Bundle {
+    const spec = this.pickOne(FIELDS.filter((f) => bundle.values[f.name] != null))
+    if (!spec) return bundle
+    const was = bundle.values[spec.name] ?? null
+    return {
+      ...bundle,
+      values: { ...bundle.values, [spec.name]: nudge(was, spec) },
+    }
+  }
+
   /** A repair station or manufacturer releases a part to whoever receives it. */
   private async issue(
     opts: { agedDays?: number; narrate?: boolean } = {},
@@ -652,7 +717,8 @@ export class ActivityGenerator {
       serialNumber: String(form.serialNumber),
       description: String(form.description ?? ''),
       at: new Date(this.now()),
-      bundle: written.bundle,
+      bundle:
+        this.rand() < MISMATCH_RATE ? this.misread(written.bundle) : written.bundle,
     })
 
     // Decide now whether anybody will ever vouch for this one, rather than

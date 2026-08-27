@@ -1139,6 +1139,136 @@ describe('goods in', () => {
     assert.equal(res.status, 403)
   })
 
+  /**
+   * A document that does not match, and what the screen may say about it.
+   *
+   * The corruption is applied to the bundle handed over, exactly as the
+   * generator does it, so this exercises the real pipeline reaching a real
+   * failure rather than a fixture asserting a rendered string.
+   */
+  test('a public block that disagrees is named, with both values', async () => {
+    const { app, dock, writer } = await dockApp()
+    const drafted = await draftValues(app, `f8130_actor=cascadia-mro.${DOMAIN}`)
+    const form: Record<string, unknown> = { ...drafted }
+    for (const spec of FIELDS) {
+      if (spec.kind === 'integer' && form[spec.name] !== undefined) {
+        form[spec.name] = Number(form[spec.name])
+      }
+    }
+    const issued = await writer.createRelease({ handle: `cascadia-mro.${DOMAIN}`, form })
+    const values = issued.bundle.values as Record<string, string>
+
+    // Block 7 is public, so the record carries it in the clear.
+    const wrong = {
+      ...issued.bundle,
+      values: { ...values, description: 'Something else entirely' },
+    }
+    dock.handOver(`example-air.${DOMAIN}`, {
+      subject: { uri: issued.uri, cid: issued.cid },
+      issuerDid: issued.uri.split('/')[2]!,
+      issuerName: 'Cascadia MRO',
+      partNumber: String(values.partNumber),
+      serialNumber: String(values.serialNumber),
+      description: String(values.description),
+      at: new Date(),
+      bundle: wrong,
+    })
+
+    const body = await (
+      await app.request('/inbox/check', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+        body: new URLSearchParams({ subjectUri: issued.uri }),
+      })
+    ).text()
+
+    assert.match(body, /Does not check out/)
+    assert.match(body, /can be shown/)
+    assert.match(body, /Something else entirely/, 'the crate value was not shown')
+    assert.match(body, new RegExp(values.description!), 'the published value was not shown')
+    assert.ok(!body.includes('Publish an attestation'), 'a failure offered to vouch')
+  })
+
+  /**
+   * The case people find surprising, and the reason the wording matters.
+   *
+   * A withheld block is on the record only underneath the commitment, which is
+   * one hash over all seventeen. It establishes that the document is not the
+   * one published and does not decompose into which line changed.
+   */
+  test('a withheld block that disagrees cannot be named', async () => {
+    const { app, dock, writer } = await dockApp()
+    const drafted = await draftValues(app, `f8130_actor=cascadia-mro.${DOMAIN}`)
+    const form: Record<string, unknown> = { ...drafted }
+    for (const spec of FIELDS) {
+      if (spec.kind === 'integer' && form[spec.name] !== undefined) {
+        form[spec.name] = Number(form[spec.name])
+      }
+    }
+    const issued = await writer.createRelease({ handle: `cascadia-mro.${DOMAIN}`, form })
+    const values = issued.bundle.values as Record<string, string>
+
+    const secretBefore = values.remarks!
+    const wrong = {
+      ...issued.bundle,
+      values: { ...values, remarks: 'ALTERED FINDINGS' },
+    }
+    dock.handOver(`example-air.${DOMAIN}`, {
+      subject: { uri: issued.uri, cid: issued.cid },
+      issuerDid: issued.uri.split('/')[2]!,
+      issuerName: 'Cascadia MRO',
+      partNumber: String(values.partNumber),
+      serialNumber: String(values.serialNumber),
+      description: String(values.description),
+      at: new Date(),
+      bundle: wrong,
+    })
+
+    const body = await (
+      await app.request('/inbox/check', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+        body: new URLSearchParams({ subjectUri: issued.uri }),
+      })
+    ).text()
+
+    assert.match(body, /Does not check out/)
+    assert.match(body, /cannot say which line/)
+    assert.ok(!body.includes('can be shown'), 'it claimed to be able to name the block')
+    // And the observer genuinely does not have the published prose to compare
+    // against: the record never carried it.
+    assert.ok(!body.includes(secretBefore), 'withheld prose from the record leaked')
+    assert.ok(!body.includes('Publish an attestation'))
+  })
+
+  test('clearing takes the part off the list and publishes nothing', async () => {
+    const { app, dock, index } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+
+    const res = await app.request('/inbox/clear', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+      body: new URLSearchParams({ subjectUri: arrival().subject.uri }),
+    })
+    assert.equal(res.status, 303)
+    assert.equal(dock.count(`example-air.${DOMAIN}`), 0)
+    assert.equal(index.size.attestations, 0, 'declining wrote something to the network')
+  })
+
+  test('one organization cannot clear another\'s crate', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    await app.request('/inbox/clear', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        cookie: `f8130_actor=southpoint-air.${DOMAIN}`,
+      },
+      body: new URLSearchParams({ subjectUri: arrival().subject.uri }),
+    })
+    assert.equal(dock.count(`example-air.${DOMAIN}`), 1, 'somebody else cleared it')
+  })
+
   /** The dead form this page carried for six releases. */
   test('offers no verdict form, which is a route that no longer exists', async () => {
     const { app, dock } = await dockApp()

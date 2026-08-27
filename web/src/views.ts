@@ -939,6 +939,10 @@ export function inboxCheckPage(params: {
 }) {
   const { arrival: a } = params
   const report = params.report
+  // The scanned paperwork, which the recipient holds in full. Rendering it is
+  // not a disclosure: the bundle came in the crate and the paper it was
+  // stapled to has all seventeen blocks printed on it.
+  const scanned = (a.bundle as { values?: Record<string, unknown> } | null)?.values ?? null
 
   const byName = new Map((report?.stages ?? []).map((st) => [st.name, st]))
   const sig = byName.get('signature')
@@ -954,6 +958,27 @@ export function inboxCheckPage(params: {
       : ''
 
   const verified = report ? report.verified : true
+
+  /*
+   * What this observer can say about a document that did not match.
+   *
+   * The nine public blocks are on the record in the clear, so a disagreement
+   * in one of them can be named exactly: the record says this, your document
+   * says that. The other eight exist on the record only underneath the
+   * commitment, so the same check can establish that the document is not what
+   * was published and cannot say which line is wrong — the root is one hash
+   * over all seventeen, and it does not decompose.
+   *
+   * That second case is the one people find surprising and it is the honest
+   * shape of the guarantee, so the screen says which of the two it is in
+   * rather than leaving a reader to assume the app is withholding a detail it
+   * actually does not have.
+   */
+  const agree = byName.get('agree')
+  const named = (agree?.status === 'fail' ? (agree.data?.fields as string[]) : null) ?? []
+  const recordSide = (agree?.data?.record ?? {}) as Record<string, unknown>
+  const bundleSide = (agree?.data?.bundle ?? {}) as Record<string, unknown>
+
   const body = html`<h1>${
     params.published ? 'Published' : verified ? 'Checks out' : 'Does not check out'
   }</h1>
@@ -969,6 +994,18 @@ export function inboxCheckPage(params: {
       href: postPath(a.subject.uri),
     })}
 
+    ${scanned
+      ? html`<details class="scan" ${report ? '' : 'open'}>
+          <summary>The document from the crate, as it was scanned</summary>
+          <p class="sub">
+            All seventeen blocks, because this is your copy: it came in the box
+            with the part, and the codes that open the withheld ones came with
+            it. Only nine of these are on the public record.
+          </p>
+          ${releasedSheet(scanned, { all: true })}
+        </details>`
+      : ''}
+
     ${report
       ? html`<div class="verdict ${report.verified ? 'ok' : 'no'}" style="margin-top:1rem">
           <h2>${report.verified ? 'Verified' : 'Not verified'}</h2>
@@ -978,6 +1015,13 @@ export function inboxCheckPage(params: {
                   serial on it matches the part.`
               : 'At least one check failed. The stages below say which.'}
           </p>
+          ${report.verified
+            ? html`<p class="caveat">
+                Which is not the same as the part being what the document says.
+                This checks paperwork against a signed record; nothing here has
+                inspected a component.
+              </p>`
+            : ''}
         </div>`
       : ''}
 
@@ -993,23 +1037,76 @@ export function inboxCheckPage(params: {
           </p>
         </div>`
       : verified
-        ? html`<form method="post" action="/attest" class="card" style="margin-top:1rem;padding:1.15rem">
-            <input type="hidden" name="subjectUri" value="${a.subject.uri}">
-            <input type="hidden" name="subjectCid" value="${a.subject.cid}">
+        ? html`<div class="card" style="margin-top:1rem;padding:1.15rem">
             <h2 style="margin-top:0">Say so in public</h2>
             <p class="sub">
               Publishes a record in ${params.actor.displayName}&rsquo;s own
               repository saying this document checked out. It names no findings
               and carries no part number — only which release was checked, and
-              when. Optional: the check has already happened either way.
+              when. The check has already happened either way; this is whether
+              anybody else gets to know it did.
             </p>
-            <button type="submit">Publish an attestation</button>
-          </form>`
-        : html`<div class="meta" style="margin-top:1rem">
-            There is nothing to publish. A document that fails to recompute
-            proves only that some document fails, and anyone can produce one —
-            so this is evidence to you and to nobody else. Take it up with
-            ${a.issuerName} directly.
+            <div class="choose">
+              <form method="post" action="/attest">
+                <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+                <input type="hidden" name="subjectCid" value="${a.subject.cid}">
+                <button type="submit">Publish an attestation</button>
+              </form>
+              <form method="post" action="/inbox/clear">
+                <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+                <button type="submit" class="ghost">Accept without publishing</button>
+              </form>
+            </div>
+            <p class="meta">
+              Declining publishes nothing at all. An absence on the network is
+              not a claim that anything was wrong — most checks in a real
+              supply chain would never be announced.
+            </p>
+          </div>`
+        : html`<div class="mismatch">
+            <h2>What this tells you</h2>
+            ${named.length > 0
+              ? html`<p>
+                    The document disagrees with the published record on
+                    ${named.length === 1 ? 'a block' : 'blocks'} the record
+                    carries in the clear, so the difference can be shown:
+                  </p>
+                  <dl class="diff">
+                    ${named.map(
+                      (f) => html`<div>
+                        <dt>${fieldLabel(f)}</dt>
+                        <dd>
+                          <span class="was">${String(recordSide[f] ?? '—')}</span>
+                          <span class="sep">published</span>
+                        </dd>
+                        <dd>
+                          <span class="is">${String(bundleSide[f] ?? '—')}</span>
+                          <span class="sep">in the crate</span>
+                        </dd>
+                      </div>`,
+                    )}
+                  </dl>`
+              : html`<p>
+                  The difference is in one of the eight blocks the record keeps
+                  under its commitment, so this observer cannot say which line
+                  is wrong — and neither can anyone else. The commitment is a
+                  single hash over all seventeen blocks; it establishes that
+                  the document is not the one ${a.issuerName} published, and it
+                  does not decompose into which part of it changed.
+                </p>`}
+            <p>
+              Take it up with ${a.issuerName} directly. There is nothing to
+              publish here: a document that fails to recompute proves only that
+              some document fails, and anyone can produce one, so this is
+              evidence to you and to nobody else.
+            </p>
+            <form method="post" action="/inbox/clear" class="checkrow">
+              <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+              <button type="submit" class="ghost">Mark as handled</button>
+              <span class="meta">
+                Takes it off your list. Nothing is published either way.
+              </span>
+            </form>
           </div>`}
 
     ${report
@@ -1324,14 +1421,23 @@ export function draftSheet(values: Record<string, unknown>) {
  * anybody but whoever holds the paper. Saying it in prose beforehand never
  * landed — showing which lines went dark does.
  */
-export function releasedSheet(values: Record<string, unknown>) {
+export function releasedSheet(
+  values: Record<string, unknown>,
+  /**
+   * `all` renders every block with its value, for a reader who holds the
+   * document rather than one looking at the record from outside. The two are
+   * the same list; what differs is whether the withheld half is legible, and
+   * that is exactly the distinction the page is about.
+   */
+  opts: { all?: boolean } = {},
+) {
   return html`<div class="reveal">
     ${FIELDS.map((f) => {
       const v = values[f.name]
       const shown = v === null || v === undefined || v === '' ? '—' : String(v)
       return html`<div class="rev ${f.public ? 'pub' : 'priv'}">
         <span class="n">Block ${f.block} · ${bareLabel(f.name)}</span>
-        <span class="v">${f.public ? shown : 'withheld'}</span>
+        <span class="v">${f.public || opts.all ? shown : 'withheld'}</span>
       </div>`
     })}
   </div>`

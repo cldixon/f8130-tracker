@@ -281,6 +281,47 @@ form.draftform button[type=submit] { margin-top: 1rem; }
 .checkrow button { margin: 0; flex: 0 0 auto; }
 .checkrow .meta { margin: 0; flex: 1 1 14rem; min-width: 0; }
 
+/* The scanned document, folded away once a result is on screen. */
+.scan { margin-top: 1rem; }
+.scan > summary {
+  cursor: pointer; font-size: .9rem; padding: .5rem .2rem;
+  color: var(--accent);
+}
+.scan .sub { margin: .3rem 0 .7rem; font-size: .85rem; }
+
+/* What differed, when the record carries the block in the clear. */
+.mismatch {
+  margin-top: 1rem; padding: 1rem 1.15rem; border-radius: 8px;
+  background: var(--fail-bg); border: 1px solid var(--line);
+  border-left: 3px solid var(--fail);
+}
+.mismatch h2 { margin: 0 0 .5rem; font-size: 1.05rem; }
+.mismatch p { margin: 0 0 .7rem; font-size: .92rem; }
+.diff { margin: 0 0 .8rem; display: grid; gap: .5rem; }
+.diff > div {
+  background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+  padding: .5rem .7rem;
+}
+.diff dt {
+  font-size: .62rem; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); margin-bottom: .2rem;
+}
+.diff dd { margin: 0; display: flex; align-items: baseline; gap: .5rem; font-size: .88rem; }
+.diff dd .was { text-decoration: line-through; color: var(--muted); }
+.diff dd .is { font-weight: 600; }
+.diff dd .sep { font-size: .68rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+
+/* Publish or do not, side by side: neither is the safe default. */
+.choose { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
+.choose form { margin: 0; }
+.choose button { margin: 0; }
+
+/* The line that stops a green tick being read as more than it is. */
+.caveat {
+  margin-top: .5rem !important; font-size: .85rem; color: var(--muted);
+  border-top: 1px solid var(--line); padding-top: .5rem;
+}
+
 /* Waiting on a generated form. It is a call to a model, so it takes a second
    or two, and a blank dialog for that long reads as broken rather than busy. */
 .working {

@@ -1190,6 +1190,28 @@ export function createApp(deps: AppDeps) {
     })
 
     /**
+     * Take a part off the list without publishing anything.
+     *
+     * The two ways a check ends without an attestation — the document did not
+     * match, or it did and the receiver would rather not vouch — are the same
+     * action here, because the network cannot tell them apart and must not.
+     * Nothing is written. The crate stops waiting because the work is done,
+     * not because anybody said anything about it.
+     */
+    app.post('/inbox/clear', async (c) => {
+      const form = await c.req.parseBody()
+      const handle = currentActor(c)
+      if (!handle) {
+        return c.html(errorPage(403, 'Only an organization receives parts.'), 403)
+      }
+      const subjectUri = typeof form.subjectUri === 'string' ? form.subjectUri : ''
+      // Only ever from the acting organization's own dock, so a caller cannot
+      // clear a crate that was never theirs.
+      if (deps.dock?.arrival(handle, subjectUri)) deps.dock.settle(subjectUri)
+      return c.redirect('/inbox', 303)
+    })
+
+    /**
      * Check the paperwork that came with a part.
      *
      * Takes a release URI and nothing else. The document is looked up in the
