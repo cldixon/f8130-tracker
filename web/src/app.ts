@@ -984,8 +984,8 @@ export function createApp(deps: AppDeps) {
       try {
         // Read the dock before writing, because publishing clears it: an
         // attestation is the fact that the part was dealt with, so the crate
-        // stops waiting. Without this the part stayed in Goods in forever and
-        // could be attested again and again.
+        // stops waiting. Without this the part stayed in Parts Receiving
+        // forever and could be attested again and again.
         const arrival = deps.dock?.arrival(handle, subjectUri)
 
         const written = await writer.createAttestation({

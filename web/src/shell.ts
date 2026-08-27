@@ -152,8 +152,6 @@ label { display: block; font-size: .8rem; color: var(--muted); margin: 1rem 0 .3
 button { margin-top: 1.15rem; padding: .55rem 1.1rem; font-size: .92rem; font-weight: 600;
   border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
 button:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
-footer { border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem;
-  color: var(--muted); font-size: .78rem; }
 .empty { padding: 1.5rem 1.15rem; color: var(--muted); font-size: .9rem; }
 .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .3rem .8rem; margin-top: .4rem; }
 .check { display: flex; align-items: center; gap: .4rem; margin: 0; font-size: .85rem; color: var(--fg); }
@@ -974,7 +972,7 @@ export function layout(
   <aside class="rail">
     <div class="brand">OffWing<br><span>FAA 8130-3 certificates on atproto</span></div>
     <!-- Four destinations, and each answers a different question. Home: what
-         is happening. Goods in: what is waiting on me. Issuers: who is
+         is happening. Parts Receiving: what is waiting on me. Issuers: who is
          publishing, and whose paperwork other parties reject. Documents: what
          I am holding, and the things I can do with it.
 
@@ -991,7 +989,7 @@ export function layout(
         <span class="full">Home</span><span class="tab">Home</span></a>
       ${me
         ? html`<a href="/inbox" class="${on('inbox')}"><span class="ico">▼</span>
-            <span class="full">Goods in</span><span class="tab">Goods</span>
+            <span class="full">Parts Receiving</span><span class="tab">Receiving</span>
             <!-- Always in the markup, hidden at zero, so the live stream has
                  something to write into rather than a node it has to create in
                  the right place in the rail. -->
@@ -1016,7 +1014,6 @@ export function layout(
   </aside>
   <main>
     ${body}
-    <footer>Demonstration only · this service holds no signing keys</footer>
   </main>
 </div>
 ${withComposer ? composer() : ''}

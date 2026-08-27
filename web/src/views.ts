@@ -864,23 +864,18 @@ export function inboxPage(params: {
   const now = params.now ?? new Date()
 
   const body = !params.actor
-    ? html`<h1>Goods in</h1>
+    ? html`<h1>Parts Receiving</h1>
       <div class="needs-actor">
         You are watching as the public, which receives nothing. Switch to an
         organization in the rail to see what is waiting for it.
       </div>`
-    : html`<h1>Goods in</h1>
+    : html`<h1>Parts Receiving</h1>
       <p class="sub">
-        Parts delivered to ${params.actor.displayName}, with the paperwork that
-        came in the crate. Check a document against the record its issuer
-        published, and say so publicly if it holds up.
+        Parts delivered to ${params.actor.displayName}, with the 8130 paperwork
+        that arrived in the crate. Check the document against the record issued
+        by the sending station. You have the option to publicly attest that the
+        record is valid.
       </p>
-
-      <div class="seam">
-        <strong>This list is not from the network.</strong> An 8130-3 names who
-        issued a release, not who received it, so this stands in for your
-        goods-in process.
-      </div>
 
       ${params.arrivals.length === 0
         ? html`<div class="card"><div class="empty">
@@ -913,7 +908,7 @@ export function inboxPage(params: {
             )}
           </div>`}`
 
-  return layout('Goods in', body, params.mode, params.chrome)
+  return layout('Parts Receiving', body, params.mode, params.chrome)
 }
 
 /**
@@ -1023,7 +1018,7 @@ export function inboxCheckPage(params: {
     ${forged}
 
     <p class="sub" style="margin-top:1.25rem">
-      <a href="/inbox">Back to goods in</a>
+      <a href="/inbox">Back to parts receiving</a>
     </p>`
 
   return layout(

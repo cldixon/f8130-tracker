@@ -985,22 +985,6 @@ describe('goods in', () => {
 
   const AS_OPERATOR = `f8130_actor=example-air.${DOMAIN}`
 
-  /**
-   * The honest part. An 8130-3 names the issuer and not the recipient, so no
-   * index built from the public record can answer "what is waiting for me".
-   * The page has to say that rather than implying the network told it.
-   */
-  test('says the list is not from the network', async () => {
-    const { app, dock } = await dockApp()
-    dock.handOver(`example-air.${DOMAIN}`, arrival())
-    const body = await (
-      await app.request('/inbox', { headers: { cookie: AS_OPERATOR } })
-    ).text()
-
-    assert.match(body, /This list is not from the network/)
-    assert.match(body, /not from the network/)
-  })
-
   test('shows only what was handed to the acting organization', async () => {
     const { app, dock } = await dockApp()
     dock.handOver(`example-air.${DOMAIN}`, arrival())
