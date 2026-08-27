@@ -1,9 +1,11 @@
 # Spike — atproto verification primitives
 
 Throwaway validation run **before** committing to the architecture in the
-handoff doc. The question it answers: *can the §4.4 verification pipeline
-actually be built on the official TypeScript SDKs, or does it need
-hand-rolled CAR/MST code?*
+handoff doc, kept as a record of what was checked and when. Everything it
+proved is now built for real in `core/` and `commitment/`; one limitation it
+records has since been lifted, noted below. The question it answers: *can
+the §4.4 verification pipeline actually be built on the official TypeScript
+SDKs, or does it need hand-rolled CAR/MST code?*
 
 Answer: it can. `@atproto/repo` ships both halves — the provider side a PDS
 uses to emit proofs, and the consumer side our verifier runs. Because both
@@ -61,15 +63,16 @@ npx tsx resolve.ts    # identity resolution, network-dependent
 
 - **handle → DID via DNS TXT** — works against the real network, verified
   with live Bluesky handles.
-- **DID → DID document via plc.directory** — **blocked**, HTTPS egress policy
-  returns 403.
+- **DID → DID document via plc.directory** — **blocked at the time**, HTTPS
+  egress policy returned 403.
 
-So the signing key and PDS endpoint can't be fetched from this session yet.
-Nothing about the design depends on that being resolved right now, but live
-integration testing will need `plc.directory` (and later the PDS hosts)
-allowed in the environment's network policy.
+That second one has since been resolved. The deployed AppView resolves
+`did:plc` identities through `plc.directory` and fetches signed records from
+`f8130.cldixon.dev` on every verification, so the pipeline runs end to end
+against the live network — see the Deployment section of the root README.
 
 ## Not covered
 
 XRPC transport shape (real PDS responses), OAuth/DPoP, firehose framing, and
-the Go side of the crypto core. Those come with M1/M2.
+the Go side of the crypto core — all of which were left to M1/M2 and have
+since been built.

@@ -65,7 +65,7 @@ they must not produce three different fingerprints.
 | strip separators, uppercase | identifiers | `nt-8821/04` → `NT882104` |
 | NFC, collapse whitespace, trim | prose | `" wear   beyond limits "` → `"wear beyond limits"` |
 | RFC 3339, forced UTC, seconds | timestamps | `2026-01-22T04:30:00-05:00` → `2026-01-22T09:30:00Z` |
-| integers only, never floats | money, counts | money is cents; `1284.5` is rejected |
+| integers only, never floats | counts | Block 9 is a quantity; `1.5` is rejected |
 
 Two rules carry more weight than they look:
 
