@@ -25,6 +25,7 @@ import { Dock } from './dock.js'
 import { AnthropicNarrator } from './narrator-anthropic.js'
 import { createApp } from './app.js'
 import { describeConfig, loadConfig } from './config.js'
+import { resolveMode } from './mode.js'
 import { MemoryIndex, releaseRow } from './memory-index.js'
 import type { ReadIndex } from './index-port.js'
 import { PostgresIndex } from './postgres.js'
@@ -37,7 +38,10 @@ import {
 
 async function main() {
   const config = loadConfig()
-  for (const line of describeConfig(config)) console.warn(line)
+  // Resolved before anything is described, so the log says what this process
+  // is going to do rather than what it was asked to do.
+  const mode = await resolveMode(config)
+  for (const line of describeConfig({ ...config, mode })) console.warn(line)
 
   const domain = process.env.PDS_HOSTNAME ?? 'f8130.cldixon.dev'
 
@@ -47,7 +51,7 @@ async function main() {
   let writer: RecordWriter | null = null
   let index: ReadIndex | null = null
 
-  if (config.mode === 'demo') {
+  if (mode === 'demo') {
     const { net, birth, overhaul } = await demoNetwork(domain)
     resolver = net
     repo = net
@@ -98,7 +102,7 @@ async function main() {
     repo = new XrpcRepoClient()
   }
 
-  if (config.mode === 'live') {
+  if (mode === 'live') {
     index = config.databaseUrl ? PostgresIndex.fromUrl(config.databaseUrl) : null
 
     // Writing needs a live PDS and the demonstration account password. Without
@@ -124,7 +128,7 @@ async function main() {
   const wantActivity =
     process.env.F8130_ACTIVITY === '0'
       ? false
-      : config.mode === 'demo' || process.env.F8130_ACTIVITY === '1'
+      : mode === 'demo' || process.env.F8130_ACTIVITY === '1'
 
   // Prose for generated forms, when a key is configured. Memoized by brief so
   // recurring combinations are paid for once, and absent entirely when there
@@ -166,7 +170,7 @@ async function main() {
     repo,
     index,
     demoBundles,
-    mode: config.mode,
+    mode,
     writer,
     activity,
     dock,
