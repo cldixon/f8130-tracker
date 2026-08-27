@@ -1174,8 +1174,7 @@ export function receivedSections(params: {
 
   const publishedBlock = html`<div class="outcome">
     <p class="mono ref">${params.published}</p>
-    <p><a href="/">Back to the feed</a> — it will appear there once an observer
-      has seen it.</p>
+    <p><a href="/">Back to the feed</a> to see the public acceptance.</p>
   </div>`
 
   const attestBlock = html`<div class="outcome">
@@ -1259,12 +1258,24 @@ export function receivedSections(params: {
       ? attestBlock
       : mismatchBlock
 
+  // Once the attestation is the news, the checks fold rather than vanish. A
+  // reader who wants to see what was verified before they published should
+  // not have to take the receipt's word for it.
+  const checks = report
+    ? params.published
+      ? html`<details class="scan">
+          <summary>Verification</summary>
+          <div class="card">${report.stages.map(stageRow)}</div>
+        </details>`
+      : html`<h2 class="sect">Verification</h2>
+          <div class="card">${report.stages.map(stageRow)}</div>`
+    : ''
+
   const sections = settled
-    ? html`${report
-        ? html`<h2 class="sect">Verification</h2>
-            <div class="card">${report.stages.map(stageRow)}</div>`
-        : ''}
-      <h2 class="verdict-head ${verified ? 'ok' : 'no'}">
+    ? html`${checks}
+      <h2 class="verdict-head ${params.published ? 'told' : verified ? 'ok' : 'no'}">
+        <span class="ic" aria-hidden="true"
+          >${params.published ? '📣' : verified ? '✓' : '✕'}</span>
         ${params.published
           ? 'Attestation published'
           : verified

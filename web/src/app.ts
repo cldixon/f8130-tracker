@@ -23,6 +23,7 @@ import {
   verifyDisclosure,
   type Bundle,
   type ChainTrace,
+  type VerificationReport,
   type Narrator,
   type IdentityResolver,
   type RepoClient,
@@ -1002,6 +1003,46 @@ export function createApp(deps: AppDeps) {
         // forever and could be attested again and again.
         const arrival = deps.dock?.arrival(handle, subjectUri)
 
+        /*
+         * Check it again, immediately before saying in public that it checks
+         * out.
+         *
+         * An attestation means the author held this document and it verified.
+         * Publishing one without having just established that would be
+         * writing a signed statement on trust — this route used to take the
+         * word of whatever screen sent the request, and nothing stopped a
+         * caller reaching it without ever running a check at all.
+         *
+         * It is also what puts the stages on the receipt: the section a
+         * reader watched fill in stays on the page afterwards because the
+         * report behind it is real and current, not because it was cached
+         * from a previous request.
+         *
+         * Only where the document is in this organization's dock. A check
+         * that came from the verify page pasted a bundle the service never
+         * kept, so there is nothing here to re-run and nothing to re-run it
+         * against.
+         */
+        let report: VerificationReport | undefined
+        if (arrival) {
+          try {
+            report = await verifyBundle({
+              bundle: parseBundle(arrival.bundle),
+              stampedSerial: arrival.serialNumber,
+              resolver: deps.resolver,
+              repo: deps.repo,
+            })
+          } catch (err) {
+            return c.html(errorPage(400, describe(err)), 400)
+          }
+          if (!report.verified) {
+            return c.html(
+              errorPage(409, 'That document does not verify, so there is nothing to attest to.'),
+              409,
+            )
+          }
+        }
+
         const written = await writer.createAttestation({
           handle,
           subject: { uri: subjectUri, cid: subjectCid },
@@ -1014,7 +1055,7 @@ export function createApp(deps: AppDeps) {
         // checked, is a worse answer to "what happened".
         if (arrival) {
           const actor = writer.actors().find((a) => a.handle === handle)!
-          const done = { actor, arrival, published: written.uri }
+          const done = { actor, arrival, report, published: written.uri }
           if (c.req.query('fragment') !== undefined) {
             return c.html(inboxCheckBody(done))
           }

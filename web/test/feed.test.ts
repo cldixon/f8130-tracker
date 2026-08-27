@@ -1287,6 +1287,82 @@ describe('goods in', () => {
     assert.ok(!body.includes('Publish attestation'))
   })
 
+  /**
+   * An attestation says the author checked this and it held. Publishing one
+   * without having just established that would be signing a statement on
+   * trust — and nothing stopped a caller reaching this route without ever
+   * running a check.
+   */
+  test('a document that does not verify cannot be attested to', async () => {
+    const { app, dock, writer, index } = await dockApp()
+    const drafted = await draftValues(app, `f8130_actor=cascadia-mro.${DOMAIN}`)
+    const form: Record<string, unknown> = { ...drafted }
+    for (const spec of FIELDS) {
+      if (spec.kind === 'integer' && form[spec.name] !== undefined) {
+        form[spec.name] = Number(form[spec.name])
+      }
+    }
+    const issued = await writer.createRelease({ handle: `cascadia-mro.${DOMAIN}`, form })
+    const values = issued.bundle.values as Record<string, string>
+
+    dock.handOver(`example-air.${DOMAIN}`, {
+      subject: { uri: issued.uri, cid: issued.cid },
+      issuerDid: issued.uri.split('/')[2]!,
+      issuerName: 'Cascadia MRO',
+      partNumber: String(values.partNumber),
+      serialNumber: String(values.serialNumber),
+      description: String(values.description),
+      at: new Date(),
+      bundle: { ...issued.bundle, values: { ...values, remarks: 'ALTERED' } },
+    })
+
+    // Straight to publishing, without ever asking for a check.
+    const res = await app.request('/attest', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+      body: new URLSearchParams({ subjectUri: issued.uri, subjectCid: issued.cid }),
+    })
+    assert.equal(res.status, 409)
+    assert.equal(index.size.attestations, 0, 'an unverified document was vouched for')
+    assert.equal(dock.count(`example-air.${DOMAIN}`), 1, 'the crate was cleared anyway')
+  })
+
+  /** And the checks stay on the receipt, so the claim can be inspected. */
+  test('the receipt keeps the verification that justified it', async () => {
+    const { app, dock, writer } = await dockApp()
+    const drafted = await draftValues(app, `f8130_actor=cascadia-mro.${DOMAIN}`)
+    const form: Record<string, unknown> = { ...drafted }
+    for (const spec of FIELDS) {
+      if (spec.kind === 'integer' && form[spec.name] !== undefined) {
+        form[spec.name] = Number(form[spec.name])
+      }
+    }
+    const issued = await writer.createRelease({ handle: `cascadia-mro.${DOMAIN}`, form })
+    const values = issued.bundle.values as Record<string, string>
+    dock.handOver(`example-air.${DOMAIN}`, {
+      subject: { uri: issued.uri, cid: issued.cid },
+      issuerDid: issued.uri.split('/')[2]!,
+      issuerName: 'Cascadia MRO',
+      partNumber: String(values.partNumber),
+      serialNumber: String(values.serialNumber),
+      description: String(values.description),
+      at: new Date(),
+      bundle: issued.bundle,
+    })
+
+    const body = await (
+      await app.request('/attest', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+        body: new URLSearchParams({ subjectUri: issued.uri, subjectCid: issued.cid }),
+      })
+    ).text()
+
+    assert.match(body, /Attestation published/)
+    assert.match(body, /<summary>Verification<\/summary>/, 'the checks are not on the receipt')
+    assert.equal((body.match(/class="stage/g) ?? []).length, 7, 'not every stage survived')
+  })
+
   test('clearing takes the part off the list and publishes nothing', async () => {
     const { app, dock, index } = await dockApp()
     dock.handOver(`example-air.${DOMAIN}`, arrival())

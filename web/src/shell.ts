@@ -327,16 +327,16 @@ a.button:hover { filter: brightness(1.08); }
    underneath one — a page that says "Form does not match" does not also need
    a box saying not verified. */
 .verdict-head {
-  display: flex; align-items: center; gap: .55rem;
+  display: flex; align-items: center; gap: .5rem;
   font-size: 1.2rem; margin: 2rem 0 .35rem;
 }
-.verdict-head::before {
-  content: ""; flex: 0 0 auto; width: .7rem; height: .7rem; border-radius: 50%;
-}
+.verdict-head .ic { flex: 0 0 auto; font-size: 1.05em; line-height: 1; }
 .verdict-head.ok { color: var(--pass); }
-.verdict-head.ok::before { background: var(--pass); }
 .verdict-head.no { color: var(--fail); }
-.verdict-head.no::before { background: var(--fail); }
+/* Publishing is not a third verdict. The check already passed and said so in
+   green; this is the separate act of telling everyone, so it is the accent
+   colour rather than another shade of pass. */
+.verdict-head.told { color: var(--accent); }
 .verdict-head + .sub { margin-bottom: 1rem; }
 
 /* The document, folded once it has been read and the decision is below it. */
