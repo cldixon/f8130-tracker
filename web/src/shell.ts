@@ -1149,9 +1149,9 @@ export function layout(
 <div class="app">
   <aside class="rail">
     <div class="brand">OffWing<br><span>FAA 8130-3 certificates on atproto</span></div>
-    <!-- Four destinations, and each answers a different question. Home: what
+    <!-- Four destinations, and each answers a different question. Feed: what
          is happening. Receiving: what is waiting on me. Issuers: who is
-         publishing, and whose paperwork other parties reject. Documents: what
+         publishing, and how much of it anybody has vouched for. Documents: what
          I am holding, and the things I can do with it.
 
          Checking a document and proving one field used to be nav entries of
@@ -1164,7 +1164,7 @@ export function layout(
          so a screen reader gets a real label either way. -->
     <nav>
       <a href="/" class="${on('home')}"><span class="ico">◎</span>
-        <span class="full">Home</span><span class="tab">Home</span></a>
+        <span class="full">Feed</span><span class="tab">Feed</span></a>
       ${me
         ? html`<a href="/inbox" class="${on('inbox')}"><span class="ico">⤓</span>
             <span class="full">Receiving</span><span class="tab">Receiving</span>

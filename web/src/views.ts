@@ -1291,7 +1291,7 @@ export function feedPage(params: {
   const now = params.now ?? new Date()
   const me = params.chrome?.actors?.find((a) => a.handle === params.chrome?.current)
   const body = html`
-    <h1>Activity</h1>
+    <h1>Feed</h1>
     <p class="sub">
       Every certificate published to the network, and everyone who has checked
       one against the form that arrived with the part.
@@ -1421,7 +1421,7 @@ export function feedPage(params: {
 </script>`)}`
       : ''}
   `
-  return layout('Activity', body, params.mode ?? 'live', params.chrome)
+  return layout('Feed', body, params.mode ?? 'live', params.chrome)
 }
 
 /* ------------------------------------------------------------------ writing */
