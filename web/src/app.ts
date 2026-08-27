@@ -323,7 +323,16 @@ export function createApp(deps: AppDeps) {
 
     // Fixed at connect time. The stream is per-connection, and switching
     // viewpoint reloads the page, which opens a new one.
-    const viewer = await actingDid(currentActor(c))
+    //
+    // Two of them, and the difference is not cosmetic. A card is marked as
+    // yours by DID, because that is the identity a record carries. A dock and
+    // a generator are keyed by handle, because that is what the roster and the
+    // viewpoint cookie deal in. One variable served all three after the DID
+    // change and the two handle-shaped uses had been silently answering about
+    // an organization that does not exist: the badge never moved and the
+    // generator never learned who was watching.
+    const viewerHandle = currentActor(c)
+    const viewer = await actingDid(viewerHandle)
 
     // A resumed stream picks up where the page left off. The client sends the
     // timestamp of the newest event it has drawn, so events another viewer's
@@ -347,7 +356,7 @@ export function createApp(deps: AppDeps) {
           if (!closed) controller.enqueue(enc.encode(chunk))
         }
 
-        deps.activity?.viewerJoined(viewer)
+        deps.activity?.viewerJoined(viewerHandle)
         send(': connected\n\n')
 
         const poll = setInterval(async () => {
@@ -386,7 +395,7 @@ export function createApp(deps: AppDeps) {
             // A count and nothing else. What is waiting is addressed to one
             // organization, and the stream is public — the number is the most
             // that can be said without saying whose part it is.
-            const waiting = deps.dock?.count(viewer) ?? 0
+            const waiting = deps.dock?.count(viewerHandle) ?? 0
             if (waiting !== lastWaiting) {
               lastWaiting = waiting
               send(`event: waiting\ndata: ${waiting}\n\n`)
@@ -400,7 +409,7 @@ export function createApp(deps: AppDeps) {
           if (closed) return
           closed = true
           clearInterval(poll)
-          deps.activity?.viewerLeft(viewer)
+          deps.activity?.viewerLeft(viewerHandle)
           try {
             controller.close()
           } catch {

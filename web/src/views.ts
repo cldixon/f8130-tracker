@@ -897,13 +897,9 @@ export function inboxPage(params: {
                   · s/n <span class="mono">${a.serialNumber}</span>
                 </div>
                 <div class="checkrow">
-                  <a class="button" data-check
+                  <a class="button"
                     href="/inbox/scan?uri=${encodeURIComponent(a.subject.uri)}"
-                    >Open the paperwork</a>
-                  <span class="meta">
-                    Read what goods-in scanned, then check it against what
-                    ${a.issuerName} signed.
-                  </span>
+                    >Review the paperwork</a>
                 </div>
               </article>`,
             )}
@@ -927,6 +923,99 @@ export function inboxPage(params: {
  * drew a green tick without doing that would be demonstrating a green tick.
  */
 /**
+ * Reveals the checks one at a time, and nothing else.
+ *
+ * The results are real and already decided: the server ran all seven against
+ * the live network before this page was sent, and each row shows what that
+ * check actually returned. What is invented is only the pacing. Seven
+ * cryptographic operations over an in-memory network finish faster than a
+ * screen can be read, and a result that appears fully formed reads as a
+ * lookup rather than as work — so the rows arrive at the speed somebody can
+ * follow them.
+ *
+ * The distinction matters and is worth keeping: this paces the presentation
+ * of findings, it does not invent findings or claim to know which check is
+ * currently running. Nothing here decides an outcome.
+ *
+ * Script hides, then reveals — so with scripting off every row and the verdict
+ * beneath it are simply there, which is the correct fallback for a page whose
+ * whole content is the result.
+ */
+const RUN_SCRIPT = `
+(function () {
+  var run = document.querySelector('[data-run]')
+  var after = document.querySelector('[data-after]')
+  if (!run || !window.requestAnimationFrame) return
+  var rows = Array.prototype.slice.call(run.children)
+  if (rows.length === 0) return
+
+  run.classList.add('stepping')
+  if (after) after.classList.add('stepping')
+  rows.forEach(function (r) { r.classList.add('pending') })
+
+  var i = 0
+  function step() {
+    if (i >= rows.length) {
+      if (after) after.classList.remove('stepping')
+      return
+    }
+    rows[i].classList.remove('pending')
+    rows[i].classList.add('arrived')
+    i++
+    // A little longer on the two that do real cryptography, so the pace
+    // reads as work rather than as a metronome.
+    setTimeout(step, i === 3 || i === 4 ? 620 : 380)
+  }
+  setTimeout(step, 250)
+})()
+`
+
+/**
+ * A certificate drawn as the document it is, read-only.
+ *
+ * The composer's sheet without the inputs and the record page's sheet without
+ * the disclosure machinery — the same seventeen blocks in the same arrangement
+ * and the same stylesheet, so a form looks like itself wherever it appears.
+ *
+ * Every value is present because the only caller holds the paper. There is no
+ * withheld half to draw here; that distinction belongs to the record, not to
+ * the document somebody was handed.
+ */
+export function paperSheet(values: Record<string, unknown>) {
+  const cell = (field: string, span?: 2 | 4) => {
+    const spec = FIELDS.find((f) => f.name === field)
+    const v = values[field]
+    const shown = v === null || v === undefined || v === '' ? '—' : String(v)
+    const cls = ['blk', span === 2 ? 'span2' : span === 4 ? 'span4' : '']
+      .filter(Boolean)
+      .join(' ')
+    return html`<div class="${cls}">
+      <span class="n">${spec ? `Block ${spec.block}` : ''} · ${bareLabel(field)}</span>
+      <span class="v">${shown}</span>
+    </div>`
+  }
+
+  return html`<div class="sheet paper">
+    <div class="stamp"><span>SYNTHETIC<br>NOT AN AIRWORTHINESS RECORD</span></div>
+    <div class="head">
+      <div class="t1">${String(values.approvingAuthority ?? 'FAA/United States')}</div>
+      <div class="t2">AUTHORIZED RELEASE CERTIFICATE</div>
+      <div class="t1">FAA Form 8130-3 · AIRWORTHINESS APPROVAL TAG</div>
+    </div>
+    <div class="grid">
+      ${cell('formNumber', 2)} ${cell('workOrder', 2)}
+      ${cell('organizationName', 2)} ${cell('organizationAddress', 2)}
+      ${cell('item')} ${cell('description')} ${cell('partNumber')} ${cell('quantity')}
+      ${cell('serialNumber', 2)} ${cell('status', 2)}
+      ${cell('remarks', 4)}
+      ${cell('certifyingBlock', 2)} ${cell('approvalBasis', 2)}
+      ${cell('signerCert', 2)} ${cell('signerName', 2)}
+      ${cell('completedAt', 4)}
+    </div>
+  </div>`
+}
+
+/**
  * The document as the loading dock scanned it, before anybody has checked it.
  *
  * Two artefacts came in the crate and this is what the dock made of them: a
@@ -945,7 +1034,8 @@ export function inboxScanBody(params: { actor: Actor; arrival: Arrival }) {
   const a = params.arrival
   const scanned = (a.bundle as { values?: Record<string, unknown> } | null)?.values ?? null
 
-  return html`<h1>Scanned on receipt</h1>
+  return html`<p class="backlink"><a href="/inbox">&larr; Receiving</a></p>
+    <h1>Scanned on receipt</h1>
     <p class="sub">
       Booked in by goods-in against a shipment from ${a.issuerName}. Nothing has
       been checked yet.
@@ -959,29 +1049,14 @@ export function inboxScanBody(params: { actor: Actor; arrival: Arrival }) {
     })}
 
     ${scanned
-      ? html`<div class="scanhead">
-            <span>The form, as scanned</span>
-            <span class="meta">17 blocks · 8 of them withheld on the record</span>
-          </div>
-          ${releasedSheet(scanned, { all: true })}`
+      ? html`${paperSheet(scanned)}
+          <form method="post" action="/inbox/check" class="startcheck">
+            <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+            <button type="submit">Verify this document</button>
+          </form>`
       : html`<div class="card"><div class="empty">
           No document was scanned with this shipment.
-        </div></div>`}
-
-    ${scanned
-      ? html`<form method="post" action="/inbox/check" class="startcheck">
-          <input type="hidden" name="subjectUri" value="${a.subject.uri}">
-          <button type="submit">Verify this document</button>
-          <p class="meta">
-            Seven checks against the live network: resolve ${a.issuerName}&rsquo;s
-            identity, fetch the release from their repository, verify the
-            signature on it against the key their identity document declares,
-            recompute this form&rsquo;s commitment and compare, check the public
-            blocks agree, check the serial against the part, and walk the
-            history back as far as it goes.
-          </p>
-        </form>`
-      : ''}`
+        </div></div>`}`
 }
 
 /** Nothing was published, the crate is off the list, and that is the whole of it. */
@@ -1082,7 +1157,8 @@ export function inboxCheckBody(params: {
   const recordSide = (agree?.data?.record ?? {}) as Record<string, unknown>
   const bundleSide = (agree?.data?.bundle ?? {}) as Record<string, unknown>
 
-  const body = html`<h1>${
+  const body = html`<p class="backlink"><a href="/inbox">&larr; Receiving</a></p>
+    <h1>${
     params.published ? 'Published' : verified ? 'Checks out' : 'Does not check out'
   }</h1>
     <p class="sub">
@@ -1105,10 +1181,11 @@ export function inboxCheckBody(params: {
             with the part, and the codes that open the withheld ones came with
             it. Only nine of these are on the public record.
           </p>
-          ${releasedSheet(scanned, { all: true })}
+          ${paperSheet(scanned)}
         </details>`
       : ''}
 
+    <div class="after" data-after>
     ${report
       ? html`<div class="verdict ${report.verified ? 'ok' : 'no'}" style="margin-top:1rem">
           <h2>${report.verified ? 'Verified' : 'Not verified'}</h2>
@@ -1213,13 +1290,15 @@ export function inboxCheckBody(params: {
           </div>`}
 
     ${report
-      ? html`<div class="card" style="margin-top:1rem">${report.stages.map(stageRow)}</div>`
+      ? html`<div class="card run" data-run>${report.stages.map(stageRow)}</div>`
       : ''}
     ${forged}
 
-    <p class="sub" style="margin-top:1.25rem">
-      <a href="/inbox">Back to receiving</a>
-    </p>`
+    </div>
+
+    ${report
+      ? html`${raw(`<script>${RUN_SCRIPT}</script>`)}`
+      : ''}`
 
   return body
 }
@@ -1293,11 +1372,9 @@ export function feedPage(params: {
   const body = html`
     <h1>Feed</h1>
     <p class="sub">
-      Every certificate published to the network, and everyone who has checked
-      one against the form that arrived with the part.
-      ${params.live
-        ? html`<span class="pulse" id="pulse">live</span>`
-        : ''}
+      Every released certificate is published to the network. Upon receipt,
+      receivers can opt-in to publish their verification of the returned
+      certificate.
     </p>
 
     ${!params.hasIndex
@@ -1347,7 +1424,6 @@ export function feedPage(params: {
  */
 (function () {
   var feed = document.getElementById('feed')
-  var pulse = document.getElementById('pulse')
   var IDLE_MS = 3 * 60 * 1000
   var es = null
   var lastSeen = null
@@ -1364,7 +1440,6 @@ export function feedPage(params: {
     node.classList.add('fresh')
     feed.insertBefore(node, feed.firstChild)
     while (feed.children.length > 60) feed.removeChild(feed.lastChild)
-    if (pulse) { pulse.classList.add('beat'); setTimeout(function(){ pulse.classList.remove('beat') }, 700) }
   }
 
   function connect() {
@@ -1388,15 +1463,12 @@ export function feedPage(params: {
       b.textContent = String(n)
       b.hidden = !(n > 0)
     })
-    es.onerror = function () { if (pulse) pulse.textContent = 'reconnecting' }
-    if (pulse) { pulse.textContent = 'live'; pulse.classList.remove('idle') }
   }
 
   function disconnect(why) {
     if (!es) return
     es.close()
     es = null
-    if (pulse) { pulse.textContent = why; pulse.classList.add('idle') }
   }
 
   function active() {

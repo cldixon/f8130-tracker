@@ -403,7 +403,12 @@ describe('a part as a topic', () => {
     // rather than dressing it up as a participant on the network.
     assert.match(body, /holds no repository and signs nothing/)
     assert.match(body, /assembled from\s+records published independently/)
-    assert.ok(!/follow/i.test(body), 'a part is not something you follow')
+    // Scoped to the page's own content. Asserted over the whole document it
+    // also reads the inlined stylesheet, where an unrelated comment using the
+    // word would fail this for no reason — the same trap that let an earlier
+    // test pass for six releases by matching a dead CSS rule.
+    const main = body.slice(body.indexOf('<main>'), body.indexOf('</main>'))
+    assert.ok(!/follow/i.test(main), 'a part is not something you follow')
   })
 
   test('walks the history live and says the two agree', async () => {
@@ -536,6 +541,47 @@ async function draftValues(
  * form, the dialog shows a page inside a page or an empty box — and neither
  * fails anywhere a page test would look.
  */
+/**
+ * The stream deals in two identities, and they are not interchangeable.
+ *
+ * A card is marked as yours by DID, because that is what a record carries. The
+ * dock and the generator are keyed by handle, because that is what the roster
+ * and the viewpoint cookie deal in. One variable served all three after the
+ * DID change, and the two handle-shaped uses spent two releases answering
+ * about an organization that does not exist — silently, because a dock asked
+ * about an unknown key returns zero rather than failing.
+ */
+describe('who the stream says is watching', () => {
+  test('the generator is told a handle, not a DID', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const seen: (string | undefined)[] = []
+    const app = createApp({
+      resolver: net, repo: net, index, writer, mode: 'live',
+      activity: {
+        viewerJoined: (h?: string) => seen.push(h),
+        viewerLeft: () => {},
+      } as any,
+    })
+
+    const ac = new AbortController()
+    const res = await app.request('/api/feed/stream', {
+      headers: { cookie: `f8130_actor=example-air.${DOMAIN}` },
+      signal: ac.signal,
+    })
+    await res.body!.getReader().read()
+    ac.abort()
+
+    assert.equal(seen.length, 1, 'the generator was not told anybody arrived')
+    assert.equal(
+      seen[0], `example-air.${DOMAIN}`,
+      'the generator was handed something that is not a handle',
+    )
+    assert.ok(!String(seen[0]).startsWith('did:'), 'a DID reached a handle-keyed API')
+  })
+})
+
 describe('the composer fragment', () => {
   const ACTS = `f8130_actor=cascadia-mro.${DOMAIN}`
 
@@ -1354,7 +1400,7 @@ describe('goods in', () => {
     for (const gone of ['Publish verdict', 'discrepancy', 'name="outcome"']) {
       assert.ok(!body.includes(gone), `${gone} outlived verdicts`)
     }
-    assert.match(body, /Open the paperwork/)
+    assert.match(body, /Review the paperwork/)
   })
 
   test('the rail carries the count for the acting organization', async () => {
