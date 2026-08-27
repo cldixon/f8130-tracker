@@ -1359,7 +1359,6 @@ describe('goods in', () => {
     ).text()
 
     assert.match(body, /class="ptitle">Attestation</)
-    assert.match(body, /Published to the network/)
     assert.match(body, /class="ptitle">Verification</, 'the checks are not on the receipt')
     // The wrapper is class="stages"; the rows are class="stage".
     assert.equal(

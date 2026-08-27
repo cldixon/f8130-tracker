@@ -1014,29 +1014,39 @@ const VERIFY_SCRIPT = `
 `
 
 /**
- * The icon set, inline.
+ * The icon set: Lucide, inlined.
  *
- * SVG rather than emoji. An emoji is a different typeface on every platform,
- * carries its own colour whatever the surrounding text is doing, and the one
- * for a megaphone renders as a trumpet on half the machines that see it. These
- * are drawn in currentColor, so a section that is green is green all the way
- * through and a section that is not says so in one glance.
+ * Lucide (ISC, lucide.dev) rather than anything drawn here. The first version
+ * of this was hand-written path data approximating the house style of a real
+ * set, which is exactly what it looked like — the geometry of an icon is the
+ * whole of it, and eyeballing a megaphone produces something that reads as a
+ * trumpet. These are the published paths, unmodified, at the size and stroke
+ * weight they were drawn for.
+ *
+ * Inlined rather than depended on. Six icons do not justify a package on the
+ * server, and a stylesheet that fetches an icon font is a network round trip
+ * for something that is four hundred bytes of markup.
  */
 const ICONS: Record<string, string> = {
-  check:
-    '<path d="M20 6 9 17l-5-5"/>',
-  cross:
-    '<path d="M18 6 6 18M6 6l12 12"/>',
+  // circle-check
+  check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  // circle-x
+  cross: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+  // megaphone
   megaphone:
-    '<path d="M3 11v2a1 1 0 0 0 1 1h2l3.5 4.5a1 1 0 0 0 1.8-.6V6.1a1 1 0 0 0-1.8-.6L6 10H4a1 1 0 0 0-1 1Z"/>' +
-    '<path d="M16 8a4 4 0 0 1 0 8"/><path d="M19 5a8 8 0 0 1 0 14"/>',
+    '<path d="M11 6a13 13 0 0 0 8.4-2.8A1 1 0 0 1 21 4v12a1 1 0 0 1-1.6.8A13 13 0 0 0 11 14H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/>' +
+    '<path d="M6 14a12 12 0 0 0 2.4 7.2 2 2 0 0 0 3.2-2.4A8 8 0 0 1 10 14"/>' +
+    '<path d="M8 6v8"/>',
+  // file-text
   document:
-    '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/>' +
-    '<path d="M14 3v5h5"/>',
+    '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/>' +
+    '<path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  // package
   part:
-    '<path d="M12 2 3 7v10l9 5 9-5V7Z"/><path d="M3 7l9 5 9-5"/><path d="M12 12v10"/>',
-  shield:
-    '<path d="M12 3 5 6v6c0 4.5 3 8 7 9 4-1 7-4.5 7-9V6Z"/>',
+    '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/>' +
+    '<path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/>',
+  // chevron-down
+  chevron: '<path d="m6 9 6 6 6-6"/>',
 }
 
 function icon(name: string) {
@@ -1068,8 +1078,6 @@ function panel(params: {
   mark?: string
   /** Green, red, or the accent. Absent is neutral. */
   tone?: 'ok' | 'no' | 'told'
-  /** The short statement of condition, shown beside the title. */
-  state?: unknown
   open?: boolean
   body: unknown
 }) {
@@ -1077,11 +1085,7 @@ function panel(params: {
     <summary>
       <span class="pmark">${params.mark ? icon(params.mark) : ''}</span>
       <span class="ptitle">${params.title}</span>
-      ${params.state ? html`<span class="pstate">${params.state}</span>` : ''}
-      <span class="pchev" aria-hidden="true">${raw(
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-          'stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
-      )}</span>
+      <span class="pchev">${icon('chevron')}</span>
     </summary>
     <div class="pbody">${params.body}</div>
   </details>`
@@ -1182,7 +1186,6 @@ export function receivedBody(params: {
     ${panel({
       title: 'The component',
       mark: 'part',
-      state: a.description,
       open: true,
       body: dataplate({
         description: a.description,
@@ -1196,7 +1199,6 @@ export function receivedBody(params: {
       ? html`<div data-sheet>${panel({
           title: 'Scanned 8130',
           mark: 'document',
-          state: `${FIELDS.length} blocks · ${FIELDS.filter((f) => !f.public).length} withheld on the record`,
           // The document is the subject until the check runs, and the outcome
           // is afterwards, so it opens first and folds once there is a result.
           open: !settled,
@@ -1348,15 +1350,11 @@ export function receivedSections(params: {
   // Once the attestation is the news, the checks fold rather than vanish. A
   // reader who wants to see what was verified before they published should
   // not have to take the receipt's word for it.
-  const passed = (report?.stages ?? []).filter((st) => st.status === 'pass').length
-  const total = report?.stages.length ?? 0
-
   const checks = report
     ? panel({
         title: 'Verification',
         mark: verified ? 'check' : 'cross',
         tone: verified ? 'ok' : 'no',
-        state: `${passed} of ${total} checks passed`,
         // Folded once the attestation is the news, open while the result is.
         open: !params.published,
         body: html`<div class="stages">${report.stages.map(stageRow)}</div>`,
@@ -1373,13 +1371,6 @@ export function receivedSections(params: {
             : 'Form does not match',
         mark: params.published ? 'megaphone' : verified ? 'check' : 'cross',
         tone: params.published ? 'told' : verified ? 'ok' : 'no',
-        state: params.published
-          ? 'Published to the network'
-          : verified
-            // A literal character rather than an entity: this is a plain
-            // string, not markup, so an entity is escaped and shown as one.
-            ? 'Matches the issuer’s record'
-            : 'Does not match',
         open: true,
         body: html`<p class="sub">
             ${params.published

@@ -346,28 +346,22 @@ a.button:hover { filter: brightness(1.08); }
 .panel .pmark { flex: 0 0 auto; display: flex; color: var(--muted); }
 .panel .ico-svg { width: 1.15rem; height: 1.15rem; display: block; }
 .panel .ptitle { font-weight: 600; }
-.panel .pstate {
-  margin-left: auto; color: var(--muted); font-size: .8rem;
-  text-align: right; min-width: 0;
-}
 .panel .pchev {
-  flex: 0 0 auto; display: flex; color: var(--muted);
+  flex: 0 0 auto; margin-left: auto; display: flex; color: var(--muted);
   transition: transform .18s ease-out;
 }
-.panel .pchev svg { width: 1.05rem; height: 1.05rem; display: block; }
+.panel .pchev .ico-svg { width: 1.05rem; height: 1.05rem; }
 .panel[open] > summary .pchev { transform: rotate(180deg); }
 .panel .pbody { padding: 0 1rem 1rem; }
 .panel .pbody > .sub:first-child { margin-top: 0; }
 
-/* The condition, carried by the icon and the border rather than by colouring
-   a whole block — a section that passed should read as calm. */
-.panel.ok { border-left: 3px solid var(--pass); }
+/* The condition is the icon and nothing else. A rule down the side of every
+   panel turned the page into a column of stripes, which is loud for something
+   a tick already says. */
 .panel.ok .pmark { color: var(--pass); }
-.panel.no { border-left: 3px solid var(--fail); }
 .panel.no .pmark { color: var(--fail); }
 /* Publishing is not a third verdict. The check already passed and said so in
    green; this is the separate act of telling everyone. */
-.panel.told { border-left: 3px solid var(--accent); }
 .panel.told .pmark { color: var(--accent); }
 
 /* Stage rows sit flush inside a panel rather than in a card of their own. */
