@@ -1335,14 +1335,14 @@ describe('goods in', () => {
       await app.request(`/inbox/scan?uri=${uri}&fragment`, { headers: { cookie: AS_OPERATOR } })
     ).text()
     assert.ok(!frag.includes('<!doctype'), 'the fragment carried a whole document')
-    assert.match(frag, /Scanned on receipt/)
+    assert.match(frag, /Received 8130 Certificate/)
     assert.match(frag, /Verify this document/)
 
     const page = await (
       await app.request(`/inbox/scan?uri=${uri}`, { headers: { cookie: AS_OPERATOR } })
     ).text()
     assert.match(page, /<!doctype/)
-    assert.match(page, /Scanned on receipt/)
+    assert.match(page, /Received 8130 Certificate/)
   })
 
   /**

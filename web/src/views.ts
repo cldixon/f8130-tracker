@@ -923,50 +923,83 @@ export function inboxPage(params: {
  * drew a green tick without doing that would be demonstrating a green tick.
  */
 /**
- * Reveals the checks one at a time, and nothing else.
+ * Runs the check without leaving the page, so there is something to watch.
  *
- * The results are real and already decided: the server ran all seven against
- * the live network before this page was sent, and each row shows what that
- * check actually returned. What is invented is only the pacing. Seven
- * cryptographic operations over an in-memory network finish faster than a
- * screen can be read, and a result that appears fully formed reads as a
- * lookup rather than as work — so the rows arrive at the speed somebody can
- * follow them.
+ * The bug this fixes: submitting the form navigated, which meant the browser
+ * sat on a blank page for as long as the server took and the checks only
+ * appeared afterwards, on the result. The one moment a visitor is waiting was
+ * the one moment nothing was on screen.
  *
- * The distinction matters and is worth keeping: this paces the presentation
- * of findings, it does not invent findings or claim to know which check is
- * currently running. Nothing here decides an outcome.
+ * So the request is made in place and the checklist goes up immediately. The
+ * seven names are real and in the order the pipeline runs them; the ticks are
+ * paced by us, because the client cannot see which check the server is on and
+ * saying otherwise would be inventing a fact. What arrives at the end is the
+ * real report, with each stage's real result, and it replaces all of this.
  *
- * Script hides, then reveals — so with scripting off every row and the verdict
- * beneath it are simply there, which is the correct fallback for a page whose
- * whole content is the result.
+ * Deliberately waits for the later of the two: if the checks finish before the
+ * list does the visitor still sees it through, and if the network is slow the
+ * list finishes and holds. Without scripting the form submits and navigates,
+ * which is where this started and still works.
  */
-const RUN_SCRIPT = `
+const VERIFY_SCRIPT = `
 (function () {
-  var run = document.querySelector('[data-run]')
-  var after = document.querySelector('[data-after]')
-  if (!run || !window.requestAnimationFrame) return
-  var rows = Array.prototype.slice.call(run.children)
-  if (rows.length === 0) return
+  var form = document.querySelector('[data-verify]')
+  if (!form || !window.fetch) return
 
-  run.classList.add('stepping')
-  if (after) after.classList.add('stepping')
-  rows.forEach(function (r) { r.classList.add('pending') })
+  var CHECKS = [
+    'Resolving the issuer&rsquo;s identity',
+    'Fetching the release from their repository',
+    'Verifying the signature against their declared key',
+    'Recomputing this document&rsquo;s commitment',
+    'Comparing the blocks published in the clear',
+    'Checking the serial against the part',
+    'Walking the history back'
+  ]
 
-  var i = 0
-  function step() {
-    if (i >= rows.length) {
-      if (after) after.classList.remove('stepping')
-      return
+  form.addEventListener('submit', function (e) {
+    e.preventDefault()
+
+    var panel = document.createElement('div')
+    panel.className = 'checking'
+    panel.innerHTML =
+      '<h2 class="sect">Verifying</h2>' +
+      '<ol class="steps">' +
+      CHECKS.map(function (c) {
+        return '<li><span class="tick" aria-hidden="true"></span>' + c + '</li>'
+      }).join('') +
+      '</ol>'
+    form.parentNode.replaceChild(panel, form)
+    panel.scrollIntoView({ block: 'nearest' })
+
+    var items = panel.querySelectorAll('.steps li')
+    var i = 0
+    var pacedDone = false
+    var markup = null
+
+    function finish() {
+      if (!pacedDone || markup === null) return
+      var main = document.querySelector('main')
+      if (!main) return
+      main.innerHTML = markup
     }
-    rows[i].classList.remove('pending')
-    rows[i].classList.add('arrived')
-    i++
-    // A little longer on the two that do real cryptography, so the pace
-    // reads as work rather than as a metronome.
-    setTimeout(step, i === 3 || i === 4 ? 620 : 380)
-  }
-  setTimeout(step, 250)
+
+    function step() {
+      if (i >= items.length) { pacedDone = true; setTimeout(finish, 200); return }
+      items[i].className = 'done'
+      i++
+      setTimeout(step, i === 3 || i === 4 ? 560 : 340)
+    }
+    setTimeout(step, 200)
+
+    fetch('/inbox/check?fragment', { method: 'POST', body: new FormData(form) })
+      .then(function (r) { return r.text() })
+      .then(function (h) { markup = h; finish() })
+      .catch(function () {
+        markup = '<div class="empty">The check could not be run. ' +
+          '<a href="/inbox">Back to receiving</a></div>'
+        finish()
+      })
+  })
 })()
 `
 
@@ -1035,12 +1068,13 @@ export function inboxScanBody(params: { actor: Actor; arrival: Arrival }) {
   const scanned = (a.bundle as { values?: Record<string, unknown> } | null)?.values ?? null
 
   return html`<p class="backlink"><a href="/inbox">&larr; Receiving</a></p>
-    <h1>Scanned on receipt</h1>
+    <h1>Received 8130 Certificate</h1>
     <p class="sub">
-      Booked in by goods-in against a shipment from ${a.issuerName}. Nothing has
-      been checked yet.
+      This is the received 8130-3 form, included in the component shipment. We
+      must verify the paper document matches what the issuer submitted.
     </p>
 
+    <h2 class="sect">The component</h2>
     ${dataplate({
       description: a.description,
       partNumber: a.partNumber,
@@ -1049,11 +1083,13 @@ export function inboxScanBody(params: { actor: Actor; arrival: Arrival }) {
     })}
 
     ${scanned
-      ? html`${paperSheet(scanned)}
-          <form method="post" action="/inbox/check" class="startcheck">
+      ? html`<h2 class="sect">Scanned 8130</h2>
+          ${paperSheet(scanned)}
+          <form method="post" action="/inbox/check" class="startcheck" data-verify>
             <input type="hidden" name="subjectUri" value="${a.subject.uri}">
             <button type="submit">Verify this document</button>
-          </form>`
+          </form>
+          ${raw(`<script>${VERIFY_SCRIPT}</script>`)}`
       : html`<div class="card"><div class="empty">
           No document was scanned with this shipment.
         </div></div>`}`
@@ -1159,11 +1195,15 @@ export function inboxCheckBody(params: {
 
   const body = html`<p class="backlink"><a href="/inbox">&larr; Receiving</a></p>
     <h1>${
-    params.published ? 'Published' : verified ? 'Checks out' : 'Does not check out'
+    params.published ? 'Published' : verified ? 'Certificate verified' : 'Form does not match'
   }</h1>
     <p class="sub">
-      The paperwork that arrived with the following part, against what
-      ${a.issuerName} published.
+      ${verified
+        ? html`The 8130 form we received matches what ${a.issuerName} submitted
+            to the network when they released the part.`
+        : html`The 8130 form we received does not match what the issuer
+            submitted to the network on release. We will need to contact them
+            directly to resolve the discrepancy.`}
     </p>
 
     ${dataplate({
@@ -1185,7 +1225,6 @@ export function inboxCheckBody(params: {
         </details>`
       : ''}
 
-    <div class="after" data-after>
     ${report
       ? html`<div class="verdict ${report.verified ? 'ok' : 'no'}" style="margin-top:1rem">
           <h2>${report.verified ? 'Verified' : 'Not verified'}</h2>
@@ -1290,15 +1329,11 @@ export function inboxCheckBody(params: {
           </div>`}
 
     ${report
-      ? html`<div class="card run" data-run>${report.stages.map(stageRow)}</div>`
+      ? html`<div class="card" style="margin-top:1rem">${report.stages.map(stageRow)}</div>`
       : ''}
     ${forged}
 
-    </div>
-
-    ${report
-      ? html`${raw(`<script>${RUN_SCRIPT}</script>`)}`
-      : ''}`
+`
 
   return body
 }

@@ -323,15 +323,50 @@ a.button:hover { filter: brightness(1.08); }
 .sheet.paper .blk { cursor: default; }
 .sheet.paper .blk:hover { background: transparent; }
 
-/* The checks, arriving at a pace somebody can follow. The results are real
-   and already decided; only the timing is ours. */
-.run.stepping .stage.pending { opacity: 0; transform: translateY(-.25rem); }
-.run .stage { transition: opacity .25s ease-out, transform .25s ease-out; }
-.run .stage.arrived { opacity: 1; transform: none; }
-.after.stepping { opacity: 0; pointer-events: none; }
-.after { transition: opacity .3s ease-out; opacity: 1; }
+/* A section heading inside a page, quieter than an h2 between sections. */
+.sect {
+  font-size: .72rem; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); margin: 1.6rem 0 .5rem; font-weight: 600;
+}
+
+/* The checks, while they run. The names and their order are the pipeline's;
+   the pace is ours, because the client cannot see which one the server is on.
+   What replaces this is the real report. */
+.checking { margin-top: 1.2rem; }
+.steps {
+  list-style: none; margin: 0; padding: 0;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+}
+.steps li {
+  display: flex; align-items: center; gap: .7rem;
+  padding: .7rem 1.15rem; border-bottom: 1px solid var(--line);
+  font-size: .9rem; color: var(--muted);
+  transition: color .2s ease-out;
+}
+.steps li:last-child { border-bottom: 0; }
+.steps li.done { color: var(--fg); }
+.steps .tick {
+  flex: 0 0 auto; width: 1.05rem; height: 1.05rem; border-radius: 50%;
+  border: 2px solid var(--line); position: relative;
+}
+.steps li.done .tick { border-color: var(--pass); background: var(--pass); }
+.steps li.done .tick::after {
+  content: ""; position: absolute; left: .28rem; top: .1rem;
+  width: .22rem; height: .45rem; border: solid var(--card);
+  border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+/* The one still being waited on, so the list does not look stalled. */
+.steps li:not(.done):first-of-type .tick,
+.steps li.done + li:not(.done) .tick {
+  border-color: var(--accent);
+  animation: pulsering 1.1s ease-in-out infinite;
+}
+@keyframes pulsering {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .run .stage, .after { transition: none; }
+  .steps li .tick { animation: none; }
 }
 
 /* The scanned document, folded away once a result is on screen. */
@@ -440,7 +475,8 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
   position: sticky; top: 0; padding: 1rem 0;
   display: flex; flex-direction: column; gap: .35rem;
 }
-.rail .brand {
+.rail .brand { display: block; text-decoration: none; color: inherit; }
+.brand {
   font-weight: 700; letter-spacing: -0.03em; font-size: 1.15rem;
   padding: .3rem .6rem .7rem;
 }
@@ -689,7 +725,8 @@ button.ghost:hover { background: var(--skip-bg); }
     position: static; height: auto; flex-direction: row; align-items: center;
     gap: .5rem; padding: .55rem 0; border-bottom: 1px solid var(--line);
   }
-  .rail .brand { padding: 0; font-size: 1.05rem; }
+  .rail .brand { display: block; text-decoration: none; color: inherit; }
+.brand { padding: 0; font-size: 1.05rem; }
   .rail .brand br, .rail .brand span { display: none; }
 
   /* And the links become a tab bar pinned to the bottom of the viewport. */
@@ -1064,7 +1101,7 @@ export function layout(
 </div>
 <div class="app">
   <aside class="rail">
-    <div class="brand">OffWing<br><span>FAA 8130-3 certificates on atproto</span></div>
+    <a class="brand" href="/">OffWing<br><span>FAA 8130-3 certificates on atproto</span></a>
     <!-- Four destinations, and each answers a different question. Feed: what
          is happening. Receiving: what is waiting on me. Issuers: who is
          publishing, and how much of it anybody has vouched for. Documents: what
