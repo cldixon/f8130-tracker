@@ -23,6 +23,7 @@ import {
   verifyDisclosure,
   type Bundle,
   type ChainTrace,
+  type VerificationReport,
   type Narrator,
   type IdentityResolver,
   type RepoClient,
@@ -43,6 +44,12 @@ import {
   feedPage,
   formPage,
   inboxPage,
+  inboxCheckPage,
+  inboxCheckBody,
+  inboxScanPage,
+  inboxScanBody,
+  receivedSections,
+  inboxDoneBody,
   issueBody,
   issuePage,
   partPage,
@@ -93,8 +100,8 @@ export type AppDeps = {
    * what to write are entirely the generator's business.
    */
   activity?: {
-    viewerJoined(): void
-    viewerLeft(): void
+    viewerJoined(handle?: string): void
+    viewerLeft(handle?: string): void
   } | null
   /**
    * Parts that physically arrived, awaiting inspection.
@@ -318,7 +325,16 @@ export function createApp(deps: AppDeps) {
 
     // Fixed at connect time. The stream is per-connection, and switching
     // viewpoint reloads the page, which opens a new one.
-    const viewer = await actingDid(currentActor(c))
+    //
+    // Two of them, and the difference is not cosmetic. A card is marked as
+    // yours by DID, because that is the identity a record carries. A dock and
+    // a generator are keyed by handle, because that is what the roster and the
+    // viewpoint cookie deal in. One variable served all three after the DID
+    // change and the two handle-shaped uses had been silently answering about
+    // an organization that does not exist: the badge never moved and the
+    // generator never learned who was watching.
+    const viewerHandle = currentActor(c)
+    const viewer = await actingDid(viewerHandle)
 
     // A resumed stream picks up where the page left off. The client sends the
     // timestamp of the newest event it has drawn, so events another viewer's
@@ -330,6 +346,11 @@ export function createApp(deps: AppDeps) {
       parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date()
     let closed = false
 
+    // -1 rather than 0, so the first poll always reports — including a count
+    // of zero, which is the correct answer for a page rendered when something
+    // was waiting and then cleared.
+    let lastWaiting = -1
+
     const stream = new ReadableStream({
       start(controller) {
         const enc = new TextEncoder()
@@ -337,7 +358,7 @@ export function createApp(deps: AppDeps) {
           if (!closed) controller.enqueue(enc.encode(chunk))
         }
 
-        deps.activity?.viewerJoined()
+        deps.activity?.viewerJoined(viewerHandle)
         send(': connected\n\n')
 
         const poll = setInterval(async () => {
@@ -364,6 +385,23 @@ export function createApp(deps: AppDeps) {
               // generator learns the viewer is still there.
               send(': keep-alive\n\n')
             }
+
+            // What is waiting on the dock, whenever it changes.
+            //
+            // Sent on this stream rather than polled on its own, because the
+            // arrival that changes it is produced by the same generator this
+            // stream is keeping alive. Only on a change: an unchanged number
+            // every three seconds is a message the client would spend its time
+            // discarding.
+            //
+            // A count and nothing else. What is waiting is addressed to one
+            // organization, and the stream is public — the number is the most
+            // that can be said without saying whose part it is.
+            const waiting = deps.dock?.count(viewerHandle) ?? 0
+            if (waiting !== lastWaiting) {
+              lastWaiting = waiting
+              send(`event: waiting\ndata: ${waiting}\n\n`)
+            }
           } catch {
             // A transient index error should drop one poll, not the stream.
           }
@@ -373,7 +411,7 @@ export function createApp(deps: AppDeps) {
           if (closed) return
           closed = true
           clearInterval(poll)
-          deps.activity?.viewerLeft()
+          deps.activity?.viewerLeft(viewerHandle)
           try {
             controller.close()
           } catch {
@@ -959,10 +997,72 @@ export function createApp(deps: AppDeps) {
       }
 
       try {
+        // Read the dock before writing, because publishing clears it: an
+        // attestation is the fact that the part was dealt with, so the crate
+        // stops waiting. Without this the part stayed in Receiving
+        // forever and could be attested again and again.
+        const arrival = deps.dock?.arrival(handle, subjectUri)
+
+        /*
+         * Check it again, immediately before saying in public that it checks
+         * out.
+         *
+         * An attestation means the author held this document and it verified.
+         * Publishing one without having just established that would be
+         * writing a signed statement on trust — this route used to take the
+         * word of whatever screen sent the request, and nothing stopped a
+         * caller reaching it without ever running a check at all.
+         *
+         * It is also what puts the stages on the receipt: the section a
+         * reader watched fill in stays on the page afterwards because the
+         * report behind it is real and current, not because it was cached
+         * from a previous request.
+         *
+         * Only where the document is in this organization's dock. A check
+         * that came from the verify page pasted a bundle the service never
+         * kept, so there is nothing here to re-run and nothing to re-run it
+         * against.
+         */
+        let report: VerificationReport | undefined
+        if (arrival) {
+          try {
+            report = await verifyBundle({
+              bundle: parseBundle(arrival.bundle),
+              stampedSerial: arrival.serialNumber,
+              resolver: deps.resolver,
+              repo: deps.repo,
+            })
+          } catch (err) {
+            return c.html(errorPage(400, describe(err)), 400)
+          }
+          if (!report.verified) {
+            return c.html(
+              errorPage(409, 'That document does not verify, so there is nothing to attest to.'),
+              409,
+            )
+          }
+        }
+
         const written = await writer.createAttestation({
           handle,
           subject: { uri: subjectUri, cid: subjectCid },
         })
+        deps.dock?.settle(subjectUri)
+
+        // Somebody who came from their own goods-in gets a receipt for the
+        // crate they were looking at. Landing them back on the Verify page,
+        // with its empty textarea asking for a document they have already
+        // checked, is a worse answer to "what happened".
+        if (arrival) {
+          const actor = writer.actors().find((a) => a.handle === handle)!
+          const done = { actor, arrival, report, published: written.uri }
+          if (c.req.query('fragment') !== undefined) {
+            return c.html(inboxCheckBody(done))
+          }
+          return c.html(
+            inboxCheckPage({ mode, chrome: chrome(c, 'inbox'), ...done }),
+          )
+        }
         return c.html(
           verifyPage(mode, undefined, undefined, chrome(c, 'docs'), null, written.uri),
         )
@@ -1140,6 +1240,117 @@ export function createApp(deps: AppDeps) {
           arrivals: deps.dock?.awaiting(handle) ?? [],
         }),
       )
+    })
+
+    /**
+     * What the loading dock booked in, before anybody has checked it.
+     *
+     * Its own screen rather than a section of the result, because it is a
+     * different question: this is "here is what arrived", and the check is
+     * "and here is whether it holds up". Reading the document before running
+     * anything against it is the order a records desk works in.
+     */
+    app.get('/inbox/scan', (c) => {
+      const handle = currentActor(c)
+      const actor = writer.actors().find((a) => a.handle === handle)
+      if (!actor) {
+        return c.html(errorPage(403, 'Only an organization receives parts.'), 403)
+      }
+      const arrival = deps.dock?.arrival(handle, c.req.query('uri') ?? '')
+      if (!arrival) {
+        return c.html(errorPage(404, 'Nothing by that name is waiting for you.'), 404)
+      }
+      // Never cached: the list it came from changes as crates are dealt with.
+      c.header('cache-control', 'no-store')
+      if (c.req.query('fragment') !== undefined) {
+        return c.html(inboxScanBody({ actor, arrival }))
+      }
+      return c.html(
+        inboxScanPage({ mode, chrome: chrome(c, 'inbox'), actor, arrival }),
+      )
+    })
+
+    /**
+     * Take a part off the list without publishing anything.
+     *
+     * The two ways a check ends without an attestation — the document did not
+     * match, or it did and the receiver would rather not vouch — are the same
+     * action here, because the network cannot tell them apart and must not.
+     * Nothing is written. The crate stops waiting because the work is done,
+     * not because anybody said anything about it.
+     */
+    app.post('/inbox/clear', async (c) => {
+      const form = await c.req.parseBody()
+      const handle = currentActor(c)
+      if (!handle) {
+        return c.html(errorPage(403, 'Only an organization receives parts.'), 403)
+      }
+      const subjectUri = typeof form.subjectUri === 'string' ? form.subjectUri : ''
+      // Only ever from the acting organization's own dock, so a caller cannot
+      // clear a crate that was never theirs.
+      if (deps.dock?.arrival(handle, subjectUri)) deps.dock.settle(subjectUri)
+      if (c.req.query('fragment') !== undefined) {
+        return c.html(inboxDoneBody({ back: '/inbox' }))
+      }
+      return c.redirect('/inbox', 303)
+    })
+
+    /**
+     * Check the paperwork that came with a part.
+     *
+     * Takes a release URI and nothing else. The document is looked up in the
+     * dock under the acting organization, so a caller cannot check a bundle it
+     * supplies, cannot check one addressed to somebody else, and cannot use
+     * this route to have the service open a document it was not sent.
+     *
+     * The check itself is the ordinary pipeline against the live network. It
+     * is not scripted to pass: the point of the screen is that a recomputed
+     * commitment matches a signed record, and a demonstration that faked that
+     * step would be demonstrating nothing. What is spared the visitor is the
+     * typing, not the arithmetic.
+     */
+    app.post('/inbox/check', async (c) => {
+      const form = await c.req.parseBody()
+      const handle = currentActor(c)
+      const actor = writer.actors().find((a) => a.handle === handle)
+      if (!actor) {
+        return c.html(errorPage(403, 'Only an organization receives parts.'), 403)
+      }
+
+      const subjectUri = typeof form.subjectUri === 'string' ? form.subjectUri : ''
+      const arrival = deps.dock?.arrival(handle, subjectUri)
+      if (!arrival) {
+        return c.html(errorPage(404, 'Nothing by that name is waiting for you.'), 404)
+      }
+
+      try {
+        const bundle = parseBundle(arrival.bundle)
+        const report = await verifyBundle({
+          bundle,
+          // The serial stamped on the part itself, which in a real goods-in is
+          // read off the dataplate rather than off the form. Here the crate
+          // and the paperwork agree because the same generator wrote both.
+          stampedSerial: arrival.serialNumber,
+          resolver: deps.resolver,
+          repo: deps.repo,
+        })
+        // Only what the check adds: the browser drops it in below the
+        // document it is already showing.
+        if (c.req.query('fragment') !== undefined) {
+          return c.html(receivedSections({ actor, arrival, report }))
+        }
+        return c.html(
+          inboxCheckPage({
+            mode,
+            chrome: chrome(c, 'inbox'),
+            actor,
+            arrival,
+            report,
+          }),
+        )
+      } catch (err) {
+        return c.html(errorPage(400, describe(err)), 400)
+      }
     })
 
   }

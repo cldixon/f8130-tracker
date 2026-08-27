@@ -36,6 +36,28 @@ export type Arrival = {
   serialNumber: string
   description: string
   at: Date
+  /**
+   * The paperwork that came in the crate, as if somebody had scanned it.
+   *
+   * This is a bundle, which carries every nonce and therefore opens every
+   * withheld block on the record it belongs to. The standing rule is that no
+   * AppView may hold one. This does not break that rule, and it is close
+   * enough to it to be worth saying why.
+   *
+   * The web service in this demonstration is playing three parts at once: the
+   * AppView that reads the index, the issuer's client that composes a release,
+   * and — here — the recipient's goods-in desk. Only the first of those is an
+   * AppView. An operator's own document system holding the paperwork for a
+   * part it was sent is not a leak; it is the operator's paper, and being
+   * able to read it is the entire reason selective disclosure has a point.
+   *
+   * What keeps that true is where this lives and who can reach it. It is in
+   * memory on this one process, keyed by the recipient, never written to the
+   * index, never handed to the watchdog, never logged, and never rendered for
+   * any organization but the one the part was sent to. `bundleFor` is the only
+   * way out and it takes the recipient as an argument for that reason.
+   */
+  bundle: unknown
 }
 
 export class Dock {
@@ -62,10 +84,29 @@ export class Dock {
   }
 
   /**
-   * Drop an arrival once a verdict on it has been published.
+   * The scanned paperwork for one arrival, for its recipient and nobody else.
    *
-   * Keyed by the release, and swept across every recipient rather than only
-   * the one that published: the verdict is the fact that the part was dealt
+   * Takes the recipient rather than looking the release up globally, so that
+   * asking for somebody else's document is not a thing the caller can express
+   * rather than a thing it is trusted not to do. A caller holding a release
+   * URI it was not sent gets undefined, whoever it is.
+   */
+  bundleFor(handle: string | undefined, releaseUri: string): unknown {
+    if (!handle) return undefined
+    return this.awaiting(handle).find((a) => a.subject.uri === releaseUri)?.bundle
+  }
+
+  /** One arrival, for its recipient and nobody else. */
+  arrival(handle: string | undefined, releaseUri: string): Arrival | undefined {
+    if (!handle) return undefined
+    return this.awaiting(handle).find((a) => a.subject.uri === releaseUri)
+  }
+
+  /**
+   * Drop an arrival once somebody has published a check on it.
+   *
+   * Keyed by the release and swept across every recipient rather than only the
+   * one that published: the attestation is the fact that the part was dealt
    * with, whoever ended up dealing with it.
    */
   settle(releaseUri: string): void {

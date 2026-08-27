@@ -64,14 +64,9 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
   background: var(--card); border: 1px solid var(--line); border-radius: 8px;
   padding: .8rem .95rem;
 }
-.event.rejected { border-left: 3px solid var(--fail); }
-.event.discrepancy { border-left: 3px solid var(--warn); }
 .event .who { font-size: .92rem; display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; }
 .event .who .when { margin-left: auto; color: var(--muted); font-size: .76rem; white-space: nowrap; }
 .event .dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--accent); flex: 0 0 auto; align-self: center; }
-.event .dot.accepted { background: var(--pass); }
-.event .dot.rejected { background: var(--fail); }
-.event .dot.discrepancy { background: var(--warn); }
 .event .mine {
   font-size: .64rem; text-transform: uppercase; letter-spacing: .06em;
   color: var(--accent); border: 1px solid var(--accent); border-radius: 3px;
@@ -147,7 +142,6 @@ table { width: 100%; border-collapse: collapse; font-size: .89rem; }
 th { text-align: left; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: .6rem 1.15rem; border-bottom: 1px solid var(--line); font-weight: 600; }
 td { padding: .65rem 1.15rem; border-bottom: 1px solid var(--line); }
 tr:last-child td { border-bottom: 0; }
-.flagged { color: var(--fail); font-weight: 600; }
 .scroll { overflow-x: auto; }
 
 textarea { width: 100%; min-height: 11rem; font-family: ui-monospace, monospace; font-size: .82rem;
@@ -158,8 +152,6 @@ label { display: block; font-size: .8rem; color: var(--muted); margin: 1rem 0 .3
 button { margin-top: 1.15rem; padding: .55rem 1.1rem; font-size: .92rem; font-weight: 600;
   border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
 button:disabled { background: var(--line); color: var(--muted); cursor: not-allowed; }
-footer { border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem;
-  color: var(--muted); font-size: .78rem; }
 .empty { padding: 1.5rem 1.15rem; color: var(--muted); font-size: .9rem; }
 .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .3rem .8rem; margin-top: .4rem; }
 .check { display: flex; align-items: center; gap: .4rem; margin: 0; font-size: .85rem; color: var(--fg); }
@@ -283,6 +275,204 @@ form.draftform button[type=submit] { margin-top: 1rem; }
   .rev .n { display: block; margin-bottom: .15rem; }
 }
 
+/* The action on a goods-in card. The explanation sits beside the button
+   rather than under it, so a card stays one glance tall. */
+.checkrow { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin-top: .6rem; }
+.checkrow button { margin: 0; flex: 0 0 auto; }
+.checkrow .meta { margin: 0; flex: 1 1 14rem; min-width: 0; }
+
+/* A link that behaves as the action it is. */
+a.button {
+  display: inline-block; text-decoration: none; text-align: center;
+  background: var(--accent); color: var(--bg); border: 0; border-radius: 6px;
+  padding: .5rem .9rem; font-size: .9rem; font-weight: 600;
+}
+a.button:hover { filter: brightness(1.08); }
+
+/* What is being done while it is being done. Named, not timed: the server
+   answers when all seven are finished, and animating them in sequence would
+   be inventing progress the page cannot observe. */
+.checks-running {
+  list-style: none; margin: .9rem 0 0; padding: 0; text-align: left;
+  display: grid; gap: .3rem;
+}
+.checks-running li {
+  font-size: .82rem; color: var(--muted); padding-left: 1.1rem; position: relative;
+}
+.checks-running li::before {
+  content: "·"; position: absolute; left: .3rem; color: var(--accent);
+  font-weight: 700;
+}
+.working .detail { width: 100%; }
+
+.scanhead {
+  display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap;
+  margin: 1.1rem 0 .5rem; font-size: .9rem; font-weight: 600;
+}
+.scanhead .meta { margin: 0; font-weight: 400; }
+.startcheck { margin-top: 1.1rem; }
+.startcheck button { margin: 0; }
+.startcheck .meta { margin-top: .5rem; }
+
+.backlink { margin: 0 0 .6rem; font-size: .85rem; }
+.backlink a { text-decoration: none; }
+
+/* The paper, read-only: the composer's sheet without the inputs. */
+.sheet.paper { margin-top: 1rem; }
+.sheet.paper .stamp span { font-size: clamp(.75rem, 2vw, 1.15rem); opacity: .55; }
+.sheet.paper .blk { cursor: default; }
+.sheet.paper .blk:hover { background: transparent; }
+
+/* The outcome carries its state in the heading rather than in a banner
+   underneath one — a page that says "Form does not match" does not also need
+   a box saying not verified. */
+/* Sections, all built the same way.
+   They used to be a mixture — a heading with a card under it, a summary
+   nobody would notice, a coloured heading with nothing to fold — so the page
+   read as a pile of unrelated things rather than a sequence of steps with
+   states. The condition lives in the summary so it survives being closed: a
+   section somebody folded away can still tell them it passed. */
+.panel {
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  margin-top: .8rem; overflow: hidden;
+}
+.panel > summary {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .8rem 1rem; cursor: pointer; list-style: none;
+  font-size: .95rem; user-select: none;
+}
+.panel > summary::-webkit-details-marker { display: none; }
+.panel > summary:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.panel .pmark { flex: 0 0 auto; display: flex; color: var(--muted); }
+.panel .ico-svg { width: 1.15rem; height: 1.15rem; display: block; }
+.panel .ptitle { font-weight: 600; }
+.panel .pchev {
+  flex: 0 0 auto; margin-left: auto; display: flex; color: var(--muted);
+  transition: transform .18s ease-out;
+}
+.panel .pchev .ico-svg { width: 1.05rem; height: 1.05rem; }
+.panel[open] > summary .pchev { transform: rotate(180deg); }
+.panel .pbody { padding: 0 1rem 1rem; }
+.panel .pbody > .sub:first-child { margin-top: 0; }
+
+/* The condition is the icon and nothing else. A rule down the side of every
+   panel turned the page into a column of stripes, which is loud for something
+   a tick already says. */
+.panel.ok .pmark { color: var(--pass); }
+.panel.no .pmark { color: var(--fail); }
+/* Publishing is not a verdict at all — the check already passed and said so
+   in green. Telling everyone is a separate act with no condition of its own,
+   so its mark is the same grey as every other section heading. */
+
+/* Stage rows sit flush inside a panel rather than in a card of their own. */
+.panel .stages {
+  border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+}
+.panel .stages .stage { padding: .7rem .9rem; }
+
+.withheld-list {
+  margin: .2rem 0 .8rem; padding-left: 1.1rem; font-size: .87rem;
+  color: var(--muted); columns: 2; column-gap: 1.5rem;
+}
+@media (max-width: 34rem) { .withheld-list { columns: 1; } }
+
+/* The document, folded once it has been read and the decision is below it. */
+.sheetfold > summary { font-weight: 600; color: var(--fg); }
+.sheetfold[open] > summary { margin-bottom: .3rem; }
+.outcome { margin-top: 1.25rem; }
+.outcome .ref {
+  word-break: break-all; font-size: .78rem; color: var(--muted);
+  background: var(--skip-bg); border-radius: 4px; padding: .5rem .7rem;
+}
+.outcome .sect:first-child { margin-top: 0; }
+
+/* A section heading inside a page, quieter than an h2 between sections. */
+.sect {
+  font-size: .72rem; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); margin: 1.6rem 0 .5rem; font-weight: 600;
+}
+
+/* The checks, while they run. The names and their order are the pipeline's;
+   the pace is ours, because the client cannot see which one the server is on.
+   What replaces this is the real report. */
+.checking { margin-top: 1.2rem; }
+.steps {
+  list-style: none; margin: 0; padding: 0;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+}
+.steps li {
+  display: flex; align-items: center; gap: .7rem;
+  padding: .7rem 1.15rem; border-bottom: 1px solid var(--line);
+  font-size: .9rem; color: var(--muted);
+  transition: color .2s ease-out;
+}
+.steps li:last-child { border-bottom: 0; }
+.steps li.done { color: var(--fg); }
+.steps .tick {
+  flex: 0 0 auto; width: 1.05rem; height: 1.05rem; border-radius: 50%;
+  border: 2px solid var(--line); position: relative;
+}
+.steps li.done .tick { border-color: var(--pass); background: var(--pass); }
+.steps li.done .tick::after {
+  content: ""; position: absolute; left: .28rem; top: .1rem;
+  width: .22rem; height: .45rem; border: solid var(--card);
+  border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+/* The one still being waited on, so the list does not look stalled. */
+.steps li:not(.done):first-of-type .tick,
+.steps li.done + li:not(.done) .tick {
+  border-color: var(--accent);
+  animation: pulsering 1.1s ease-in-out infinite;
+}
+@keyframes pulsering {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .steps li .tick { animation: none; }
+}
+
+/* The scanned document, folded away once a result is on screen. */
+.scan { margin-top: 1rem; }
+.scan > summary {
+  cursor: pointer; font-size: .9rem; padding: .5rem .2rem;
+  color: var(--accent);
+}
+.scan .sub { margin: .3rem 0 .7rem; font-size: .85rem; }
+
+/* What differed, when the record carries the block in the clear. */
+.mismatch {
+  margin-top: 1rem; padding: 1rem 1.15rem; border-radius: 8px;
+  background: var(--fail-bg); border: 1px solid var(--line);
+  border-left: 3px solid var(--fail);
+}
+.mismatch h2 { margin: 0 0 .5rem; font-size: 1.05rem; }
+.mismatch p { margin: 0 0 .7rem; font-size: .92rem; }
+.diff { margin: 0 0 .8rem; display: grid; gap: .5rem; }
+.diff > div {
+  background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+  padding: .5rem .7rem;
+}
+.diff dt {
+  font-size: .62rem; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); margin-bottom: .2rem;
+}
+.diff dd { margin: 0; display: flex; align-items: baseline; gap: .5rem; font-size: .88rem; }
+.diff dd .was { text-decoration: line-through; color: var(--muted); }
+.diff dd .is { font-weight: 600; }
+.diff dd .sep { font-size: .68rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+
+/* Publish or do not, side by side: neither is the safe default. */
+.choose { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
+.choose form { margin: 0; }
+.choose button { margin: 0; }
+
+/* The line that stops a green tick being read as more than it is. */
+.caveat {
+  margin-top: .5rem !important; font-size: .85rem; color: var(--muted);
+  border-top: 1px solid var(--line); padding-top: .5rem;
+}
+
 /* Waiting on a generated form. It is a call to a model, so it takes a second
    or two, and a blank dialog for that long reads as broken rather than busy. */
 .working {
@@ -348,7 +538,8 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
   position: sticky; top: 0; padding: 1rem 0;
   display: flex; flex-direction: column; gap: .35rem;
 }
-.rail .brand {
+.rail .brand { display: block; text-decoration: none; color: inherit; }
+.brand {
   font-weight: 700; letter-spacing: -0.03em; font-size: 1.15rem;
   padding: .3rem .6rem .7rem;
 }
@@ -516,13 +707,6 @@ a.tag:hover { border-bottom-color: var(--accent); }
   display: block; margin-top: .45rem; padding-top: .45rem;
   border-top: 1px dashed var(--line); font-style: italic;
 }
-.verdict-row {
-  display: flex; gap: .45rem; align-items: center; flex-wrap: wrap;
-  margin-top: .6rem;
-}
-.verdict-row select { width: auto; min-width: 8rem; }
-.verdict-row input[type=text] { flex: 1; min-width: 12rem; max-width: none; }
-.verdict-row button { margin-top: 0; padding: .4rem .8rem; font-size: .85rem; }
 
 .rail nav a .badge {
   margin-left: auto; font-size: .68rem; font-weight: 700;
@@ -604,7 +788,8 @@ button.ghost:hover { background: var(--skip-bg); }
     position: static; height: auto; flex-direction: row; align-items: center;
     gap: .5rem; padding: .55rem 0; border-bottom: 1px solid var(--line);
   }
-  .rail .brand { padding: 0; font-size: 1.05rem; }
+  .rail .brand { display: block; text-decoration: none; color: inherit; }
+.brand { padding: 0; font-size: 1.05rem; }
   .rail .brand br, .rail .brand span { display: none; }
 
   /* And the links become a tab bar pinned to the bottom of the viewport. */
@@ -979,10 +1164,10 @@ export function layout(
 </div>
 <div class="app">
   <aside class="rail">
-    <div class="brand">OffWing<br><span>FAA 8130-3 certificates on atproto</span></div>
-    <!-- Four destinations, and each answers a different question. Home: what
-         is happening. Goods in: what is waiting on me. Issuers: who is
-         publishing, and whose paperwork other parties reject. Documents: what
+    <a class="brand" href="/">OffWing<br><span>FAA 8130-3 certificates on atproto</span></a>
+    <!-- Four destinations, and each answers a different question. Feed: what
+         is happening. Receiving: what is waiting on me. Issuers: who is
+         publishing, and how much of it anybody has vouched for. Documents: what
          I am holding, and the things I can do with it.
 
          Checking a document and proving one field used to be nav entries of
@@ -995,11 +1180,15 @@ export function layout(
          so a screen reader gets a real label either way. -->
     <nav>
       <a href="/" class="${on('home')}"><span class="ico">◎</span>
-        <span class="full">Home</span><span class="tab">Home</span></a>
+        <span class="full">Feed</span><span class="tab">Feed</span></a>
       ${me
-        ? html`<a href="/inbox" class="${on('inbox')}"><span class="ico">▼</span>
-            <span class="full">Goods in</span><span class="tab">Goods</span>
-            ${chrome?.waiting ? html`<span class="badge">${chrome.waiting}</span>` : ''}
+        ? html`<a href="/inbox" class="${on('inbox')}"><span class="ico">⤓</span>
+            <span class="full">Receiving</span><span class="tab">Receiving</span>
+            <!-- Always in the markup, hidden at zero, so the live stream has
+                 something to write into rather than a node it has to create in
+                 the right place in the rail. -->
+            <span class="badge" id="waiting" ${chrome?.waiting ? '' : 'hidden'}
+              >${chrome?.waiting ?? 0}</span>
           </a>`
         : ''}
       <a href="/parts" class="${on('issuers')}"><span class="ico">▤</span>
@@ -1010,16 +1199,15 @@ export function layout(
     ${actors.length > 0
       ? me
         ? html`<a href="/issue" class="newpost" ${withComposer ? 'data-compose' : ''}
-            aria-label="New release"><span class="full">New release</span
+            aria-label="Create release"><span class="full">Create release</span
             ><span class="tab">+</span></a>`
         : html`<span class="newpost off" title="The public cannot sign"
-            ><span class="full">New release</span><span class="tab">+</span></span>`
+            ><span class="full">Create release</span><span class="tab">+</span></span>`
       : ''}
     ${actors.length > 0 ? identity(chrome!) : ''}
   </aside>
   <main>
     ${body}
-    <footer>Demonstration only · this service holds no signing keys</footer>
   </main>
 </div>
 ${withComposer ? composer() : ''}

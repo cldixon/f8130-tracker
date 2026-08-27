@@ -864,22 +864,18 @@ export function inboxPage(params: {
   const now = params.now ?? new Date()
 
   const body = !params.actor
-    ? html`<h1>Goods in</h1>
+    ? html`<h1>Receiving</h1>
       <div class="needs-actor">
         You are watching as the public, which receives nothing. Switch to an
         organization in the rail to see what is waiting for it.
       </div>`
-    : html`<h1>Goods in</h1>
+    : html`<h1>Receiving</h1>
       <p class="sub">
-        Parts delivered to ${params.actor.displayName} that nobody has published
-        a verdict on yet.
+        Parts delivered to ${params.actor.displayName}, with the 8130 paperwork
+        that arrived in the crate. Check the document against the record issued
+        by the sending station. You have the option to publicly attest that the
+        record is valid.
       </p>
-
-      <div class="seam">
-        <strong>This list is not from the network.</strong> An 8130-3 names who
-        issued a release, not who received it, so this stands in for your
-        goods-in process.
-      </div>
 
       ${params.arrivals.length === 0
         ? html`<div class="card"><div class="empty">
@@ -900,28 +896,550 @@ export function inboxPage(params: {
                     >${a.partNumber}</a>
                   · s/n <span class="mono">${a.serialNumber}</span>
                 </div>
-                <form method="post" action="/accept" class="verdict-row">
-                  <input type="hidden" name="subjectUri" value="${a.subject.uri}">
-                  <input type="hidden" name="subjectCid" value="${a.subject.cid}">
-                  <input type="hidden" name="from" value="inbox">
-                  <select name="outcome" aria-label="Outcome">
-                    <option value="accepted">accepted</option>
-                    <option value="rejected">rejected</option>
-                    <option value="discrepancy">discrepancy</option>
-                  </select>
-                  <input type="text" name="note" placeholder="Stated reason (optional)">
-                  <button type="submit">Publish verdict</button>
-                </form>
-                <div class="meta">
-                  The verdict goes in <strong>your</strong> repository under your
-                  own key. ${a.issuerName} cannot delete it — only answer it.
+                <div class="checkrow">
+                  <a class="button"
+                    href="/inbox/scan?uri=${encodeURIComponent(a.subject.uri)}"
+                    >Review the paperwork</a>
                 </div>
               </article>`,
             )}
           </div>`}`
 
-  return layout('Goods in', body, params.mode, params.chrome)
+  return layout('Receiving', body, params.mode, params.chrome)
 }
+
+/**
+ * The result of checking a document that arrived with a part.
+ *
+ * The same pipeline and the same stage rows as the verify page, without the
+ * textarea. That absence is the point of the screen: a recipient holding a
+ * crate has the paperwork already, and making them paste a file they were
+ * handed is a step that exists in this application and in no warehouse.
+ *
+ * What is not skipped is the check. Every stage below ran against the live
+ * network — the issuer's DID resolved, their repository fetched, the commit
+ * signature verified against the key their DID document declares, and the
+ * document recomputed to the commitment in the record. A demonstration that
+ * drew a green tick without doing that would be demonstrating a green tick.
+ */
+/**
+ * Runs the check without leaving the page, so there is something to watch.
+ *
+ * The bug this fixes: submitting the form navigated, which meant the browser
+ * sat on a blank page for as long as the server took and the checks only
+ * appeared afterwards, on the result. The one moment a visitor is waiting was
+ * the one moment nothing was on screen.
+ *
+ * So the request is made in place and the checklist goes up immediately. The
+ * seven names are real and in the order the pipeline runs them; the ticks are
+ * paced by us, because the client cannot see which check the server is on and
+ * saying otherwise would be inventing a fact. What arrives at the end is the
+ * real report, with each stage's real result, and it replaces all of this.
+ *
+ * Deliberately waits for the later of the two: if the checks finish before the
+ * list does the visitor still sees it through, and if the network is slow the
+ * list finishes and holds. Without scripting the form submits and navigates,
+ * which is where this started and still works.
+ */
+const VERIFY_SCRIPT = `
+(function () {
+  var form = document.querySelector('[data-verify]')
+  if (!form || !window.fetch) return
+
+  var CHECKS = [
+    'Resolving the issuer&rsquo;s identity',
+    'Fetching the release from their repository',
+    'Verifying the signature against their declared key',
+    'Recomputing this document&rsquo;s commitment',
+    'Comparing the blocks published in the clear',
+    'Checking the serial against the part',
+    'Walking the history back'
+  ]
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault()
+
+    // Only the zone under the document changes. The heading, the component
+    // and the form itself stay exactly where the reader left them, which is
+    // what makes this read as something happening to the document in front of
+    // them rather than as a page swap.
+    var zone = document.querySelector('[data-zone]')
+    if (!zone) return
+    zone.innerHTML =
+      '<div class="checking"><h2 class="sect">Verifying</h2>' +
+      '<ol class="steps">' +
+      CHECKS.map(function (c) {
+        return '<li><span class="tick" aria-hidden="true"></span>' + c + '</li>'
+      }).join('') +
+      '</ol></div>'
+    zone.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+
+    var items = zone.querySelectorAll('.steps li')
+    var i = 0
+    var pacedDone = false
+    var markup = null
+
+    function finish() {
+      if (!pacedDone || markup === null) return
+      // Into the zone, not over the page. Everything above — the heading, the
+      // component, the document — is where the reader left it, and what the
+      // check produced arrives underneath. The page grows rather than being
+      // thrown away and rebuilt, so it can be scrolled back through.
+      zone.innerHTML = markup
+      // The document has been read by now and the decision is below it, so it
+      // folds out of the way. It is still there and still openable.
+      var sheet = document.querySelector('[data-sheet] details')
+      if (sheet) sheet.removeAttribute('open')
+      var head = zone.querySelector('.panel')
+      if (head) head.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+
+    function step() {
+      if (i >= items.length) { pacedDone = true; setTimeout(finish, 200); return }
+      items[i].className = 'done'
+      i++
+      setTimeout(step, i === 3 || i === 4 ? 560 : 340)
+    }
+    setTimeout(step, 200)
+
+    fetch('/inbox/check?fragment', { method: 'POST', body: new FormData(form) })
+      .then(function (r) { return r.text() })
+      .then(function (h) { markup = h; finish() })
+      .catch(function () {
+        markup = '<div class="empty">The check could not be run.</div>'
+        finish()
+      })
+  })
+})()
+`
+
+/**
+ * The icon set: Lucide, inlined.
+ *
+ * Lucide (ISC, lucide.dev) rather than anything drawn here. The first version
+ * of this was hand-written path data approximating the house style of a real
+ * set, which is exactly what it looked like — the geometry of an icon is the
+ * whole of it, and eyeballing a megaphone produces something that reads as a
+ * trumpet. These are the published paths, unmodified, at the size and stroke
+ * weight they were drawn for.
+ *
+ * Inlined rather than depended on. Six icons do not justify a package on the
+ * server, and a stylesheet that fetches an icon font is a network round trip
+ * for something that is four hundred bytes of markup.
+ */
+const ICONS: Record<string, string> = {
+  // circle-check
+  check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  // circle-x
+  cross: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+  // megaphone
+  megaphone:
+    '<path d="M11 6a13 13 0 0 0 8.4-2.8A1 1 0 0 1 21 4v12a1 1 0 0 1-1.6.8A13 13 0 0 0 11 14H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/>' +
+    '<path d="M6 14a12 12 0 0 0 2.4 7.2 2 2 0 0 0 3.2-2.4A8 8 0 0 1 10 14"/>' +
+    '<path d="M8 6v8"/>',
+  // file-text
+  document:
+    '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/>' +
+    '<path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  // package
+  part:
+    '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/>' +
+    '<path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/>',
+  // chevron-down
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+}
+
+function icon(name: string) {
+  return raw(
+    `<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+      `stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+      (ICONS[name] ?? '') +
+      `</svg>`,
+  )
+}
+
+/**
+ * A section of a page: named, collapsible, and stating its own condition.
+ *
+ * Every block on the receiving screen is one of these, which is the point.
+ * They were a mixture before — a heading with a card under it, a summary
+ * nobody would notice, a coloured heading with nothing to fold — so the page
+ * read as a pile of unrelated things rather than as a sequence of steps with
+ * states. A reader should be able to run an eye down the left edge and see
+ * what happened without opening anything.
+ *
+ * The state sits in the summary rather than inside, so it survives being
+ * closed. A section a reader has folded away should still be able to tell them
+ * it passed.
+ */
+function panel(params: {
+  title: string
+  /** Icon name, or none for a section that has no condition to report. */
+  mark?: string
+  /** Green, red, or the accent. Absent is neutral. */
+  tone?: 'ok' | 'no'
+  open?: boolean
+  body: unknown
+}) {
+  return html`<details class="panel ${params.tone ?? ''}" ${params.open ? 'open' : ''}>
+    <summary>
+      <span class="pmark">${params.mark ? icon(params.mark) : ''}</span>
+      <span class="ptitle">${params.title}</span>
+      <span class="pchev">${icon('chevron')}</span>
+    </summary>
+    <div class="pbody">${params.body}</div>
+  </details>`
+}
+
+/**
+ * A certificate drawn as the document it is, read-only.
+ *
+ * The composer's sheet without the inputs and the record page's sheet without
+ * the disclosure machinery — the same seventeen blocks in the same arrangement
+ * and the same stylesheet, so a form looks like itself wherever it appears.
+ *
+ * Every value is present because the only caller holds the paper. There is no
+ * withheld half to draw here; that distinction belongs to the record, not to
+ * the document somebody was handed.
+ */
+export function paperSheet(values: Record<string, unknown>) {
+  const cell = (field: string, span?: 2 | 4) => {
+    const spec = FIELDS.find((f) => f.name === field)
+    const v = values[field]
+    const shown = v === null || v === undefined || v === '' ? '—' : String(v)
+    const cls = ['blk', span === 2 ? 'span2' : span === 4 ? 'span4' : '']
+      .filter(Boolean)
+      .join(' ')
+    return html`<div class="${cls}">
+      <span class="n">${spec ? `Block ${spec.block}` : ''} · ${bareLabel(field)}</span>
+      <span class="v">${shown}</span>
+    </div>`
+  }
+
+  return html`<div class="sheet paper">
+    <div class="stamp"><span>SYNTHETIC<br>NOT AN AIRWORTHINESS RECORD</span></div>
+    <div class="head">
+      <div class="t1">${String(values.approvingAuthority ?? 'FAA/United States')}</div>
+      <div class="t2">AUTHORIZED RELEASE CERTIFICATE</div>
+      <div class="t1">FAA Form 8130-3 · AIRWORTHINESS APPROVAL TAG</div>
+    </div>
+    <div class="grid">
+      ${cell('formNumber', 2)} ${cell('workOrder', 2)}
+      ${cell('organizationName', 2)} ${cell('organizationAddress', 2)}
+      ${cell('item')} ${cell('description')} ${cell('partNumber')} ${cell('quantity')}
+      ${cell('serialNumber', 2)} ${cell('status', 2)}
+      ${cell('remarks', 4)}
+      ${cell('certifyingBlock', 2)} ${cell('approvalBasis', 2)}
+      ${cell('signerCert', 2)} ${cell('signerName', 2)}
+      ${cell('completedAt', 4)}
+    </div>
+  </div>`
+}
+
+/**
+ * Receiving a certificate: one page, three states.
+ *
+ * Received, checking, and the outcome are the same screen rather than three,
+ * because they are one act. The frame holds still — the way back, the heading,
+ * the component, the document — and only the block underneath changes. That is
+ * what makes the checks read as something happening to the document in front
+ * of you rather than as a different page that happens to mention it.
+ *
+ * They were separate before and the seams showed: a verdict arrived above the
+ * evidence for it, the document a reader had just been studying reappeared
+ * buried in the middle of the result, and the stage rows sat underneath the
+ * decision they were supposed to justify.
+ *
+ * The document folds away once there is a result. It is the subject of the
+ * page until the check runs and the outcome is the subject afterwards, so
+ * leaving seventeen blocks expanded between the reader and the thing they now
+ * have to decide would be keeping the wrong half open.
+ *
+ * Only the first two states are rendered here as such — the middle one is
+ * assembled in the browser, because it exists only while a request is in
+ * flight. Without scripting there are two states and a navigation between
+ * them, which is the same page either way.
+ */
+export function receivedBody(params: {
+  actor: Actor
+  arrival: Arrival
+  report?: VerificationReport
+  published?: string
+}) {
+  const a = params.arrival
+  const report = params.report
+  // The scanned paperwork, which the recipient holds in full. Rendering it is
+  // not a disclosure: the bundle came in the crate and the paper it was
+  // stapled to has all seventeen blocks printed on it.
+  const scanned = (a.bundle as { values?: Record<string, unknown> } | null)?.values ?? null
+  const settled = Boolean(report || params.published)
+
+  const sections = receivedSections(params)
+
+  return html`<p class="backlink"><a href="/inbox">&larr; Receiving</a></p>
+    <h1>Received 8130 Certificate</h1>
+    <p class="sub">
+      This is the received 8130-3 form, included in the component shipment. We
+      must verify the paper document matches what the issuer submitted.
+    </p>
+
+    ${panel({
+      title: 'The component',
+      mark: 'part',
+      open: true,
+      body: dataplate({
+        description: a.description,
+        partNumber: a.partNumber,
+        serialNumber: a.serialNumber,
+        href: postPath(a.subject.uri),
+      }),
+    })}
+
+    ${scanned
+      ? html`<div data-sheet>${panel({
+          title: 'Scanned 8130',
+          mark: 'document',
+          // The document is the subject until the check runs, and the outcome
+          // is afterwards, so it opens first and folds once there is a result.
+          open: !settled,
+          body: paperSheet(scanned),
+        })}</div>`
+      : html`<div class="card"><div class="empty">
+          No document was scanned with this shipment.
+        </div></div>`}
+
+    <div data-zone>${scanned ? sections : ''}</div>
+
+    ${scanned && !settled ? raw(`<script>${VERIFY_SCRIPT}</script>`) : ''}`
+}
+
+/**
+ * Everything below the document: the button, or what the check produced.
+ *
+ * Exported because the browser asks for exactly this and drops it in where the
+ * button was, so the page it is already showing grows rather than being thrown
+ * away and rebuilt. The full page renders the same sections in the same place,
+ * which is what a visitor without scripting gets after the form navigates.
+ */
+export function receivedSections(params: {
+  actor: Actor
+  arrival: Arrival
+  report?: VerificationReport
+  published?: string
+}) {
+  const a = params.arrival
+  const report = params.report
+  const settled = Boolean(report || params.published)
+  const verified = report ? report.verified : true
+
+  const byName = new Map((report?.stages ?? []).map((st) => [st.name, st]))
+
+  /*
+   * What this observer can say about a document that did not match.
+   *
+   * The nine public blocks are on the record in the clear, so a disagreement
+   * in one of them can be named exactly. The other eight exist on the record
+   * only underneath the commitment, so the same check can establish that the
+   * document is not what was published and cannot say which line is wrong —
+   * the root is one hash over all seventeen and it does not decompose.
+   */
+  const agree = byName.get('agree')
+  const named = (agree?.status === 'fail' ? (agree.data?.fields as string[]) : null) ?? []
+  const recordSide = (agree?.data?.record ?? {}) as Record<string, unknown>
+  const bundleSide = (agree?.data?.bundle ?? {}) as Record<string, unknown>
+
+  // The heading is what the page is about, and that does not change as the
+  // work proceeds. The outcome is a section of this page rather than a
+  // replacement for it, so it carries its own heading and its own colour.
+  const title = 'Received 8130 Certificate'
+  const tagline = html`This is the received 8130-3 form, included in the
+    component shipment. We must verify the paper document matches what the
+    issuer submitted.`
+
+  /* ------------------------------------------------ what to do about it */
+
+  const publishedBlock = html`<div class="outcome">
+    <p class="mono ref">${params.published}</p>
+    <p><a href="/">Back to the feed</a> to see the public acceptance.</p>
+  </div>`
+
+  const attestBlock = html`<div class="outcome">
+    <p class="caveat">
+      A verified document does not mean a verified component. This process
+      ensures the information on the form matches what the issuer released. We
+      must still perform all required inspections on the part itself.
+    </p>
+    <h2 class="sect">Optional: Issue Public Attestation</h2>
+    <p class="sub">
+      Only publishes that we received and successfully verified the issued
+      certificate. No additional proprietary details are provided. Builds the
+      public record of how much of this issuer&rsquo;s output has been
+      independently checked, which is what makes certificate fraud detectable.
+    </p>
+    <div class="choose">
+      <form method="post" action="/attest">
+        <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+        <input type="hidden" name="subjectCid" value="${a.subject.cid}">
+        <button type="submit">Publish attestation</button>
+      </form>
+      <form method="post" action="/inbox/clear">
+        <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+        <button type="submit" class="ghost">Accept without publishing</button>
+      </form>
+    </div>
+  </div>`
+
+  const mismatchBlock = html`<div class="outcome">
+    <div class="mismatch">
+      ${named.length > 0
+        ? html`<p>
+              The document disagrees with the published record on
+              ${named.length === 1 ? 'a block' : 'blocks'} the record carries in
+              the clear, so the difference can be shown:
+            </p>
+            <dl class="diff">
+              ${named.map(
+                (f) => html`<div>
+                  <dt>${fieldLabel(f)}</dt>
+                  <dd>
+                    <span class="was">${String(recordSide[f] ?? '—')}</span>
+                    <span class="sep">published</span>
+                  </dd>
+                  <dd>
+                    <span class="is">${String(bundleSide[f] ?? '—')}</span>
+                    <span class="sep">in the crate</span>
+                  </dd>
+                </div>`,
+              )}
+            </dl>`
+        : html`<p>
+              Verification identified a discrepancy between our form and the
+              issuer&rsquo;s published record. The discrepancy likely
+              originates in one of the non-public fields, but the cryptographic
+              process does not reveal any more details than that.
+            </p>
+            <ul class="withheld-list">
+              ${FIELDS.filter((f) => !f.public).map(
+                (f) => html`<li>Block ${f.block} · ${bareLabel(f.name)}</li>`,
+              )}
+            </ul>`}
+    </div>
+
+    <form method="post" action="/inbox/clear" class="checkrow">
+      <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+      <button type="submit" class="ghost">Mark as handled</button>
+      <span class="meta">Takes it off your list. Nothing is published either way.</span>
+    </form>
+  </div>`
+
+  /*
+   * Everything the check adds, as sections rather than as a new page.
+   *
+   * Returned on its own to the browser, which drops it in where the button
+   * was — so the heading, the component and the document stay put and the
+   * page grows downwards. A reader can scroll back through the whole thing
+   * afterwards and see what they did, which a page that replaced itself threw
+   * away every time.
+   */
+  const outcome = params.published
+    ? publishedBlock
+    : verified
+      ? attestBlock
+      : mismatchBlock
+
+  // Once the attestation is the news, the checks fold rather than vanish. A
+  // reader who wants to see what was verified before they published should
+  // not have to take the receipt's word for it.
+  const checks = report
+    ? panel({
+        title: 'Verification',
+        mark: verified ? 'check' : 'cross',
+        tone: verified ? 'ok' : 'no',
+        // Open only when something went wrong. A passing check has nothing in
+        // it a reader needs — the tick says it — and leaving seven green rows
+        // expanded pushes the decision they came for off the screen. A failing
+        // one is the evidence for what the outcome above it just claimed.
+        open: !verified,
+        body: html`<div class="stages">${report.stages.map(stageRow)}</div>`,
+      })
+    : ''
+
+  const sections = settled
+    ? html`${checks}
+      ${panel({
+        title: params.published
+          ? 'Attestation'
+          : verified
+            ? 'Certificate verified'
+            : 'Form does not match',
+        mark: params.published ? 'megaphone' : verified ? 'check' : 'cross',
+        tone: params.published ? undefined : verified ? 'ok' : 'no',
+        open: true,
+        body: html`<p class="sub">
+            ${params.published
+              ? html`Published to ${params.actor.displayName}&rsquo;s own
+                  repository, under their own key. ${a.issuerName} cannot
+                  remove it.`
+              : verified
+                ? html`The 8130 form we received matches what ${a.issuerName}
+                    submitted to the network when they released the part.`
+                : html`The 8130 form we received does not match what the issuer
+                    submitted to the network on release. We will need to
+                    contact them directly to resolve the discrepancy.`}
+          </p>
+          ${outcome}`,
+      })}`
+    : html`<form method="post" action="/inbox/check" class="startcheck" data-verify>
+        <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+        <button type="submit">Verify this document</button>
+      </form>`
+
+  return sections
+}
+
+/** Nothing was published, the crate is off the list, and that is the whole of it. */
+export function inboxDoneBody(params: { back: string }) {
+  return html`<div class="issued">
+    <h1>Handled</h1>
+    <p class="sub">
+      Off your list. Nothing was published — an absence on the network is not a
+      claim that anything was wrong, and most checks in a real supply chain
+      would never be announced.
+    </p>
+    <p><a href="${params.back}">Back to receiving</a></p>
+  </div>`
+}
+
+export function inboxScanPage(params: {
+  chrome?: Chrome
+  mode?: Mode
+  actor: Actor
+  arrival: Arrival
+}) {
+  return layout('Received certificate', receivedBody(params), params.mode, params.chrome)
+}
+
+export function inboxCheckPage(params: {
+  chrome?: Chrome
+  mode?: Mode
+  actor: Actor
+  arrival: Arrival
+  report?: VerificationReport
+  published?: string
+}) {
+  const verified = params.report ? params.report.verified : true
+  return layout(
+    params.published ? 'Published' : verified ? 'Certificate verified' : 'Form does not match',
+    receivedBody(params),
+    params.mode,
+    params.chrome,
+  )
+}
+
+/** The body of a check, without a page around it. */
+export const inboxCheckBody = receivedBody
+/** The received certificate, without a page around it. */
+export const inboxScanBody = receivedBody
 
 /* --------------------------------------------------------------- cabinet */
 
@@ -990,13 +1508,11 @@ export function feedPage(params: {
   const now = params.now ?? new Date()
   const me = params.chrome?.actors?.find((a) => a.handle === params.chrome?.current)
   const body = html`
-    <h1>Activity</h1>
+    <h1>Feed</h1>
     <p class="sub">
-      Every certificate published to the network, and everyone who has checked
-      one against the form that arrived with the part.
-      ${params.live
-        ? html`<span class="pulse" id="pulse">live</span>`
-        : ''}
+      Every released certificate is published to the network. Upon receipt,
+      receivers can opt-in to publish their verification of the returned
+      certificate.
     </p>
 
     ${!params.hasIndex
@@ -1046,7 +1562,6 @@ export function feedPage(params: {
  */
 (function () {
   var feed = document.getElementById('feed')
-  var pulse = document.getElementById('pulse')
   var IDLE_MS = 3 * 60 * 1000
   var es = null
   var lastSeen = null
@@ -1063,7 +1578,6 @@ export function feedPage(params: {
     node.classList.add('fresh')
     feed.insertBefore(node, feed.firstChild)
     while (feed.children.length > 60) feed.removeChild(feed.lastChild)
-    if (pulse) { pulse.classList.add('beat'); setTimeout(function(){ pulse.classList.remove('beat') }, 700) }
   }
 
   function connect() {
@@ -1076,15 +1590,23 @@ export function feedPage(params: {
       lastSeen = new Date().toISOString()
       render(m.data)
     })
-    es.onerror = function () { if (pulse) pulse.textContent = 'reconnecting' }
-    if (pulse) { pulse.textContent = 'live'; pulse.classList.remove('idle') }
+    // What is waiting on the dock. The rail is outside the feed, so this is
+    // the one thing on the page the stream updates that is not a card — and
+    // it is the point of the badge: a part arriving for you while you are
+    // reading should be visible without reloading to find out.
+    es.addEventListener('waiting', function (m) {
+      var b = document.getElementById('waiting')
+      if (!b) return
+      var n = parseInt(m.data, 10)
+      b.textContent = String(n)
+      b.hidden = !(n > 0)
+    })
   }
 
   function disconnect(why) {
     if (!es) return
     es.close()
     es = null
-    if (pulse) { pulse.textContent = why; pulse.classList.add('idle') }
   }
 
   function active() {
@@ -1109,7 +1631,7 @@ export function feedPage(params: {
 </script>`)}`
       : ''}
   `
-  return layout('Activity', body, params.mode ?? 'live', params.chrome)
+  return layout('Feed', body, params.mode ?? 'live', params.chrome)
 }
 
 /* ------------------------------------------------------------------ writing */
@@ -1207,14 +1729,23 @@ export function draftSheet(values: Record<string, unknown>) {
  * anybody but whoever holds the paper. Saying it in prose beforehand never
  * landed — showing which lines went dark does.
  */
-export function releasedSheet(values: Record<string, unknown>) {
+export function releasedSheet(
+  values: Record<string, unknown>,
+  /**
+   * `all` renders every block with its value, for a reader who holds the
+   * document rather than one looking at the record from outside. The two are
+   * the same list; what differs is whether the withheld half is legible, and
+   * that is exactly the distinction the page is about.
+   */
+  opts: { all?: boolean } = {},
+) {
   return html`<div class="reveal">
     ${FIELDS.map((f) => {
       const v = values[f.name]
       const shown = v === null || v === undefined || v === '' ? '—' : String(v)
       return html`<div class="rev ${f.public ? 'pub' : 'priv'}">
         <span class="n">Block ${f.block} · ${bareLabel(f.name)}</span>
-        <span class="v">${f.public ? shown : 'withheld'}</span>
+        <span class="v">${f.public || opts.all ? shown : 'withheld'}</span>
       </div>`
     })}
   </div>`

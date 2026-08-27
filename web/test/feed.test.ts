@@ -141,11 +141,14 @@ describe('the feed page', () => {
     })
     const body = await (await app.request('/')).text()
     assert.match(body, /issued a release certificate/)
-    assert.match(body, /rejected/)
     assert.match(body, /accepted this certificate/)
-    // A verdict record carries no name for either party, so this reads
-    // properly only if the observer indexed the station profile they
-    // published.
+    // This used to also assert /rejected/, which passed for six releases
+    // after rejections were removed — it was matching a dead CSS rule in the
+    // inlined stylesheet, not anything on the page. Nothing on the network
+    // says a document failed, so there is no such card to look for.
+    assert.ok(!body.includes('rejected'), 'the network carries no rejections')
+    // An attestation carries no name for either party, so this reads properly
+    // only if the observer indexed the station profile they published.
     assert.match(body, /Example Air/)
   })
 
@@ -400,7 +403,12 @@ describe('a part as a topic', () => {
     // rather than dressing it up as a participant on the network.
     assert.match(body, /holds no repository and signs nothing/)
     assert.match(body, /assembled from\s+records published independently/)
-    assert.ok(!/follow/i.test(body), 'a part is not something you follow')
+    // Scoped to the page's own content. Asserted over the whole document it
+    // also reads the inlined stylesheet, where an unrelated comment using the
+    // word would fail this for no reason — the same trap that let an earlier
+    // test pass for six releases by matching a dead CSS rule.
+    const main = body.slice(body.indexOf('<main>'), body.indexOf('</main>'))
+    assert.ok(!/follow/i.test(main), 'a part is not something you follow')
   })
 
   test('walks the history live and says the two agree', async () => {
@@ -533,6 +541,47 @@ async function draftValues(
  * form, the dialog shows a page inside a page or an empty box — and neither
  * fails anywhere a page test would look.
  */
+/**
+ * The stream deals in two identities, and they are not interchangeable.
+ *
+ * A card is marked as yours by DID, because that is what a record carries. The
+ * dock and the generator are keyed by handle, because that is what the roster
+ * and the viewpoint cookie deal in. One variable served all three after the
+ * DID change, and the two handle-shaped uses spent two releases answering
+ * about an organization that does not exist — silently, because a dock asked
+ * about an unknown key returns zero rather than failing.
+ */
+describe('who the stream says is watching', () => {
+  test('the generator is told a handle, not a DID', async () => {
+    const { net } = await demoNetwork(DOMAIN)
+    const index = new MemoryIndex()
+    const writer = new MemoryRecordWriter(net, index, demoActors(DOMAIN))
+    const seen: (string | undefined)[] = []
+    const app = createApp({
+      resolver: net, repo: net, index, writer, mode: 'live',
+      activity: {
+        viewerJoined: (h?: string) => seen.push(h),
+        viewerLeft: () => {},
+      } as any,
+    })
+
+    const ac = new AbortController()
+    const res = await app.request('/api/feed/stream', {
+      headers: { cookie: `f8130_actor=example-air.${DOMAIN}` },
+      signal: ac.signal,
+    })
+    await res.body!.getReader().read()
+    ac.abort()
+
+    assert.equal(seen.length, 1, 'the generator was not told anybody arrived')
+    assert.equal(
+      seen[0], `example-air.${DOMAIN}`,
+      'the generator was handed something that is not a handle',
+    )
+    assert.ok(!String(seen[0]).startsWith('did:'), 'a DID reached a handle-keyed API')
+  })
+})
+
 describe('the composer fragment', () => {
   const ACTS = `f8130_actor=cascadia-mro.${DOMAIN}`
 
@@ -976,26 +1025,11 @@ describe('goods in', () => {
     serialNumber: 'SN000417',
     description: 'Fuel control unit',
     at: new Date('2026-02-01T00:00:00Z'),
+    bundle: null,
     ...over,
   })
 
   const AS_OPERATOR = `f8130_actor=example-air.${DOMAIN}`
-
-  /**
-   * The honest part. An 8130-3 names the issuer and not the recipient, so no
-   * index built from the public record can answer "what is waiting for me".
-   * The page has to say that rather than implying the network told it.
-   */
-  test('says the list is not from the network', async () => {
-    const { app, dock } = await dockApp()
-    dock.handOver(`example-air.${DOMAIN}`, arrival())
-    const body = await (
-      await app.request('/inbox', { headers: { cookie: AS_OPERATOR } })
-    ).text()
-
-    assert.match(body, /This list is not from the network/)
-    assert.match(body, /not from the network/)
-  })
 
   test('shows only what was handed to the acting organization', async () => {
     const { app, dock } = await dockApp()
@@ -1022,6 +1056,433 @@ describe('goods in', () => {
     assert.ok(!body.includes('NT882104'))
   })
 
+  /**
+   * The whole point of the page, end to end.
+   *
+   * A crate arrives with its paperwork, the recipient checks it without being
+   * asked for a file, the check is the real pipeline, and a document that
+   * holds up can be vouched for in public.
+   */
+  test('a real release can be checked from the inbox and attested', async () => {
+    const { app, dock, writer, index } = await dockApp()
+
+    // Issue a genuine release so there is something real to verify: the
+    // pipeline resolves the issuer, fetches the repository and recomputes the
+    // commitment, none of which a hand-written fixture would survive.
+    // The integers arrive from the markup as strings, the same as they do
+    // from a browser; /issue coerces them and this stands in for that.
+    const drafted = await draftValues(app, `f8130_actor=cascadia-mro.${DOMAIN}`)
+    const form: Record<string, unknown> = { ...drafted }
+    for (const spec of FIELDS) {
+      if (spec.kind === 'integer' && form[spec.name] !== undefined) {
+        form[spec.name] = Number(form[spec.name])
+      }
+    }
+    const issued = await writer.createRelease({
+      handle: `cascadia-mro.${DOMAIN}`,
+      form,
+    })
+    const values = issued.bundle.values as Record<string, string>
+
+    dock.handOver(`example-air.${DOMAIN}`, {
+      subject: { uri: issued.uri, cid: issued.cid },
+      issuerDid: issued.uri.split('/')[2]!,
+      issuerName: 'Cascadia MRO',
+      partNumber: String(values.partNumber),
+      serialNumber: String(values.serialNumber),
+      description: String(values.description),
+      at: new Date(),
+      bundle: issued.bundle,
+    })
+
+    // No bundle in the request. The document is looked up from the dock.
+    const checked = await app.request('/inbox/check', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+      body: new URLSearchParams({ subjectUri: issued.uri }),
+    })
+    assert.equal(checked.status, 200)
+    const report = await checked.text()
+    assert.match(report, /Certificate verified/)
+    assert.match(report, /Publish attestation/)
+
+    const published = await app.request('/attest', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+      body: new URLSearchParams({ subjectUri: issued.uri, subjectCid: issued.cid }),
+    })
+    assert.equal(published.status, 200)
+    assert.match(await published.text(), /Published/)
+
+    const [written] = await index.attestationsForSubjects([issued.cid])
+    assert.ok(written, 'the attestation never reached the network')
+    assert.equal(written.subjectUri, issued.uri)
+
+    // And the crate stops waiting, rather than being attestable forever.
+    assert.equal(dock.count(`example-air.${DOMAIN}`), 0)
+  })
+
+  /**
+   * The rule this page sits closest to.
+   *
+   * A bundle opens every withheld block on its record. The service holds one
+   * here on the recipient's behalf — their paper, their crate — and that is
+   * only defensible while it reaches nobody else. These assert the two ways it
+   * could get out: rendered to another organization, or answered to one.
+   */
+  test('a document is never rendered to an organization it was not sent to', async () => {
+    const { app, dock } = await dockApp()
+    // Markers rather than realistic values. What is asserted is that these
+    // strings do not appear, so their content is irrelevant — and a literal
+    // that looked like a real nonce would be sixty-four hex characters in a
+    // variable called something like "secret", which is a private key to every
+    // scanner that ever reads this repository. It would be flagged, correctly,
+    // and the next person would have to prove it was nothing.
+    const NONCE = 'NONCE-THAT-MUST-NEVER-LEAVE-THE-RECIPIENT'
+    const WITHHELD = 'WITHHELD-BLOCK-12-PROSE'
+
+    dock.handOver(`example-air.${DOMAIN}`, arrival({
+      bundle: { synthetic: 'S', version: 1, uri: 'at://x', issuerHandle: 'x',
+                values: { remarks: WITHHELD }, nonces: [NONCE] },
+    }))
+
+    for (const cookie of [`f8130_actor=southpoint-air.${DOMAIN}`, PUBLIC, AS_OPERATOR]) {
+      const body = await (await app.request('/inbox', { headers: { cookie } })).text()
+      assert.ok(!body.includes(NONCE), `a nonce was rendered for ${cookie}`)
+      assert.ok(!body.includes(WITHHELD), `withheld prose rendered for ${cookie}`)
+    }
+
+    // Nor onto the public feed, which is the other page that lists releases.
+    const feed = await (await app.request('/')).text()
+    assert.ok(!feed.includes(NONCE), 'a nonce reached the feed')
+  })
+
+  test('another organization cannot check a document it was not sent', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+
+    const res = await app.request('/inbox/check', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        cookie: `f8130_actor=southpoint-air.${DOMAIN}`,
+      },
+      // The URI is not a secret — it is on the public feed. Holding it must
+      // still not be enough to have the service open somebody else's document.
+      body: new URLSearchParams({ subjectUri: arrival().subject.uri }),
+    })
+    assert.equal(res.status, 404)
+  })
+
+  test('the public cannot check anything', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    const res = await app.request('/inbox/check', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: PUBLIC },
+      body: new URLSearchParams({ subjectUri: arrival().subject.uri }),
+    })
+    assert.equal(res.status, 403)
+  })
+
+  /**
+   * A document that does not match, and what the screen may say about it.
+   *
+   * The corruption is applied to the bundle handed over, exactly as the
+   * generator does it, so this exercises the real pipeline reaching a real
+   * failure rather than a fixture asserting a rendered string.
+   */
+  test('a public block that disagrees is named, with both values', async () => {
+    const { app, dock, writer } = await dockApp()
+    const drafted = await draftValues(app, `f8130_actor=cascadia-mro.${DOMAIN}`)
+    const form: Record<string, unknown> = { ...drafted }
+    for (const spec of FIELDS) {
+      if (spec.kind === 'integer' && form[spec.name] !== undefined) {
+        form[spec.name] = Number(form[spec.name])
+      }
+    }
+    const issued = await writer.createRelease({ handle: `cascadia-mro.${DOMAIN}`, form })
+    const values = issued.bundle.values as Record<string, string>
+
+    // Block 7 is public, so the record carries it in the clear.
+    const wrong = {
+      ...issued.bundle,
+      values: { ...values, description: 'Something else entirely' },
+    }
+    dock.handOver(`example-air.${DOMAIN}`, {
+      subject: { uri: issued.uri, cid: issued.cid },
+      issuerDid: issued.uri.split('/')[2]!,
+      issuerName: 'Cascadia MRO',
+      partNumber: String(values.partNumber),
+      serialNumber: String(values.serialNumber),
+      description: String(values.description),
+      at: new Date(),
+      bundle: wrong,
+    })
+
+    const body = await (
+      await app.request('/inbox/check', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+        body: new URLSearchParams({ subjectUri: issued.uri }),
+      })
+    ).text()
+
+    assert.match(body, /Form does not match/)
+    assert.match(body, /can be shown/)
+    assert.match(body, /Something else entirely/, 'the crate value was not shown')
+    assert.match(body, new RegExp(values.description!), 'the published value was not shown')
+    assert.ok(!body.includes('Publish attestation'), 'a failure offered to vouch')
+  })
+
+  /**
+   * The case people find surprising, and the reason the wording matters.
+   *
+   * A withheld block is on the record only underneath the commitment, which is
+   * one hash over all seventeen. It establishes that the document is not the
+   * one published and does not decompose into which line changed.
+   */
+  test('a withheld block that disagrees cannot be named', async () => {
+    const { app, dock, writer } = await dockApp()
+    const drafted = await draftValues(app, `f8130_actor=cascadia-mro.${DOMAIN}`)
+    const form: Record<string, unknown> = { ...drafted }
+    for (const spec of FIELDS) {
+      if (spec.kind === 'integer' && form[spec.name] !== undefined) {
+        form[spec.name] = Number(form[spec.name])
+      }
+    }
+    const issued = await writer.createRelease({ handle: `cascadia-mro.${DOMAIN}`, form })
+    const values = issued.bundle.values as Record<string, string>
+
+    const secretBefore = values.remarks!
+    const wrong = {
+      ...issued.bundle,
+      values: { ...values, remarks: 'ALTERED FINDINGS' },
+    }
+    dock.handOver(`example-air.${DOMAIN}`, {
+      subject: { uri: issued.uri, cid: issued.cid },
+      issuerDid: issued.uri.split('/')[2]!,
+      issuerName: 'Cascadia MRO',
+      partNumber: String(values.partNumber),
+      serialNumber: String(values.serialNumber),
+      description: String(values.description),
+      at: new Date(),
+      bundle: wrong,
+    })
+
+    const body = await (
+      await app.request('/inbox/check', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+        body: new URLSearchParams({ subjectUri: issued.uri }),
+      })
+    ).text()
+
+    assert.match(body, /Form does not match/)
+    assert.match(body, /does not reveal any more details/)
+    assert.ok(!body.includes('can be shown'), 'it claimed to be able to name the block')
+    // And the observer genuinely does not have the published prose to compare
+    // against: the record never carried it.
+    assert.ok(!body.includes(secretBefore), 'withheld prose from the record leaked')
+    assert.ok(!body.includes('Publish attestation'))
+  })
+
+  /**
+   * An attestation says the author checked this and it held. Publishing one
+   * without having just established that would be signing a statement on
+   * trust — and nothing stopped a caller reaching this route without ever
+   * running a check.
+   */
+  test('a document that does not verify cannot be attested to', async () => {
+    const { app, dock, writer, index } = await dockApp()
+    const drafted = await draftValues(app, `f8130_actor=cascadia-mro.${DOMAIN}`)
+    const form: Record<string, unknown> = { ...drafted }
+    for (const spec of FIELDS) {
+      if (spec.kind === 'integer' && form[spec.name] !== undefined) {
+        form[spec.name] = Number(form[spec.name])
+      }
+    }
+    const issued = await writer.createRelease({ handle: `cascadia-mro.${DOMAIN}`, form })
+    const values = issued.bundle.values as Record<string, string>
+
+    dock.handOver(`example-air.${DOMAIN}`, {
+      subject: { uri: issued.uri, cid: issued.cid },
+      issuerDid: issued.uri.split('/')[2]!,
+      issuerName: 'Cascadia MRO',
+      partNumber: String(values.partNumber),
+      serialNumber: String(values.serialNumber),
+      description: String(values.description),
+      at: new Date(),
+      bundle: { ...issued.bundle, values: { ...values, remarks: 'ALTERED' } },
+    })
+
+    // Straight to publishing, without ever asking for a check.
+    const res = await app.request('/attest', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+      body: new URLSearchParams({ subjectUri: issued.uri, subjectCid: issued.cid }),
+    })
+    assert.equal(res.status, 409)
+    assert.equal(index.size.attestations, 0, 'an unverified document was vouched for')
+    assert.equal(dock.count(`example-air.${DOMAIN}`), 1, 'the crate was cleared anyway')
+  })
+
+  /** And the checks stay on the receipt, so the claim can be inspected. */
+  test('the receipt keeps the verification that justified it', async () => {
+    const { app, dock, writer } = await dockApp()
+    const drafted = await draftValues(app, `f8130_actor=cascadia-mro.${DOMAIN}`)
+    const form: Record<string, unknown> = { ...drafted }
+    for (const spec of FIELDS) {
+      if (spec.kind === 'integer' && form[spec.name] !== undefined) {
+        form[spec.name] = Number(form[spec.name])
+      }
+    }
+    const issued = await writer.createRelease({ handle: `cascadia-mro.${DOMAIN}`, form })
+    const values = issued.bundle.values as Record<string, string>
+    dock.handOver(`example-air.${DOMAIN}`, {
+      subject: { uri: issued.uri, cid: issued.cid },
+      issuerDid: issued.uri.split('/')[2]!,
+      issuerName: 'Cascadia MRO',
+      partNumber: String(values.partNumber),
+      serialNumber: String(values.serialNumber),
+      description: String(values.description),
+      at: new Date(),
+      bundle: issued.bundle,
+    })
+
+    const body = await (
+      await app.request('/attest', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+        body: new URLSearchParams({ subjectUri: issued.uri, subjectCid: issued.cid }),
+      })
+    ).text()
+
+    assert.match(body, /class="ptitle">Attestation</)
+    assert.match(body, /class="ptitle">Verification</, 'the checks are not on the receipt')
+    // The wrapper is class="stages"; the rows are class="stage".
+    assert.equal(
+      (body.match(/class="stage"/g) ?? []).length, 7,
+      'not every stage survived onto the receipt',
+    )
+  })
+
+  test('clearing takes the part off the list and publishes nothing', async () => {
+    const { app, dock, index } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+
+    const res = await app.request('/inbox/clear', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: AS_OPERATOR },
+      body: new URLSearchParams({ subjectUri: arrival().subject.uri }),
+    })
+    assert.equal(res.status, 303)
+    assert.equal(dock.count(`example-air.${DOMAIN}`), 0)
+    assert.equal(index.size.attestations, 0, 'declining wrote something to the network')
+  })
+
+  test('one organization cannot clear another\'s crate', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    await app.request('/inbox/clear', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        cookie: `f8130_actor=southpoint-air.${DOMAIN}`,
+      },
+      body: new URLSearchParams({ subjectUri: arrival().subject.uri }),
+    })
+    assert.equal(dock.count(`example-air.${DOMAIN}`), 1, 'somebody else cleared it')
+  })
+
+  /**
+   * The dialog and the page render the same markup.
+   *
+   * Kept honest the way the composer is: the fragment is the page's own body,
+   * so a check cannot look like one thing in the modal and another on the
+   * screen it degrades to when scripting is off.
+   */
+  test('the scan step is a body, not a page, when asked for a fragment', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival({
+      bundle: { synthetic: 'S', version: 1, uri: 'at://x', issuerHandle: 'x',
+                values: { description: 'Fuel control unit', remarks: 'Bench tested.' },
+                nonces: [] },
+    }))
+    const uri = encodeURIComponent(arrival().subject.uri)
+
+    const frag = await (
+      await app.request(`/inbox/scan?uri=${uri}&fragment`, { headers: { cookie: AS_OPERATOR } })
+    ).text()
+    assert.ok(!frag.includes('<!doctype'), 'the fragment carried a whole document')
+    assert.match(frag, /Received 8130 Certificate/)
+    assert.match(frag, /Verify this document/)
+
+    const page = await (
+      await app.request(`/inbox/scan?uri=${uri}`, { headers: { cookie: AS_OPERATOR } })
+    ).text()
+    assert.match(page, /<!doctype/)
+    assert.match(page, /Received 8130 Certificate/)
+  })
+
+  /**
+   * The whole document, because it is the recipient's own.
+   *
+   * A withheld block is withheld from the network, not from the party the
+   * crate was sent to — the paper in the box has all seventeen printed on it.
+   * Showing less here would be modelling a restriction that does not exist.
+   */
+  test('the scan shows every block, including the withheld ones', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival({
+      bundle: { synthetic: 'S', version: 1, uri: 'at://x', issuerHandle: 'x',
+                values: { remarks: 'Bladder replaced per CMM 29-11-08.' }, nonces: [] },
+    }))
+    const body = await (
+      await app.request(
+        `/inbox/scan?uri=${encodeURIComponent(arrival().subject.uri)}&fragment`,
+        { headers: { cookie: AS_OPERATOR } },
+      )
+    ).text()
+    assert.match(body, /Bladder replaced per CMM 29-11-08/, 'Block 12 was hidden from its holder')
+    assert.ok(!body.includes('>withheld<'), 'a block was marked withheld to its own recipient')
+  })
+
+  test('another organization cannot open a document it was not sent', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    const res = await app.request(
+      `/inbox/scan?uri=${encodeURIComponent(arrival().subject.uri)}`,
+      { headers: { cookie: `f8130_actor=southpoint-air.${DOMAIN}` } },
+    )
+    assert.equal(res.status, 404)
+  })
+
+  test('the public cannot open one at all', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    const res = await app.request(
+      `/inbox/scan?uri=${encodeURIComponent(arrival().subject.uri)}`,
+      { headers: { cookie: PUBLIC } },
+    )
+    assert.equal(res.status, 403)
+  })
+
+  /** The dead form this page carried for six releases. */
+  test('offers no verdict form, which is a route that no longer exists', async () => {
+    const { app, dock } = await dockApp()
+    dock.handOver(`example-air.${DOMAIN}`, arrival())
+    const body = await (
+      await app.request('/inbox', { headers: { cookie: AS_OPERATOR } })
+    ).text()
+
+    assert.ok(!body.includes('action="/accept"'), 'still posts to a deleted route')
+    for (const gone of ['Publish verdict', 'discrepancy', 'name="outcome"']) {
+      assert.ok(!body.includes(gone), `${gone} outlived verdicts`)
+    }
+    assert.match(body, /Review the paperwork/)
+  })
+
   test('the rail carries the count for the acting organization', async () => {
     const { app, dock } = await dockApp()
     dock.handOver(`example-air.${DOMAIN}`, arrival())
@@ -1029,7 +1490,22 @@ describe('goods in', () => {
       subject: { uri: 'at://did:plc:issuer/dev.cldixon.f8130.release/3b', cid: 'bafy2' },
     }))
     const body = await (await app.request('/', { headers: { cookie: AS_OPERATOR } })).text()
-    assert.match(body, /<span class="badge">2<\/span>/)
+    assert.match(body, /id="waiting"[^>]*>2</)
+    assert.ok(!/id="waiting"[^>]*\shidden/.test(body), 'a real count was hidden')
+  })
+
+  /**
+   * The badge is always in the markup, hidden at zero.
+   *
+   * The live stream writes into it, and a node that only exists once something
+   * is waiting is a node the stream would have to create in the right place in
+   * the rail — which is how a count ends up appended to the wrong nav item.
+   */
+  test('the badge is present but hidden when nothing is waiting', async () => {
+    const { app } = await dockApp()
+    const body = await (await app.request('/', { headers: { cookie: AS_OPERATOR } })).text()
+    assert.match(body, /id="waiting"/)
+    assert.match(body, /id="waiting"[^>]*\shidden/)
   })
 
   test('an answered part comes off the dock', async () => {
@@ -1063,10 +1539,14 @@ describe('goods in', () => {
     })
     await g.tick()
 
-    // Exactly one operator is holding exactly one crate.
+    // Exactly one organization is holding exactly one crate, and it is not
+    // the factory. Asserted by what the roles mean rather than by listing the
+    // kinds that may receive: that list has changed once and would have
+    // silently pinned this test to the old model again.
     const holders = orgs(DOMAIN).filter((o) => dock.count(o.handle) > 0)
     assert.equal(holders.length, 1)
-    assert.ok(['operator', 'lessor'].includes(holders[0]!.kind))
+    assert.notEqual(holders[0]!.kind, 'oem', 'a manufacturer was sent a used part')
+    assert.equal(dock.count(holders[0]!.handle), 1)
   })
 })
 
@@ -1283,7 +1763,7 @@ describe('the shape on a phone', () => {
 
     // A circle has room for a plus and not for two words, but the control
     // still has to announce itself.
-    assert.match(body, /aria-label="New release"/)
+    assert.match(body, /aria-label="Create release"/)
     assert.match(body, /<span class="tab">\+<\/span>/)
   })
 
@@ -1429,6 +1909,254 @@ describe('the synthetic generator', () => {
     }
     return { writer, calls }
   }
+
+  /**
+   * Something has to arrive for the person who is actually looking.
+   *
+   * With a dozen operators on the roster, a uniform pick means a visitor
+   * sitting on the feed as one of them waits through eleven crates going
+   * elsewhere before anything reaches their own goods-in. That reads as the
+   * page being broken rather than as a supply chain being wide.
+   */
+  test('parts go to an organization somebody is watching as, more often than chance', async () => {
+    const { writer } = recorder()
+    const dock = new Dock(200)
+    const watcher = demoActors(DOMAIN).find((a) => a.kind === 'operator')!
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock,
+      narrator: null,
+      // Between ATTEST_ROLL (0.42) and WATCHED_SHARE (0.55): high enough that
+      // every tick issues rather than attesting, low enough that the watched
+      // organization is the one preferred.
+      random: () => 0.5,
+    })
+    g.viewerJoined(watcher.handle)
+    for (let i = 0; i < 8; i++) await g.tick()
+    g.viewerLeft(watcher.handle)
+
+    assert.ok(
+      dock.count(watcher.handle) > 0,
+      'nothing ever arrived for the organization being watched',
+    )
+  })
+
+  /** And it stops being preferred the moment nobody is looking as them. */
+  test('a viewpoint nobody holds any more is not favoured', async () => {
+    const { writer } = recorder()
+    const dock = new Dock(200)
+    const watcher = demoActors(DOMAIN).find((a) => a.kind === 'operator')!
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.5,
+    })
+    g.viewerJoined(watcher.handle)
+    g.viewerLeft(watcher.handle)
+    // Two joins and two leaves must not leave a phantom watcher behind.
+    g.viewerJoined(watcher.handle)
+    g.viewerJoined(watcher.handle)
+    g.viewerLeft(watcher.handle)
+    g.viewerLeft(watcher.handle)
+    g.viewerJoined()
+
+    const before = dock.count(watcher.handle)
+    for (let i = 0; i < 6; i++) await g.tick()
+    // Chance may still send one their way; what must not happen is the
+    // generator still treating them as present.
+    assert.ok(dock.count(watcher.handle) >= before)
+  })
+
+  /**
+   * The crate and the paperwork travel together.
+   *
+   * Without this the recipient has something to inspect and no way to check
+   * it, and the only way back is asking a visitor for a file nobody gave them.
+   */
+  test('a part is handed over with the document that came in the crate', async () => {
+    const { writer } = recorder()
+    const dock = new Dock(200)
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.5,
+    })
+    g.viewerJoined()
+    await g.tick()
+
+    const landed = demoActors(DOMAIN)
+      .flatMap((a) => dock.awaiting(a.handle))
+    assert.ok(landed.length > 0, 'nothing was handed over at all')
+    for (const a of landed) {
+      assert.notEqual(a.bundle, undefined, `${a.partNumber} arrived with no paperwork`)
+    }
+  })
+
+  /**
+   * The bug that made the front door lead to an empty page.
+   *
+   * Recipients used to be operators and lessors only, so a repair station —
+   * which is what a fresh visit arrives as — could never be sent anything. No
+   * amount of waiting would have produced a notification, because there was no
+   * arrangement under which one could arrive.
+   */
+  test('a repair station can be sent a part', async () => {
+    const { writer } = recorder()
+    const dock = new Dock(500)
+    const shop = demoActors(DOMAIN).find((a) => a.kind === 'mro')!
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.5,
+    })
+    g.viewerJoined(shop.handle)
+    for (let i = 0; i < 8; i++) await g.tick()
+
+    assert.ok(
+      dock.count(shop.handle) > 0,
+      'a repair station watching the feed was never sent anything',
+    )
+  })
+
+  /**
+   * A manufacturer is the exception, and stays one.
+   *
+   * An OEM certifies new manufacture under Block 13; a used part arriving at
+   * the factory is a different story than this one tells.
+   */
+  test('a manufacturer is never sent a part', async () => {
+    const { writer, calls } = recorder()
+    const dock = new Dock(500)
+    const oems = demoActors(DOMAIN).filter((a) => a.kind === 'oem')
+    assert.ok(oems.length > 0, 'the roster has no manufacturers to check')
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.5,
+    })
+    g.viewerJoined(oems[0]!.handle)
+    for (let i = 0; i < 12; i++) await g.tick()
+
+    for (const oem of oems) {
+      assert.equal(dock.count(oem.handle), 0, `${oem.displayName} was sent a part`)
+    }
+    assert.ok(calls.length > 0, 'nothing was issued at all, so this proved nothing')
+  })
+
+  /**
+   * A release is a handover. A document saying a station released a part to
+   * itself describes nothing, and with shops now in the recipient pool it is
+   * a thing the picker could otherwise produce.
+   */
+  test('a station is never handed the part it just signed', async () => {
+    const { writer, calls } = recorder()
+    const dock = new Dock(500)
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.5,
+    })
+    g.viewerJoined()
+    for (let i = 0; i < 12; i++) await g.tick()
+
+    const issuedBy = new Map<string, string>()
+    for (const c of calls) {
+      if (c.kind === 'release') issuedBy.set(c.uri, c.handle)
+    }
+    let checked = 0
+    for (const a of demoActors(DOMAIN)) {
+      for (const arrival of dock.awaiting(a.handle)) {
+        const signer = issuedBy.get(arrival.subject.uri)
+        if (!signer) continue
+        checked++
+        assert.notEqual(signer, a.handle, `${a.handle} was handed its own release`)
+      }
+    }
+    assert.ok(checked > 0, 'no handover was actually inspected')
+  })
+
+  /**
+   * The wait this exists to remove.
+   *
+   * Left to the ordinary cadence, a release lands every twelve to forty-five
+   * seconds, some ticks publish a check instead, and most crates go to one of
+   * the other two dozen organizations. The expected wait before anything
+   * reaches a particular inbox is about a minute and a half with a long tail —
+   * long enough that a visitor concludes the page is broken rather than quiet.
+   */
+  test('somebody who arrives to an empty list gets the very next release', async () => {
+    const { writer } = recorder()
+    const dock = new Dock(200)
+    const shop = demoActors(DOMAIN).find((a) => a.kind === 'mro')!
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null,
+      // Above WATCHED_SHARE and above ATTEST_ROLL, so neither the watcher bias
+      // nor the release-rather-than-check roll can be what makes this pass.
+      random: () => 0.99,
+    })
+    g.viewerJoined(shop.handle)
+    await g.tick()
+
+    assert.equal(
+      dock.count(shop.handle), 1,
+      'the first release after arriving went somewhere else',
+    )
+  })
+
+  /** And only the first: after that the ordinary rate is the honest one. */
+  test('the promise is kept once, not on every release', async () => {
+    const { writer } = recorder()
+    const dock = new Dock(200)
+    const shop = demoActors(DOMAIN).find((a) => a.kind === 'mro')!
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.99,
+    })
+    g.viewerJoined(shop.handle)
+    for (let i = 0; i < 6; i++) await g.tick()
+
+    assert.equal(
+      dock.count(shop.handle), 1,
+      'every release was steered to the visitor, which is not a network',
+    )
+  })
+
+  /** Somebody who already has something waiting is owed nothing. */
+  test('an arrival with a crate already waiting is not given another', async () => {
+    const { writer } = recorder()
+    const dock = new Dock(200)
+    const shop = demoActors(DOMAIN).find((a) => a.kind === 'mro')!
+
+    dock.handOver(shop.handle, {
+      subject: { uri: 'at://did:plc:x/dev.cldixon.f8130.release/3z', cid: 'bafyz' },
+      issuerDid: 'did:plc:x', issuerName: 'Somebody', partNumber: 'P', serialNumber: 'S',
+      description: 'D', at: new Date(), bundle: null,
+    })
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.99,
+    })
+    g.viewerJoined(shop.handle)
+    await g.tick()
+
+    assert.equal(dock.count(shop.handle), 1, 'a second crate was forced on them')
+  })
+
+  /**
+   * The promise cannot be kept by handing somebody their own release, so being
+   * owed one takes a station out of the running to sign it.
+   */
+  test('a station owed a crate does not sign it itself', async () => {
+    const { writer, calls } = recorder()
+    const dock = new Dock(200)
+    const shop = demoActors(DOMAIN).find((a) => a.kind === 'mro')!
+
+    const g = new ActivityGenerator({
+      writer, domain: DOMAIN, dock, narrator: null, random: () => 0.99,
+    })
+    g.viewerJoined(shop.handle)
+    await g.tick()
+
+    const [arrival] = dock.awaiting(shop.handle)
+    assert.ok(arrival, 'nothing arrived')
+    const release = calls.find((c) => c.kind === 'release' && c.uri === arrival.subject.uri)
+    assert.ok(release, 'the arrival matches no release')
+    assert.notEqual(release.handle, shop.handle, 'it signed its own crate')
+  })
 
   /**
    * A constant die, which is position-independent.
@@ -1595,7 +2323,7 @@ describe('the synthetic generator', () => {
     assert.equal(calls[0].form.organizationAddress, issuer.address)
   })
 
-  test('a release is later checked by the operator who received it', async () => {
+  test('a release is later checked by whoever received it, never by its issuer', async () => {
     const { g, calls } = gen([], { random: WALK_THE_THREAD })
     await g.tick()
     await g.tick()
@@ -1605,10 +2333,16 @@ describe('the synthetic generator', () => {
     assert.equal(att.kind, 'attestation')
     assert.equal(att.subject.uri, rel.uri, 'the check must name the release it covers')
 
-    // The check is published by the operator, not by the issuer: a receipt the
-    // issuer could write is not a receipt.
-    const verifier = orgs(DOMAIN).find((o) => o.handle === att.handle)!
-    assert.ok(['operator', 'lessor'].includes(verifier.kind))
+    // The property that matters, stated as itself: a receipt the issuer could
+    // write is not a receipt. It used to be checked by asserting the verifier's
+    // kind, which tested the roster's shape rather than the claim — and broke
+    // the moment repair stations could receive parts, without the claim having
+    // changed at all.
+    assert.notEqual(att.handle, rel.handle, 'the issuer vouched for itself')
+    assert.ok(
+      orgs(DOMAIN).some((o) => o.handle === att.handle),
+      'the check came from somebody not on the roster',
+    )
     assert.notEqual(att.handle, rel.handle)
   })
 

@@ -25,14 +25,41 @@
  */
 
 import {
+  FIELDS,
   narratedForm,
   orgs,
+  type Bundle,
+  type FieldSpec,
   type Narrator,
   type Org,
   type RawForm,
 } from '@f8130/core'
 
 import type { RecordWriter, StrongRef } from './writer.js'
+
+/**
+ * The same value, altered enough to break a hash and little enough to look
+ * like a mistake somebody could actually make.
+ */
+function nudge(value: string | number | null, spec: FieldSpec): string | number {
+  if (spec.kind === 'integer') return Number(value ?? 0) + 1
+  if (spec.kind === 'enum') {
+    const others = (spec.values ?? []).filter((v) => v !== value)
+    return others[0] ?? String(value)
+  }
+  if (spec.kind === 'timestamp') {
+    const t = Date.parse(String(value))
+    return Number.isNaN(t)
+      ? String(value)
+      : new Date(t - 86_400_000).toISOString().replace(/\.\d+Z$/, 'Z')
+  }
+  // Text and identifiers: change the last digit, or append one. A serial that
+  // reads SN-000418 instead of SN-000417 is the kind of thing that happens.
+  const str = String(value ?? '')
+  return /\d$/.test(str)
+    ? str.slice(0, -1) + String((Number(str.slice(-1)) + 1) % 10)
+    : str + '1'
+}
 
 /** A release waiting for the operator who received it to say something. */
 /** A part handed to an operator, waiting for somebody to check its paperwork. */
@@ -93,6 +120,8 @@ export type ActivityOptions = {
    * a live feed is for. Later events settle into the ordinary cadence.
    */
   firstGap?: number
+  /** Gap used for a visitor who arrived to an empty list. */
+  greetingGap?: number
   /** Injected so tests can drive the clock and the dice. */
   now?: () => number
   random?: () => number
@@ -113,17 +142,57 @@ export type ActivityOptions = {
       serialNumber: string
       description: string
       at: Date
+      bundle: unknown
     }): void
     settle(releaseUri: string): void
+    /** What is already waiting, so an arrival is not owed a second crate. */
+    count(handle: string): number
   }
 }
 
 // Paced for someone who is actually looking. A visitor spends well under a
 // minute on a feed, so a ninety-second gap means most of them see nothing
 // happen at all and conclude the page is static.
+/**
+ * How often a part goes to somebody who is actually looking at the screen.
+ *
+ * The rest go to whoever chance picks, so the feed still reads as a network
+ * with other people in it rather than as a stream addressed to the visitor.
+ */
+const WATCHED_SHARE = 0.55
+
+/**
+ * How often the paperwork in the crate does not match what was published.
+ *
+ * Everything handed over used to be the exact bundle the generator had just
+ * signed, so every check passed and the screen that explains a failure was
+ * unreachable. A demonstration where nothing ever goes wrong demonstrates
+ * half of the idea.
+ *
+ * A third is far above any real rate and deliberately so: somebody looking
+ * around for a few minutes should meet both outcomes without hunting.
+ */
+const MISMATCH_RATE = 1 / 3
+
 const DEFAULT_MIN_GAP = 12_000
 const DEFAULT_MAX_GAP = 45_000
 const DEFAULT_FIRST_GAP = 4_000
+
+/**
+ * How soon a part reaches somebody who has just opened the page with nothing
+ * waiting for them.
+ *
+ * The ordinary cadence is a release every twelve to forty-five seconds, of
+ * which some are checks rather than releases and most go to one of the other
+ * two dozen organizations. That works out at an expected minute and a half
+ * before anything lands in a particular inbox, with a long tail behind it —
+ * long enough that a visitor concludes the page is broken rather than quiet.
+ *
+ * So the first one is not left to chance. Only the first: once there is
+ * something on the list, the ordinary rate is what the network actually looks
+ * like and speeding it up would be a different kind of lie.
+ */
+const GREETING_GAP = 6_000
 
 /**
  * How much of a station's output somebody independently checks and says so.
@@ -253,9 +322,48 @@ export class ActivityGenerator {
     return this.viewers
   }
 
-  viewerJoined(): void {
+  /**
+   * Organizations somebody is currently watching as, as a multiset.
+   *
+   * Counted rather than set-membership because two tabs are two viewers and
+   * closing one must not make the other stop existing.
+   */
+  private readonly watching = new Map<string, number>()
+
+  /**
+   * Organizations that opened the page to an empty list and are owed one.
+   *
+   * A list rather than a flag because two people can arrive at once, and each
+   * of them is owed a crate of their own.
+   */
+  private readonly promised: string[] = []
+
+  /** An organization somebody is looking at the application as, if any. */
+  private watchingOperator(among: Org[]): Org | undefined {
+    const candidates = among.filter((o) => (this.watching.get(o.handle) ?? 0) > 0)
+    return candidates.length > 0 ? this.pickOne(candidates) : undefined
+  }
+
+  viewerJoined(handle?: string): void {
+    if (handle) {
+      this.watching.set(handle, (this.watching.get(handle) ?? 0) + 1)
+      // Nothing waiting means nothing to look at, on the one page that is
+      // about looking at what is waiting. Somebody who has already got a
+      // crate is owed nothing and gets the ordinary rate.
+      if (
+        (this.opts.dock?.count(handle) ?? 0) === 0 &&
+        !this.promised.includes(handle)
+      ) {
+        this.promised.push(handle)
+      }
+    }
     this.viewers++
-    if (this.viewers !== 1) return
+    if (this.viewers !== 1) {
+      // A second tab does not restart the generator, so the timer it is
+      // already running has to be brought forward or the promise is not kept.
+      this.hurry()
+      return
+    }
     this.seeding = true
 
     // The stock in transit has to exist before the first live event, or the
@@ -274,7 +382,25 @@ export class ActivityGenerator {
       })
   }
 
-  viewerLeft(): void {
+  /**
+   * Bring the next tick forward for somebody who is owed a crate.
+   *
+   * Does nothing while seeding, because the first tick is already scheduled
+   * behind it at a short gap, and nothing when no promise is outstanding.
+   */
+  private hurry(): void {
+    if (this.seeding || this.promised.length === 0 || !this.timer) return
+    clearTimeout(this.timer)
+    this.timer = null
+    this.schedule(this.opts.greetingGap ?? GREETING_GAP)
+  }
+
+  viewerLeft(handle?: string): void {
+    if (handle) {
+      const n = (this.watching.get(handle) ?? 0) - 1
+      if (n > 0) this.watching.set(handle, n)
+      else this.watching.delete(handle)
+    }
     this.viewers = Math.max(0, this.viewers - 1)
     if (this.viewers === 0) this.stop()
   }
@@ -352,7 +478,15 @@ export class ActivityGenerator {
       // Check an old part, or release a new one. The oldest waiting part
       // first, which with a backlog in place means one that has genuinely been
       // in transit for days rather than the one released a tick ago.
-      if (this.pending.length > 0 && this.rand() < ATTEST_ROLL) {
+      //
+      // Unless somebody is owed a crate, in which case this tick releases:
+      // spending it on a check would leave the empty list empty for another
+      // half a minute, which is the wait this exists to remove.
+      if (
+        this.promised.length === 0 &&
+        this.pending.length > 0 &&
+        this.rand() < ATTEST_ROLL
+      ) {
         const item = this.pending.shift()!
         if (this.known(item.operatorHandle)) {
           await this.attest(item)
@@ -494,7 +628,32 @@ export class ActivityGenerator {
     }
   }
 
-  /** A repair station or manufacturer releases a part to an operator. */
+  /**
+   * One value changed, so the document no longer recomputes.
+   *
+   * Which half it lands in is left to chance, because the two failures teach
+   * different things. A public block — a part number, a description — is on
+   * the record in the clear, so an observer can name exactly what differs. A
+   * withheld block is only under the commitment, so the same check can say
+   * that the document is not what was published and cannot say which line is
+   * wrong. That second case is the one people find surprising, and it is the
+   * honest shape of the guarantee.
+   *
+   * The change is small on purpose. A transcription slip and a deliberate
+   * alteration are indistinguishable to the arithmetic, which is the point:
+   * the commitment does not know why a document differs, only that it does.
+   */
+  private misread(bundle: Bundle): Bundle {
+    const spec = this.pickOne(FIELDS.filter((f) => bundle.values[f.name] != null))
+    if (!spec) return bundle
+    const was = bundle.values[spec.name] ?? null
+    return {
+      ...bundle,
+      values: { ...bundle.values, [spec.name]: nudge(was, spec) },
+    }
+  }
+
+  /** A repair station or manufacturer releases a part to whoever receives it. */
   private async issue(
     opts: { agedDays?: number; narrate?: boolean } = {},
   ): Promise<Pending | null> {
@@ -502,11 +661,62 @@ export class ActivityGenerator {
     const issuers = cast.filter(
       (o) => (o.kind === 'mro' || o.kind === 'oem') && this.known(o.handle),
     )
-    const operators = cast.filter(
-      (o) => (o.kind === 'operator' || o.kind === 'lessor') && this.known(o.handle),
+
+    // Everyone but a manufacturer can be sent a part.
+    //
+    // This used to be operators and lessors only, which made a repair station
+    // the one thing on the roster that could never receive anything — and a
+    // repair station is what a visitor arrives as. The front door led to a
+    // page that was empty by construction, and no amount of waiting would
+    // have changed it.
+    //
+    // It was also at odds with the rest of the simulation. A part comes back
+    // for more work at a different shop, which is what `inService` exists to
+    // model, so components already move between stations here; the dock was
+    // simply never told. A shop receiving a component to work on is the most
+    // ordinary event in the industry, and a broker receiving stock to resell
+    // is its whole business.
+    //
+    // Manufacturers stay out. An OEM certifies new manufacture under Block 13,
+    // and a used part arriving at the factory is a different story than this
+    // one is telling.
+    const recipients = cast.filter(
+      (o) => o.kind !== 'oem' && this.known(o.handle),
     )
-    const issuer = this.pickOne(issuers)
-    const operator = this.pickOne(operators)
+    // Somebody who opened the page to an empty list is owed this one, and is
+    // taken off the list whether or not they can actually receive — an entry
+    // that never resolves would sit at the head of the queue for ever.
+    let promised: Org | undefined
+    while (this.promised.length > 0 && !promised) {
+      const handle = this.promised.shift()!
+      promised = recipients.find((o) => o.handle === handle)
+    }
+
+    // A station cannot release to itself, so being owed a crate takes it out
+    // of the running to sign this one.
+    const issuer = this.pickOne(
+      promised ? issuers.filter((o) => o.handle !== promised!.handle) : issuers,
+    )
+
+    // Whoever is watching gets the part more often than chance would give
+    // them. Spread across the roster, a visitor sitting on the feed would wait
+    // through a great many crates going somewhere else before one reached
+    // their own goods-in — which reads as the page being broken rather than as
+    // a supply chain being wide.
+    //
+    // Not always, because an inbox that fills every single time is a different
+    // lie: most parts in a network are somebody else's.
+    //
+    // Never back to the shop that just signed it, whichever way it was picked.
+    // A release is a handover, and a document saying a station released a part
+    // to itself describes nothing.
+    const candidates = issuer
+      ? recipients.filter((o) => o.handle !== issuer.handle)
+      : recipients
+    const operator =
+      promised ??
+      (this.rand() < WATCHED_SHARE ? this.watchingOperator(candidates) : undefined) ??
+      this.pickOne(candidates)
     if (!issuer || !operator) return null
 
     // Sometimes a part already in service comes back in for more work. An
@@ -573,6 +783,11 @@ export class ActivityGenerator {
       if (this.inService.length > 30) this.inService.shift()
     }
 
+    // The crate and the paperwork travel together, which is the whole
+    // arrangement an 8130-3 describes. Handing the part over without the
+    // document would leave the recipient with something to inspect and no way
+    // to check it, and asking a visitor to produce the document themselves is
+    // asking them for a file they were never given.
     this.opts.dock?.handOver(operator.handle, {
       subject: { uri: written.uri, cid: written.cid },
       issuerDid: written.uri.split('/')[2] ?? '',
@@ -581,6 +796,8 @@ export class ActivityGenerator {
       serialNumber: String(form.serialNumber),
       description: String(form.description ?? ''),
       at: new Date(this.now()),
+      bundle:
+        this.rand() < MISMATCH_RATE ? this.misread(written.bundle) : written.bundle,
     })
 
     // Decide now whether anybody will ever vouch for this one, rather than
