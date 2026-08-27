@@ -326,8 +326,22 @@ a.button:hover { filter: brightness(1.08); }
 /* The outcome carries its state in the heading rather than in a banner
    underneath one — a page that says "Form does not match" does not also need
    a box saying not verified. */
-h1.ok { color: var(--pass); }
-h1.no { color: var(--fail); }
+.verdict-head {
+  display: flex; align-items: center; gap: .55rem;
+  font-size: 1.2rem; margin: 2rem 0 .35rem;
+}
+.verdict-head::before {
+  content: ""; flex: 0 0 auto; width: .7rem; height: .7rem; border-radius: 50%;
+}
+.verdict-head.ok { color: var(--pass); }
+.verdict-head.ok::before { background: var(--pass); }
+.verdict-head.no { color: var(--fail); }
+.verdict-head.no::before { background: var(--fail); }
+.verdict-head + .sub { margin-bottom: 1rem; }
+
+/* The document, folded once it has been read and the decision is below it. */
+.sheetfold > summary { font-weight: 600; color: var(--fg); }
+.sheetfold[open] > summary { margin-bottom: .3rem; }
 .outcome { margin-top: 1.25rem; }
 .outcome .ref {
   word-break: break-all; font-size: .78rem; color: var(--muted);

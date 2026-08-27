@@ -981,12 +981,17 @@ const VERIFY_SCRIPT = `
 
     function finish() {
       if (!pacedDone || markup === null) return
-      var main = document.querySelector('main')
-      if (!main) return
-      // The whole body this time: the heading changes to the outcome and the
-      // document folds away, so there is more to replace than the zone.
-      main.innerHTML = markup
-      window.scrollTo({ top: 0, behavior: 'smooth' })
+      // Into the zone, not over the page. Everything above — the heading, the
+      // component, the document — is where the reader left it, and what the
+      // check produced arrives underneath. The page grows rather than being
+      // thrown away and rebuilt, so it can be scrolled back through.
+      zone.innerHTML = markup
+      // The document has been read by now and the decision is below it, so it
+      // folds out of the way. It is still there and still openable.
+      var sheet = document.querySelector('[data-sheet]')
+      if (sheet) sheet.removeAttribute('open')
+      var head = zone.querySelector('.verdict-head')
+      if (head) head.scrollIntoView({ block: 'center', behavior: 'smooth' })
     }
 
     function step() {
@@ -1001,8 +1006,7 @@ const VERIFY_SCRIPT = `
       .then(function (r) { return r.text() })
       .then(function (h) { markup = h; finish() })
       .catch(function () {
-        markup = '<p class="backlink"><a href="/inbox">&larr; Receiving</a></p>' +
-          '<div class="empty">The check could not be run.</div>'
+        markup = '<div class="empty">The check could not be run.</div>'
         finish()
       })
   })
@@ -1091,6 +1095,55 @@ export function receivedBody(params: {
   // stapled to has all seventeen blocks printed on it.
   const scanned = (a.bundle as { values?: Record<string, unknown> } | null)?.values ?? null
   const settled = Boolean(report || params.published)
+
+  const sections = receivedSections(params)
+
+  return html`<p class="backlink"><a href="/inbox">&larr; Receiving</a></p>
+    <h1>Received 8130 Certificate</h1>
+    <p class="sub">
+      This is the received 8130-3 form, included in the component shipment. We
+      must verify the paper document matches what the issuer submitted.
+    </p>
+
+    <h2 class="sect">The component</h2>
+    ${dataplate({
+      description: a.description,
+      partNumber: a.partNumber,
+      serialNumber: a.serialNumber,
+      href: postPath(a.subject.uri),
+    })}
+
+    ${scanned
+      ? html`<details class="scan sheetfold" data-sheet ${settled ? '' : 'open'}>
+          <summary>Scanned 8130</summary>
+          ${paperSheet(scanned)}
+        </details>`
+      : html`<div class="card"><div class="empty">
+          No document was scanned with this shipment.
+        </div></div>`}
+
+    <div data-zone>${scanned ? sections : ''}</div>
+
+    ${scanned && !settled ? raw(`<script>${VERIFY_SCRIPT}</script>`) : ''}`
+}
+
+/**
+ * Everything below the document: the button, or what the check produced.
+ *
+ * Exported because the browser asks for exactly this and drops it in where the
+ * button was, so the page it is already showing grows rather than being thrown
+ * away and rebuilt. The full page renders the same sections in the same place,
+ * which is what a visitor without scripting gets after the form navigates.
+ */
+export function receivedSections(params: {
+  actor: Actor
+  arrival: Arrival
+  report?: VerificationReport
+  published?: string
+}) {
+  const a = params.arrival
+  const report = params.report
+  const settled = Boolean(report || params.published)
   const verified = report ? report.verified : true
 
   const byName = new Map((report?.stages ?? []).map((st) => [st.name, st]))
@@ -1111,27 +1164,13 @@ export function receivedBody(params: {
   const recordSide = (agree?.data?.record ?? {}) as Record<string, unknown>
   const bundleSide = (agree?.data?.bundle ?? {}) as Record<string, unknown>
 
-  const title = params.published
-    ? 'Attestation published'
-    : !report
-      ? 'Received 8130 Certificate'
-      : verified
-        ? 'Certificate verified'
-        : 'Form does not match'
-
-  const tagline = params.published
-    ? html`Published to ${params.actor.displayName}&rsquo;s own repository, under
-        their own key. ${a.issuerName} cannot remove it.`
-    : !report
-      ? html`This is the received 8130-3 form, included in the component
-          shipment. We must verify the paper document matches what the issuer
-          submitted.`
-      : verified
-        ? html`The 8130 form we received matches what ${a.issuerName} submitted
-            to the network when they released the part.`
-        : html`The 8130 form we received does not match what the issuer
-            submitted to the network on release. We will need to contact them
-            directly to resolve the discrepancy.`
+  // The heading is what the page is about, and that does not change as the
+  // work proceeds. The outcome is a section of this page rather than a
+  // replacement for it, so it carries its own heading and its own colour.
+  const title = 'Received 8130 Certificate'
+  const tagline = html`This is the received 8130-3 form, included in the
+    component shipment. We must verify the paper document matches what the
+    issuer submitted.`
 
   /* ------------------------------------------------ what to do about it */
 
@@ -1143,9 +1182,9 @@ export function receivedBody(params: {
 
   const attestBlock = html`<div class="outcome">
     <p class="caveat">
-      A verified document is not the same as the part being what the document
-      says. This checks paperwork against a signed record; nothing here has
-      inspected a component.
+      A verified document does not mean a verified component. This process
+      ensures the information on the form matches what the issuer released. We
+      must still perform all required inspections on the part itself.
     </p>
     <h2 class="sect">Say so in public</h2>
     <p class="sub">
@@ -1227,50 +1266,52 @@ export function receivedBody(params: {
     </form>
   </div>`
 
-  const zone = params.published
+  /*
+   * Everything the check adds, as sections rather than as a new page.
+   *
+   * Returned on its own to the browser, which drops it in where the button
+   * was — so the heading, the component and the document stay put and the
+   * page grows downwards. A reader can scroll back through the whole thing
+   * afterwards and see what they did, which a page that replaced itself threw
+   * away every time.
+   */
+  const outcome = params.published
     ? publishedBlock
-    : !report
-      ? html`<form method="post" action="/inbox/check" class="startcheck" data-verify>
-          <input type="hidden" name="subjectUri" value="${a.subject.uri}">
-          <button type="submit">Verify this document</button>
-        </form>`
-      : verified
-        ? attestBlock
-        : mismatchBlock
+    : verified
+      ? attestBlock
+      : mismatchBlock
 
-  return html`<p class="backlink"><a href="/inbox">&larr; Receiving</a></p>
-    <h1 class="${settled ? (verified ? 'ok' : 'no') : ''}">${title}</h1>
-    <p class="sub">${tagline}</p>
+  const sections = settled
+    ? html`${report
+        ? html`<h2 class="sect">Verification</h2>
+            <div class="card">${report.stages.map(stageRow)}</div>`
+        : ''}
+      <h2 class="verdict-head ${verified ? 'ok' : 'no'}">
+        ${params.published
+          ? 'Attestation published'
+          : verified
+            ? 'Certificate verified'
+            : 'Form does not match'}
+      </h2>
+      <p class="sub">
+        ${params.published
+          ? html`Published to ${params.actor.displayName}&rsquo;s own
+              repository, under their own key. ${a.issuerName} cannot remove
+              it.`
+          : verified
+            ? html`The 8130 form we received matches what ${a.issuerName}
+                submitted to the network when they released the part.`
+            : html`The 8130 form we received does not match what the issuer
+                submitted to the network on release. We will need to contact
+                them directly to resolve the discrepancy.`}
+      </p>
+      ${outcome}`
+    : html`<form method="post" action="/inbox/check" class="startcheck" data-verify>
+        <input type="hidden" name="subjectUri" value="${a.subject.uri}">
+        <button type="submit">Verify this document</button>
+      </form>`
 
-    <h2 class="sect">The component</h2>
-    ${dataplate({
-      description: a.description,
-      partNumber: a.partNumber,
-      serialNumber: a.serialNumber,
-      href: postPath(a.subject.uri),
-    })}
-
-    ${scanned
-      ? settled
-        ? html`<details class="scan">
-            <summary>Scanned 8130</summary>
-            ${paperSheet(scanned)}
-          </details>`
-        : html`<h2 class="sect">Scanned 8130</h2>${paperSheet(scanned)}`
-      : html`<div class="card"><div class="empty">
-          No document was scanned with this shipment.
-        </div></div>`}
-
-    <div data-zone>${scanned ? zone : ''}</div>
-
-    ${report
-      ? html`<details class="scan">
-          <summary>What was checked</summary>
-          <div class="card">${report.stages.map(stageRow)}</div>
-        </details>`
-      : ''}
-
-    ${scanned && !settled ? raw(`<script>${VERIFY_SCRIPT}</script>`) : ''}`
+  return sections
 }
 
 /** Nothing was published, the crate is off the list, and that is the whole of it. */

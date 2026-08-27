@@ -47,6 +47,7 @@ import {
   inboxCheckBody,
   inboxScanPage,
   inboxScanBody,
+  receivedSections,
   inboxDoneBody,
   issueBody,
   issuePage,
@@ -1292,8 +1293,10 @@ export function createApp(deps: AppDeps) {
           resolver: deps.resolver,
           repo: deps.repo,
         })
+        // Only what the check adds: the browser drops it in below the
+        // document it is already showing.
         if (c.req.query('fragment') !== undefined) {
-          return c.html(inboxCheckBody({ actor, arrival, report }))
+          return c.html(receivedSections({ actor, arrival, report }))
         }
         return c.html(
           inboxCheckPage({
