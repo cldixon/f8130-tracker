@@ -460,7 +460,8 @@ export function createApp(deps: AppDeps) {
       )
     }
 
-    const tab: AccountTab = c.req.query('tab') === 'checks' ? 'checks' : 'releases'
+    const tab: AccountTab =
+      c.req.query('tab') === 'attestations' ? 'attestations' : 'releases'
 
     // Both counts always, whichever tab is showing, because the tabs carry
     // them: a "Checks 3" label that only appears once you are already on the

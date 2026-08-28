@@ -118,12 +118,43 @@ describe('the account header', () => {
    * something the network established. Nothing binds a DID to a certificated
    * repair station, so a certificate number here is a string an organization
    * typed about itself.
+   *
+   * And the recourse is named, because this application is not it. No AppView
+   * can adjudicate a false profile; a "report" button here would be claiming
+   * an authority nobody granted.
    */
-  test('says the profile is self-asserted rather than established', async () => {
+  test('says the profile is unverified, and where that belongs instead', async () => {
     const { app } = await accountApp(shopProfile)
     const body = await (await app.request(`/profile/cascadia-mro.${DOMAIN}`)).text()
-    assert.match(body, /[Ss]elf-asserted/)
-    assert.match(body, /certificate number/, 'the list of self-asserted fields is wrong')
+    assert.match(body, /verified by\s+nobody/)
+    assert.match(body, /regulatory\s+authority/, 'the recourse is not named')
+  })
+
+  /** The handle is somebody's name on a network, and reads as one. */
+  test('the handle is prefixed the way a handle is', async () => {
+    const { app } = await accountApp(shopProfile)
+    const body = await (await app.request(`/profile/cascadia-mro.${DOMAIN}`)).text()
+    assert.match(body, new RegExp(`@cascadia-mro\\.${DOMAIN.replace(/\./g, '\\.')}`))
+  })
+
+  /**
+   * Not "member since". Nothing on this network records when an organization
+   * joined it, and there is no membership to date from — so the claim is the
+   * one this observer can support, and it is worded as an observation.
+   */
+  test('tenure is stated as observation, not as membership', async () => {
+    const { app } = await accountApp((i) => {
+      i.setHandle(MRO, `cascadia-mro.${DOMAIN}`)
+      i.setActor({
+        did: MRO,
+        displayName: 'Cascadia MRO',
+        kind: 'mro',
+        firstSeen: new Date('2026-03-14T00:00:00Z'),
+      })
+    })
+    const body = await (await app.request(`/profile/cascadia-mro.${DOMAIN}`)).text()
+    assert.match(body, /Observed since March 2026/)
+    assert.ok(!body.includes('Member since'), 'claimed a membership nothing records')
   })
 
   /**
@@ -137,8 +168,11 @@ describe('the account header', () => {
       i.addRelease(release())
     })
     const body = await (await app.request(`/profile/cascadia-mro.${DOMAIN}`)).text()
-    assert.match(body, /never published a profile/)
-    assert.ok(!body.includes('Self-asserted'), 'claimed a profile that does not exist')
+    assert.match(body, /published no profile/)
+    assert.ok(
+      !body.includes('provided by the account holder'),
+      'claimed a profile that does not exist',
+    )
   })
 })
 
@@ -212,9 +246,12 @@ describe('the two tabs', () => {
     const url = `/profile/example-air.${DOMAIN}`
 
     const releases = await (await app.request(url)).text()
-    assert.match(releases, /Operators, brokers and lessors issue none/)
+    assert.match(
+      releases,
+      /This observer has seen no release certificates from Example Air\./,
+    )
 
-    const checks = await (await app.request(`${url}?tab=checks`)).text()
+    const checks = await (await app.request(`${url}?tab=attestations`)).text()
     assert.match(checks, /accepted this certificate/)
     // A check quotes the release it covers rather than describing it, so the
     // reader learns what was actually vouched for.
@@ -233,9 +270,9 @@ describe('the two tabs', () => {
       i.addAttestation(attestation())
     })
     const shopChecks = await (
-      await app.request(`/profile/cascadia-mro.${DOMAIN}?tab=checks`)
+      await app.request(`/profile/cascadia-mro.${DOMAIN}?tab=attestations`)
     ).text()
-    assert.match(shopChecks, /has published no checks/)
+    assert.match(shopChecks, /has published no attestations/)
   })
 
   test('an unrecognised tab falls back to releases rather than an empty page', async () => {
@@ -282,6 +319,22 @@ describe('the counts', () => {
       issuer!.attested <= issuer!.releases,
       'the issuers table can still report more coverage than releases',
     )
+  })
+
+  /**
+   * First sight is first sight. The demo writer records a profile on every
+   * write, so an account's tenure would otherwise restart at its most recent
+   * record — reading as if a shop publishing steadily for a year had turned
+   * up this morning.
+   */
+  test('a later record does not move when the account was first seen', async () => {
+    const first = new Date('2026-03-14T00:00:00Z')
+    const { index } = await accountApp((i) => {
+      i.setActor({ did: MRO, displayName: 'Cascadia MRO', kind: 'mro', firstSeen: first })
+      i.setActor({ did: MRO, displayName: 'Cascadia MRO', kind: 'mro' })
+    })
+    const account = await index.accountFor(MRO)
+    assert.equal(account!.firstSeen?.toISOString(), first.toISOString())
   })
 
   test('checks published are counted against the account that published them', async () => {

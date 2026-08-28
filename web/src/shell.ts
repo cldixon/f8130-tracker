@@ -648,9 +648,12 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
    is the load-bearing half of the identity — so it gets its own line at full
    size rather than being tucked in beside the name. */
 .account .hnd {
-  display: block; margin-top: .55rem; font-size: .88rem; word-break: break-all;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .9rem;
+  margin-top: .55rem; font-size: .88rem;
 }
-.account .hnd .ico { color: var(--pass); margin-right: .3rem; }
+.account .hnd .at { word-break: break-all; }
+.account .hnd .unresolved { color: var(--muted); }
+.account .hnd .since { color: var(--muted); font-size: .8rem; cursor: help; }
 .account .facts {
   display: flex; flex-wrap: wrap; gap: .3rem 1.5rem; margin: .85rem 0 0;
   padding-top: .8rem; border-top: 1px solid var(--line);
@@ -668,8 +671,15 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
   display: flex; flex-wrap: wrap; gap: .35rem 1.6rem; margin-top: .85rem;
   padding-top: .8rem; border-top: 1px solid var(--line);
 }
-.account .counts > div { font-size: .82rem; color: var(--muted); }
-.account .counts b { color: var(--fg); font-size: 1.05rem; font-weight: 700; }
+/* Number over word, the way a social client stacks a follower count. The
+   figure is what the eye lands on and the label only tells it what it landed
+   on, which is the arrangement that survives three counts side by side. */
+.account .counts > div { display: flex; flex-direction: column; gap: .05rem; cursor: help; }
+.account .counts b { color: var(--fg); font-size: 1.15rem; font-weight: 700; }
+.account .counts span {
+  font-size: .7rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .06em;
+}
 .account .selfsaid { margin: .8rem 0 0; font-size: .74rem; color: var(--muted); }
 .account .noprofile {
   margin: .85rem 0 0; padding-top: .8rem; border-top: 1px solid var(--line);

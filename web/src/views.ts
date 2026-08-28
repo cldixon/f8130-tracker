@@ -33,6 +33,17 @@ const fmt = (d: Date | string | null | undefined) => {
   return date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, 'Z')
 }
 
+/**
+ * A date at the precision the claim actually supports.
+ *
+ * "Observed since" is a fact about this index, not about the organization, and
+ * an index rebuild moves it. A month is about as much as that deserves on the
+ * line; the exact moment stays on hover, where somebody checking rather than
+ * reading will look for it.
+ */
+const monthYear = (d: Date) =>
+  `${d.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' })} ${d.getUTCFullYear()}`
+
 const short = (s: string, n = 14) =>
   s.length <= n * 2 ? s : `${s.slice(0, n)}…${s.slice(-6)}`
 
@@ -878,7 +889,7 @@ export function threadPage(params: {
 
 /* ---------------------------------------------------------------- account */
 
-export type AccountTab = 'releases' | 'checks'
+export type AccountTab = 'releases' | 'attestations'
 
 /**
  * One organization: who it says it is, and everything it has signed.
@@ -929,22 +940,10 @@ export function accountPage(params: {
   const handleKnown = a.handle !== a.did
   const base = profilePath(a.did, new Map([[a.did, a.handle]]))
   const tabHref = (tab: AccountTab) =>
-    tab === 'checks' ? `${base}?tab=checks` : base
+    tab === 'attestations' ? `${base}?tab=attestations` : base
 
   const fact = (label: string, value: string) =>
     html`<div><dt>${label}</dt><dd class="mono">${value}</dd></div>`
-
-  // Which of the self-asserted fields this organization actually published,
-  // written as a list a person would say out loud. Built rather than
-  // hard-coded because operators and brokers carry no certificate number, and
-  // "Name, role, CAGE code come from" is not a sentence.
-  const said = [
-    'Name',
-    'role',
-    ...(a.cage ? ['CAGE code'] : []),
-    ...(a.certificate ? ['certificate number'] : []),
-  ]
-  const saidList = `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}`
 
   return layout(
     name,
@@ -960,66 +959,103 @@ export function accountPage(params: {
       <!-- The handle is not decoration. An organization's handle here is its
            domain, verified through DNS, which is what makes forgery at the
            source expensive: issuing under this name means controlling this
-           domain and the signing key in the DID document behind it. -->
-      ${handleKnown
-        ? html`<span class="hnd mono"><span class="ico">◈</span>${a.handle}</span>`
-        : html`<span class="hnd">This observer has not resolved a handle for
-            this account.</span>`}
+           domain and the signing key in the DID document behind it.
+           The @ is borrowed from every social client that ever showed one,
+           and it earns the borrowing: it says at a glance that the string is
+           somebody's name on a network rather than a link or a hostname. -->
+      <div class="hnd">
+        ${handleKnown
+          ? html`<span class="at mono">@${a.handle}</span>`
+          : html`<span class="unresolved">This observer has not resolved a
+              handle for this account.</span>`}
+        <!-- Deliberately not "member since". Nothing on this network records
+             when an organization joined it, and there is no membership to
+             date from — an account is a repository that started publishing.
+             So the claim is the one this observer can actually support: when
+             it first saw that happen. It moves if the index is rebuilt, which
+             is why the exact moment is on hover and only the month is on the
+             line. -->
+        ${a.firstSeen
+          ? html`<span class="since" title="First record observed here ${fmt(a.firstSeen)}"
+            >Observed since ${monthYear(a.firstSeen)}</span>`
+          : ''}
+      </div>
 
       <dl class="facts">
         ${a.cage ? fact('CAGE', a.cage) : ''}
         ${a.certificate ? fact('Certificate', a.certificate) : ''}
         ${fact('DID', a.did)}
-        <!-- Not a joining date. Nothing on the network says when an
-             organization started; this is when this one observer first saw
-             the repository publish, and it moves if the index is rebuilt. -->
-        ${a.firstSeen
-          ? html`<div><dt>First seen here</dt><dd>${fmt(a.firstSeen)}</dd></div>`
-          : ''}
       </dl>
 
+      <!-- One word under each number. The words carried their own
+           explanations before, which made three counts read as three
+           sentences and buried the figures they were about; what a count
+           means belongs on hover and in the tab it leads to. -->
       <div class="counts">
-        <div><b>${params.stats.releases}</b> released</div>
-        <!-- Two numbers, never a ratio and never a grade. A release nobody
-             published a check on is the ordinary case, not a warning. -->
-        <div><b>${params.stats.attested}</b> of those checked by somebody else</div>
-        <div><b>${params.stats.checks}</b> checks published on others</div>
+        <div title="Release certificates issued from this repository"
+          ><b>${params.stats.releases}</b><span>Releases</span></div>
+        <!-- Still two numbers rather than one, and still never a score. A
+             release nobody has vouched for is the ordinary case: most checks
+             in a real supply chain are never announced at all. -->
+        <div title="Releases of this account's that somebody else has published an attestation on"
+          ><b>${params.stats.releases === 0
+            ? // "0 of 0" is not a fact about coverage, it is a restatement of
+              // the count beside it, and on an operator — which issues nothing
+              // by design — it reads as a shortfall rather than as a category
+              // that does not apply.
+              '—'
+            : `${params.stats.attested} of ${params.stats.releases}`}</b
+          ><span>Vouched</span></div>
+        <div title="Attestations this account published on other organizations' releases"
+          ><b>${params.stats.checks}</b><span>Attestations</span></div>
       </div>
 
+      <!-- The disclaimer, in one line rather than four.
+           It used to explain the whole of why a station profile is not
+           evidence, which is true, correct, and three sentences of throat-
+           clearing above the thing the reader came for. The argument belongs
+           in the documentation; what belongs here is the fact and the
+           recourse — and naming the recourse is the honest half, because this
+           application is not it. No AppView can adjudicate a false profile,
+           and one that offered a "report" button would be claiming an
+           authority nobody has given it. -->
       ${a.displayName
         ? html`<p class="selfsaid">
-            ${saidList} come from a profile this organization published in
-            its own repository. Self-asserted, signed by the party it
-            describes, and committed to by none of its release certificates
-            &mdash; what a shop calls itself is not a property of the work it
-            certified.
+            Profile details are provided by the account holder and verified by
+            nobody. Anything suspicious is for your governing regulatory
+            authority, not for this application.
           </p>`
         : html`<p class="noprofile">
-            This organization has never published a profile, so this observer
-            knows it only as a repository that signs records. The name above is
-            its handle.
+            This organization has published no profile, so this observer knows
+            it only as a repository that signs records.
           </p>`}
     </section>
 
+    <!-- "Attestations" rather than "checks", and the word matters more than
+         it looks. Verification in this application is the seven-stage
+         pipeline run against a document you are holding — a private act,
+         which is why a failure is not publishable. An attestation is the
+         record somebody signs afterwards to say it held. Calling the tab
+         "verifications" would name the act rather than the records under it,
+         and would collide with the page that actually does the verifying. -->
     <nav class="tabs">
       <a href="${tabHref('releases')}" class="${params.tab === 'releases' ? 'on' : ''}"
         >Releases<span class="n">${params.stats.releases}</span></a>
-      <a href="${tabHref('checks')}" class="${params.tab === 'checks' ? 'on' : ''}"
-        >Checks<span class="n">${params.stats.checks}</span></a>
+      <a href="${tabHref('attestations')}"
+        class="${params.tab === 'attestations' ? 'on' : ''}"
+        >Attestations<span class="n">${params.stats.checks}</span></a>
     </nav>
 
     <div class="feed">
       ${params.events.length === 0
         ? html`<div class="card"><div class="empty">
+            <!-- One sentence. An empty tab is not the place to teach the
+                 design: a reader who has landed on an operator with no
+                 releases wants to know that, not to be held there for a
+                 paragraph about why. -->
             ${params.tab === 'releases'
-              ? html`This observer has seen no release certificates from
-                  ${name}. Operators, brokers and lessors issue none by
-                  design &mdash; they receive parts and check the paperwork,
-                  which is the other tab.`
-              : html`${name} has published no checks. That is not a mark
-                  against anybody: a check is optional, and a party who could
-                  <em>not</em> verify a document has nothing publishable to say
-                  either &mdash; a failure cannot be proven to a third party.`}
+              ? html`This observer has seen no release certificates from ${name}.`
+              : html`${name} has published no attestations.`}
           </div></div>`
         : params.events.map((e) =>
             feedCard(

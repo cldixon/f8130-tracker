@@ -84,14 +84,21 @@ export class MemoryIndex implements ReadIndex {
    * reader already guards for that.
    */
   setActor(row: Partial<ActorRow> & { did: string }): void {
+    const held = this.actors.get(row.did)
     this.actors.set(row.did, {
       handle: this.handles.get(row.did) ?? row.did,
       displayName: null,
       kind: null,
       cage: null,
       certificate: null,
-      firstSeen: null,
+      ...held,
       ...row,
+      // First sight, and it stays first sight. On the live path first_seen is
+      // written once by ensureActor and left alone by every later station
+      // record; here the writer calls this on every single write, so without
+      // the pin an account's tenure would restart at its most recent record —
+      // which is the opposite of what the field means.
+      firstSeen: held?.firstSeen ?? row.firstSeen ?? new Date(),
     })
   }
 
