@@ -337,31 +337,70 @@ describe('the network tab', () => {
   })
 
   /**
-   * A chain link is one issuer's claim about which record came before theirs,
-   * and a part can change hands between two certificates. The page must not
-   * present that as a trading relationship it cannot support.
+   * A `prev` link is the issuer's own claim about which record came before
+   * theirs, and a part can change hands more than once between two
+   * certificates. "On the record with" is what that supports; a direction and
+   * a role is not.
    */
-  test('a chain link is labelled as a claim, not as trade', async () => {
+  test('a shared chain is never presented as trade', async () => {
     const { app } = await accountApp(chained)
     const body = await (
       await app.request(`/profile/cascadia-mro.${DOMAIN}?tab=network`)
     ).text()
-    assert.match(body, /A claim by the issuer that wrote it/)
-    assert.ok(!/bought from|sold to/i.test(body), 'claimed a trade from a prev link')
+    assert.match(body, /on the record with/)
+    assert.ok(
+      !/bought from|sold to|supplier|customer/i.test(body),
+      'claimed a trading relationship from a prev link',
+    )
   })
 
-  test('both attestation directions are distinguished', async () => {
+  /** Either direction of a check puts an organization on the list. */
+  test('vouching and being vouched for both count', async () => {
     const { app } = await accountApp(chained)
 
     const shop = await (
       await app.request(`/profile/cascadia-mro.${DOMAIN}?tab=network`)
     ).text()
-    assert.match(shop, /They vouched for this account/)
+    assert.match(shop, /Example Air/, 'the account that checked it is missing')
 
     const operator = await (
       await app.request(`/profile/example-air.${DOMAIN}?tab=network`)
     ).text()
-    assert.match(operator, /This account vouched for them/)
+    assert.match(operator, /Cascadia MRO/, 'the account it checked is missing')
+  })
+
+  /**
+   * One row per organization, however many ways it is connected, and the
+   * most connected first — which is the only thing explaining the order.
+   */
+  test('an organization appears once, ranked by how many records connect it', async () => {
+    const { app } = await accountApp((i) => {
+      chained(i)
+      // Northwind is already the predecessor on the chain; two checks from it
+      // as well should make it one row with three records, above the rest.
+      for (const n of [1, 2]) {
+        i.addAttestation(
+          attestation({
+            cid: `nw${n}`,
+            uri: `at://did:plc:oem/dev.cldixon.f8130.attestation/${n}`,
+            subjectCid: 'mine',
+            verifierDid: 'did:plc:oem',
+          }),
+        )
+      }
+    })
+    const body = await (
+      await app.request(`/profile/cascadia-mro.${DOMAIN}?tab=network`)
+    ).text()
+
+    const rows = [...body.matchAll(/class="relrow"[\s\S]*?<\/a>/g)].map((m) => m[0])
+    const northwind = rows.filter((r) => r.includes('Northwind Turbine'))
+    assert.equal(northwind.length, 1, 'one organization, listed twice')
+    assert.match(northwind[0]!, /3 records/)
+    assert.ok(
+      rows[0]!.includes('Northwind Turbine'),
+      'the most connected organization is not at the top',
+    )
   })
 
   /**

@@ -16,7 +16,6 @@ import type {
   FeedEvent,
   IssuerStat,
   Relation,
-  RelationKind,
   ReleaseRow,
 } from './index-port.js'
 import { bareLabel, fieldLabel } from './compose.js'
@@ -894,100 +893,75 @@ export function threadPage(params: {
 export type AccountTab = 'releases' | 'attestations' | 'network'
 
 /**
- * What each relationship is called, and what it actually rests on.
- *
- * The two halves are deliberately worded differently, because they are not
- * equally solid. An attestation link is signed at both ends. A chain link is
- * one issuer's claim about which record came before theirs, and the part may
- * have changed hands more than once in between — so those two say "certified"
- * rather than "bought from" or "sold to", which is what the records support
- * and no more.
- */
-const RELATIONS: Record<
-  RelationKind,
-  { title: string; note: string; unit: (n: number) => string }
-> = {
-  earlier: {
-    title: 'Certified this account’s parts before it did',
-    note: 'From the predecessor each release names. A claim by the issuer that wrote it, and a part can change hands between two certificates.',
-    unit: (n) => `${n} ${n === 1 ? 'chain' : 'chains'}`,
-  },
-  later: {
-    title: 'Certified this account’s parts after it did',
-    note: 'Releases naming one of this account’s as their predecessor. Same caveat, from the other end.',
-    unit: (n) => `${n} ${n === 1 ? 'chain' : 'chains'}`,
-  },
-  vouchedBy: {
-    title: 'This account vouched for them',
-    note: 'Attestations it published on their releases — signed records in its own repository.',
-    unit: (n) => `${n} ${n === 1 ? 'attestation' : 'attestations'}`,
-  },
-  vouchedFor: {
-    title: 'They vouched for this account',
-    note: 'Attestations they published on its releases — signed records in theirs, which it cannot remove.',
-    unit: (n) => `${n} ${n === 1 ? 'attestation' : 'attestations'}`,
-  },
-}
-
-/** The order the groups read in: supply chain first, then who checked whom. */
-const RELATION_ORDER: RelationKind[] = [
-  'earlier',
-  'later',
-  'vouchedBy',
-  'vouchedFor',
-]
-
-/**
  * The organizations one account is on the record with.
  *
  * The nearest thing this network has to a social graph, and it is built from
  * records rather than from follows — nobody here declares a relationship, so
- * every edge on this page had to be worked for by publishing something.
+ * every organization on this list had to be earned by publishing something.
  *
- * The supply-chain half is the part that is not visible anywhere else in the
- * application. The feed shows one release at a time and the part page shows
- * one component's history; neither answers "who does this shop actually work
- * with", which is the question a buyer evaluating a station asks first.
+ * Two things put one here. A shared chain: a release names its predecessor, so
+ * two organizations that certified the same part are linked through it. And an
+ * attestation either published on the other's release.
+ *
+ * They are pooled rather than separated, and the pooling is what lets the page
+ * make the weaker claim. Split into "certified this account's parts before it
+ * did" and the rest, the headings were asserting a direction and a role — and
+ * a `prev` link cannot carry that weight, because it is the issuer's own claim
+ * about which record came before theirs and a part can change hands more than
+ * once between two certificates. "On the record with" is what the records
+ * actually support, and it happens to be the shorter sentence.
+ *
+ * The count is what makes the ordering legible. Without it the most connected
+ * organization sitting at the top looks arbitrary rather than sorted.
  */
-function relationGroups(params: {
+function relatedList(params: {
   relations: Relation[]
   actors: Map<string, ActorRow>
 }) {
-  const groups = RELATION_ORDER.map((kind) => ({
-    kind,
-    rows: params.relations.filter((r) => r.kind === kind),
-  })).filter((g) => g.rows.length > 0)
+  // Four relationship kinds collapse into one row per organization. An
+  // organization that both shares a chain and published a check is one
+  // organization, more strongly connected — not two entries.
+  const totals = new Map<string, number>()
+  for (const r of params.relations) {
+    totals.set(r.did, (totals.get(r.did) ?? 0) + r.count)
+  }
 
-  if (groups.length === 0) {
+  const nameFor = (did: string) => {
+    const a = params.actors.get(did)
+    return a?.displayName ?? a?.handle ?? short(did, 12)
+  }
+
+  const rows = [...totals]
+    .sort(([aDid, a], [bDid, b]) => b - a || nameFor(aDid).localeCompare(nameFor(bDid)))
+
+  if (rows.length === 0) {
     return html`<div class="card"><div class="empty">
       This account is not on the record with anybody yet.
     </div></div>`
   }
 
-  return groups.map(({ kind, rows }) => {
-    const meta = RELATIONS[kind]
-    return html`<section class="relgroup">
-      <h2>${meta.title}</h2>
-      <p class="relnote">${meta.note}</p>
-      <div class="card">
-        ${rows.map((r) => {
-          const actor = params.actors.get(r.did)
-          const name = actor?.displayName ?? actor?.handle ?? short(r.did, 12)
-          const handles = new Map([[r.did, actor?.handle ?? r.did]])
-          return html`<a class="relrow" href="${profilePath(r.did, handles)}">
-            ${avatar(name, true)}
-            <span class="rident">
-              <strong>${name}</strong>
-              ${actor?.kind
-                ? html`<em>${KIND_LABEL[actor.kind] ?? actor.kind}</em>`
-                : ''}
-            </span>
-            <span class="rcount">${meta.unit(r.count)}</span>
-          </a>`
-        })}
-      </div>
-    </section>`
-  })
+  return html`<p class="relnote">
+      Organizations this account is on the record with, through a shared chain
+      of certificates on a part or an attestation either published on the
+      other. Most connected first.
+    </p>
+    <div class="card">
+      ${rows.map(([did, count]) => {
+        const actor = params.actors.get(did)
+        const name = nameFor(did)
+        return html`<a class="relrow"
+          href="${profilePath(did, new Map([[did, actor?.handle ?? did]]))}">
+          ${avatar(name, true)}
+          <span class="rident">
+            <strong>${name}</strong>
+            ${actor?.kind
+              ? html`<em>${KIND_LABEL[actor.kind] ?? actor.kind}</em>`
+              : ''}
+          </span>
+          <span class="rcount">${count} ${count === 1 ? 'record' : 'records'}</span>
+        </a>`
+      })}
+    </div>`
 }
 
 /**
@@ -1156,7 +1130,7 @@ export function accountPage(params: {
 
     ${params.tab === 'network'
       ? html`<div class="network">
-          ${relationGroups({
+          ${relatedList({
             relations: params.relations ?? [],
             actors: params.relatedActors ?? new Map(),
           })}

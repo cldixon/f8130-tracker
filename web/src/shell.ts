@@ -699,12 +699,11 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
 .tabs a .n { font-weight: 400; color: var(--muted); margin-left: .3rem; font-size: .82rem; }
 
 /* The network tab.
-   Rows rather than a grid of avatars: the count beside each organization is
-   the whole point — "three chains" and "one attestation" are different
-   strengths of link — and a grid has nowhere to put it. */
-.network { display: flex; flex-direction: column; gap: 1.4rem; }
-.relgroup h2 { font-size: 1rem; margin: 0 0 .15rem; }
-.relnote { margin: 0 0 .5rem; font-size: .78rem; color: var(--muted); }
+   Rows rather than a grid of avatars: the list is ordered by how many records
+   connect each organization, and a count that explains the ordering needs
+   somewhere to sit. A grid has nowhere to put it and would leave the sort
+   looking arbitrary. */
+.relnote { margin: 0 0 .7rem; font-size: .78rem; color: var(--muted); }
 .relrow {
   display: flex; align-items: center; gap: .6rem;
   padding: .65rem .9rem; border-bottom: 1px solid var(--line);
