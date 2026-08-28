@@ -347,7 +347,7 @@ describe('the network tab', () => {
     const body = await (
       await app.request(`/profile/cascadia-mro.${DOMAIN}?tab=network`)
     ).text()
-    assert.match(body, /on the record with/)
+    assert.match(body, /has interacted with/)
     assert.ok(
       !/bought from|sold to|supplier|customer/i.test(body),
       'claimed a trading relationship from a prev link',
@@ -423,7 +423,7 @@ describe('the network tab', () => {
     assert.deepEqual(relations, [])
   })
 
-  test('an account on the record with nobody says so', async () => {
+  test('an account that has interacted with nobody says so', async () => {
     const { app } = await accountApp((i) => {
       shopProfile(i)
       i.addRelease(release())
@@ -431,7 +431,7 @@ describe('the network tab', () => {
     const body = await (
       await app.request(`/profile/cascadia-mro.${DOMAIN}?tab=network`)
     ).text()
-    assert.match(body, /not on the record with anybody/)
+    assert.match(body, /not interacted with anybody/)
   })
 
   /**

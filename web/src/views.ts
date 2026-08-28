@@ -908,8 +908,9 @@ export type AccountTab = 'releases' | 'attestations' | 'network'
  * did" and the rest, the headings were asserting a direction and a role — and
  * a `prev` link cannot carry that weight, because it is the issuer's own claim
  * about which record came before theirs and a part can change hands more than
- * once between two certificates. "On the record with" is what the records
- * actually support, and it happens to be the shorter sentence.
+ * once between two certificates. Interaction is what the records actually
+ * support: these organizations published records about the same parts, or
+ * about each other. Who supplied whom is not in evidence and is not claimed.
  *
  * The count is what makes the ordering legible. Without it the most connected
  * organization sitting at the top looks arbitrary rather than sorted.
@@ -936,14 +937,12 @@ function relatedList(params: {
 
   if (rows.length === 0) {
     return html`<div class="card"><div class="empty">
-      This account is not on the record with anybody yet.
+      This account has not interacted with anybody on the network yet.
     </div></div>`
   }
 
   return html`<p class="relnote">
-      Organizations this account is on the record with, through a shared chain
-      of certificates on a part or an attestation either published on the
-      other. Most connected first.
+      Organizations this account has interacted with on the network.
     </p>
     <div class="card">
       ${rows.map(([did, count]) => {
