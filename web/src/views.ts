@@ -912,8 +912,10 @@ export type AccountTab = 'releases' | 'attestations' | 'network'
  * support: these organizations published records about the same parts, or
  * about each other. Who supplied whom is not in evidence and is not claimed.
  *
- * The count is what makes the ordering legible. Without it the most connected
- * organization sitting at the top looks arbitrary rather than sorted.
+ * The connecting records are counted to order the list and then not shown. A
+ * number beside each name invited exactly the reading the pooling exists to
+ * avoid — that four records make a stronger or more trustworthy relationship
+ * than one, when what they mostly make is an older one.
  */
 function relatedList(params: {
   relations: Relation[]
@@ -945,7 +947,7 @@ function relatedList(params: {
       Organizations this account has interacted with on the network.
     </p>
     <div class="card">
-      ${rows.map(([did, count]) => {
+      ${rows.map(([did]) => {
         const actor = params.actors.get(did)
         const name = nameFor(did)
         return html`<a class="relrow"
@@ -957,7 +959,6 @@ function relatedList(params: {
               ? html`<em>${KIND_LABEL[actor.kind] ?? actor.kind}</em>`
               : ''}
           </span>
-          <span class="rcount">${count} ${count === 1 ? 'record' : 'records'}</span>
         </a>`
       })}
     </div>`

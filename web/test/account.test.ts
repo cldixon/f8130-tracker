@@ -370,8 +370,10 @@ describe('the network tab', () => {
   })
 
   /**
-   * One row per organization, however many ways it is connected, and the
-   * most connected first — which is the only thing explaining the order.
+   * One row per organization, however many ways it is connected. The
+   * connecting records are counted to order the list and then not shown — a
+   * number beside each name invited the reading the pooling exists to avoid,
+   * that more records make a stronger relationship rather than an older one.
    */
   test('an organization appears once, ranked by how many records connect it', async () => {
     const { app } = await accountApp((i) => {
@@ -394,13 +396,17 @@ describe('the network tab', () => {
     ).text()
 
     const rows = [...body.matchAll(/class="relrow"[\s\S]*?<\/a>/g)].map((m) => m[0])
-    const northwind = rows.filter((r) => r.includes('Northwind Turbine'))
-    assert.equal(northwind.length, 1, 'one organization, listed twice')
-    assert.match(northwind[0]!, /3 records/)
+    assert.equal(
+      rows.filter((r) => r.includes('Northwind Turbine')).length,
+      1,
+      'one organization, listed twice',
+    )
     assert.ok(
       rows[0]!.includes('Northwind Turbine'),
       'the most connected organization is not at the top',
     )
+    // The tally orders the list and stays out of it.
+    assert.ok(!/\d+ records?</.test(body), 'a record count is back on the rows')
   })
 
   /**

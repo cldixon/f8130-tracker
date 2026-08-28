@@ -698,11 +698,7 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
 .tabs a.on { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
 .tabs a .n { font-weight: 400; color: var(--muted); margin-left: .3rem; font-size: .82rem; }
 
-/* The network tab.
-   Rows rather than a grid of avatars: the list is ordered by how many records
-   connect each organization, and a count that explains the ordering needs
-   somewhere to sit. A grid has nowhere to put it and would leave the sort
-   looking arbitrary. */
+/* The network tab. */
 .relnote { margin: 0 0 .7rem; font-size: .78rem; color: var(--muted); }
 .relrow {
   display: flex; align-items: center; gap: .6rem;
@@ -714,9 +710,6 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
 .rident { min-width: 0; flex: 1; }
 .rident strong { display: block; font-size: .92rem; }
 .rident em { font-style: normal; font-size: .74rem; color: var(--muted); }
-.rcount {
-  flex: 0 0 auto; font-size: .74rem; color: var(--muted); white-space: nowrap;
-}
 
 /* A name that leads to its account page. Underlined only on hover, because
    every card carries one and a feed of blue links reads as a link farm. */
