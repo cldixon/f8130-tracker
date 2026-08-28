@@ -7,6 +7,7 @@ import type {
   AttestationRow,
   IssuerStat,
   ReadIndex,
+  Relation,
   ReleaseRow,
 } from './index-port.js'
 
@@ -233,6 +234,57 @@ export class PostgresIndex implements ReadIndex {
       did: r.did,
       releases: Number(r.releases),
       attested: Number(r.attested),
+    }))
+  }
+
+  /**
+   * All four relationships in one statement.
+   *
+   * A UNION of four aggregates rather than four round trips, ranked per kind
+   * so `limit` bounds each relationship instead of letting the largest one
+   * consume the whole budget. Every branch joins through `release`, so the
+   * organization on the far end is always the one on the record in its own
+   * repository rather than a name somebody else wrote down.
+   *
+   * The two chain branches are the reason `release_prev_cid_idx` exists;
+   * without it the "later" direction is a sequential scan of every release.
+   */
+  async relatedAccounts(did: string, limit: number): Promise<Relation[]> {
+    const { rows } = await this.pool.query(
+      `WITH rel AS (
+         SELECT 'vouchedFor' AS kind, a.verifier_did AS did, COUNT(*) AS n
+           FROM attestation a JOIN release r ON r.cid = a.subject_cid
+          WHERE r.issuer_did = $1 AND a.verifier_did <> $1
+          GROUP BY 1, 2
+         UNION ALL
+         SELECT 'vouchedBy', r.issuer_did, COUNT(*)
+           FROM attestation a JOIN release r ON r.cid = a.subject_cid
+          WHERE a.verifier_did = $1 AND r.issuer_did <> $1
+          GROUP BY 1, 2
+         UNION ALL
+         SELECT 'earlier', prev.issuer_did, COUNT(*)
+           FROM release r JOIN release prev ON prev.cid = r.prev_cid
+          WHERE r.issuer_did = $1 AND prev.issuer_did <> $1
+          GROUP BY 1, 2
+         UNION ALL
+         SELECT 'later', next.issuer_did, COUNT(*)
+           FROM release r JOIN release next ON next.prev_cid = r.cid
+          WHERE r.issuer_did = $1 AND next.issuer_did <> $1
+          GROUP BY 1, 2
+       )
+       SELECT kind, did, n FROM (
+         SELECT rel.*, ROW_NUMBER() OVER (
+           PARTITION BY kind ORDER BY n DESC, did
+         ) AS rn FROM rel
+       ) ranked
+       WHERE rn <= $2
+       ORDER BY kind, n DESC, did`,
+      [did, limit],
+    )
+    return rows.map((r: any) => ({
+      kind: r.kind,
+      did: r.did,
+      count: Number(r.n),
     }))
   }
 

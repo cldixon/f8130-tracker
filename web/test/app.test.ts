@@ -62,6 +62,7 @@ const emptyIndex = (over: Partial<ReadIndex> = {}): ReadIndex => ({
   releasesByIssuer: async () => [],
   attestationsByVerifier: async () => [],
   accountStats: async () => ({ releases: 0, attested: 0, checks: 0 }),
+  relatedAccounts: async () => [],
   ...over,
 })
 

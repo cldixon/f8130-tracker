@@ -15,6 +15,8 @@ import type {
   AttestationRow,
   FeedEvent,
   IssuerStat,
+  Relation,
+  RelationKind,
   ReleaseRow,
 } from './index-port.js'
 import { bareLabel, fieldLabel } from './compose.js'
@@ -889,7 +891,104 @@ export function threadPage(params: {
 
 /* ---------------------------------------------------------------- account */
 
-export type AccountTab = 'releases' | 'attestations'
+export type AccountTab = 'releases' | 'attestations' | 'network'
+
+/**
+ * What each relationship is called, and what it actually rests on.
+ *
+ * The two halves are deliberately worded differently, because they are not
+ * equally solid. An attestation link is signed at both ends. A chain link is
+ * one issuer's claim about which record came before theirs, and the part may
+ * have changed hands more than once in between — so those two say "certified"
+ * rather than "bought from" or "sold to", which is what the records support
+ * and no more.
+ */
+const RELATIONS: Record<
+  RelationKind,
+  { title: string; note: string; unit: (n: number) => string }
+> = {
+  earlier: {
+    title: 'Certified this account’s parts before it did',
+    note: 'From the predecessor each release names. A claim by the issuer that wrote it, and a part can change hands between two certificates.',
+    unit: (n) => `${n} ${n === 1 ? 'chain' : 'chains'}`,
+  },
+  later: {
+    title: 'Certified this account’s parts after it did',
+    note: 'Releases naming one of this account’s as their predecessor. Same caveat, from the other end.',
+    unit: (n) => `${n} ${n === 1 ? 'chain' : 'chains'}`,
+  },
+  vouchedBy: {
+    title: 'This account vouched for them',
+    note: 'Attestations it published on their releases — signed records in its own repository.',
+    unit: (n) => `${n} ${n === 1 ? 'attestation' : 'attestations'}`,
+  },
+  vouchedFor: {
+    title: 'They vouched for this account',
+    note: 'Attestations they published on its releases — signed records in theirs, which it cannot remove.',
+    unit: (n) => `${n} ${n === 1 ? 'attestation' : 'attestations'}`,
+  },
+}
+
+/** The order the groups read in: supply chain first, then who checked whom. */
+const RELATION_ORDER: RelationKind[] = [
+  'earlier',
+  'later',
+  'vouchedBy',
+  'vouchedFor',
+]
+
+/**
+ * The organizations one account is on the record with.
+ *
+ * The nearest thing this network has to a social graph, and it is built from
+ * records rather than from follows — nobody here declares a relationship, so
+ * every edge on this page had to be worked for by publishing something.
+ *
+ * The supply-chain half is the part that is not visible anywhere else in the
+ * application. The feed shows one release at a time and the part page shows
+ * one component's history; neither answers "who does this shop actually work
+ * with", which is the question a buyer evaluating a station asks first.
+ */
+function relationGroups(params: {
+  relations: Relation[]
+  actors: Map<string, ActorRow>
+}) {
+  const groups = RELATION_ORDER.map((kind) => ({
+    kind,
+    rows: params.relations.filter((r) => r.kind === kind),
+  })).filter((g) => g.rows.length > 0)
+
+  if (groups.length === 0) {
+    return html`<div class="card"><div class="empty">
+      This account is not on the record with anybody yet.
+    </div></div>`
+  }
+
+  return groups.map(({ kind, rows }) => {
+    const meta = RELATIONS[kind]
+    return html`<section class="relgroup">
+      <h2>${meta.title}</h2>
+      <p class="relnote">${meta.note}</p>
+      <div class="card">
+        ${rows.map((r) => {
+          const actor = params.actors.get(r.did)
+          const name = actor?.displayName ?? actor?.handle ?? short(r.did, 12)
+          const handles = new Map([[r.did, actor?.handle ?? r.did]])
+          return html`<a class="relrow" href="${profilePath(r.did, handles)}">
+            ${avatar(name, true)}
+            <span class="rident">
+              <strong>${name}</strong>
+              ${actor?.kind
+                ? html`<em>${KIND_LABEL[actor.kind] ?? actor.kind}</em>`
+                : ''}
+            </span>
+            <span class="rcount">${meta.unit(r.count)}</span>
+          </a>`
+        })}
+      </div>
+    </section>`
+  })
+}
 
 /**
  * One organization: who it says it is, and everything it has signed.
@@ -929,6 +1028,10 @@ export function accountPage(params: {
   subjects?: Map<string, ReleaseRow>
   /** How many published checks each release on this page has drawn. */
   replies?: Map<string, number>
+  /** The network tab's content. Fetched only when that tab is the one open. */
+  relations?: Relation[]
+  /** Profiles for the organizations the network tab names. */
+  relatedActors?: Map<string, ActorRow>
   /** The DID the visitor is acting as, so their own records are marked. */
   viewer?: string
   now?: Date
@@ -940,7 +1043,7 @@ export function accountPage(params: {
   const handleKnown = a.handle !== a.did
   const base = profilePath(a.did, new Map([[a.did, a.handle]]))
   const tabHref = (tab: AccountTab) =>
-    tab === 'attestations' ? `${base}?tab=attestations` : base
+    tab === 'releases' ? base : `${base}?tab=${tab}`
 
   const fact = (label: string, value: string) =>
     html`<div><dt>${label}</dt><dd class="mono">${value}</dd></div>`
@@ -1044,9 +1147,21 @@ export function accountPage(params: {
       <a href="${tabHref('attestations')}"
         class="${params.tab === 'attestations' ? 'on' : ''}"
         >Attestations<span class="n">${params.stats.checks}</span></a>
+      <!-- No count. The other two are already in hand from the stats query;
+           this one would cost a fourth aggregate on every profile view to
+           put a number on a tab, and the tab is the thing worth having. -->
+      <a href="${tabHref('network')}" class="${params.tab === 'network' ? 'on' : ''}"
+        >Network</a>
     </nav>
 
-    <div class="feed">
+    ${params.tab === 'network'
+      ? html`<div class="network">
+          ${relationGroups({
+            relations: params.relations ?? [],
+            actors: params.relatedActors ?? new Map(),
+          })}
+        </div>`
+      : html`<div class="feed">
       ${params.events.length === 0
         ? html`<div class="card"><div class="empty">
             <!-- One sentence. An empty tab is not the place to teach the
@@ -1068,7 +1183,7 @@ export function accountPage(params: {
               params.subjects,
             ),
           )}
-    </div>`,
+        </div>`}`,
     params.mode,
     params.chrome,
   )

@@ -287,6 +287,147 @@ describe('the two tabs', () => {
   })
 })
 
+describe('the network tab', () => {
+  /**
+   * A part with a history: the OEM built it, the shop overhauled it, and a
+   * second shop overhauled it after that. Each release names its predecessor,
+   * so the chain is what says who handled the part before and after whom.
+   */
+  const chained = (i: MemoryIndex) => {
+    shopProfile(i)
+    operatorProfile(i)
+    i.setHandle('did:plc:oem', `northwind-turbine.${DOMAIN}`)
+    i.setActor({ did: 'did:plc:oem', displayName: 'Northwind Turbine', kind: 'oem' })
+    i.setHandle('did:plc:next', `granite-ridge.${DOMAIN}`)
+    i.setActor({ did: 'did:plc:next', displayName: 'Granite Ridge Overhaul', kind: 'mro' })
+
+    i.addRelease(
+      release({
+        cid: 'birth',
+        uri: 'at://did:plc:oem/dev.cldixon.f8130.release/1',
+        issuerDid: 'did:plc:oem',
+      }),
+    )
+    i.addRelease(release({ cid: 'mine', prevCid: 'birth', prevUri: 'at://did:plc:oem/x/1' }))
+    i.addRelease(
+      release({
+        cid: 'after',
+        uri: 'at://did:plc:next/dev.cldixon.f8130.release/3',
+        issuerDid: 'did:plc:next',
+        prevCid: 'mine',
+        prevUri: `at://${MRO}/dev.cldixon.f8130.release/3a`,
+      }),
+    )
+    i.addAttestation(attestation({ subjectCid: 'mine' }))
+  }
+
+  /**
+   * The relationship nothing else in the application shows. The feed shows one
+   * release at a time and the part page one component's history; neither
+   * answers "who does this shop actually work with".
+   */
+  test('the chain names who certified the part before and after', async () => {
+    const { app } = await accountApp(chained)
+    const body = await (
+      await app.request(`/profile/cascadia-mro.${DOMAIN}?tab=network`)
+    ).text()
+
+    assert.match(body, /Northwind Turbine/, 'the predecessor is missing')
+    assert.match(body, /Granite Ridge Overhaul/, 'the successor is missing')
+  })
+
+  /**
+   * A chain link is one issuer's claim about which record came before theirs,
+   * and a part can change hands between two certificates. The page must not
+   * present that as a trading relationship it cannot support.
+   */
+  test('a chain link is labelled as a claim, not as trade', async () => {
+    const { app } = await accountApp(chained)
+    const body = await (
+      await app.request(`/profile/cascadia-mro.${DOMAIN}?tab=network`)
+    ).text()
+    assert.match(body, /A claim by the issuer that wrote it/)
+    assert.ok(!/bought from|sold to/i.test(body), 'claimed a trade from a prev link')
+  })
+
+  test('both attestation directions are distinguished', async () => {
+    const { app } = await accountApp(chained)
+
+    const shop = await (
+      await app.request(`/profile/cascadia-mro.${DOMAIN}?tab=network`)
+    ).text()
+    assert.match(shop, /They vouched for this account/)
+
+    const operator = await (
+      await app.request(`/profile/example-air.${DOMAIN}?tab=network`)
+    ).text()
+    assert.match(operator, /This account vouched for them/)
+  })
+
+  /**
+   * A station that certified the same part twice has a relationship with the
+   * part, not with itself.
+   */
+  test('an account is never related to itself', async () => {
+    const { index } = await accountApp((i) => {
+      shopProfile(i)
+      i.addRelease(release({ cid: 'first' }))
+      i.addRelease(
+        release({
+          cid: 'second',
+          uri: `at://${MRO}/dev.cldixon.f8130.release/3z`,
+          prevCid: 'first',
+        }),
+      )
+    })
+    const relations = await index.relatedAccounts(MRO, 25)
+    assert.deepEqual(relations, [])
+  })
+
+  test('an account on the record with nobody says so', async () => {
+    const { app } = await accountApp((i) => {
+      shopProfile(i)
+      i.addRelease(release())
+    })
+    const body = await (
+      await app.request(`/profile/cascadia-mro.${DOMAIN}?tab=network`)
+    ).text()
+    assert.match(body, /not on the record with anybody/)
+  })
+
+  /**
+   * The limit is per relationship. A shop with many checkers must not be able
+   * to push its supply chain off the page — that half is the one nothing else
+   * in the application shows.
+   */
+  test('a crowded relationship cannot crowd out the others', async () => {
+    const { index } = await accountApp((i) => {
+      shopProfile(i)
+      i.addRelease(release({ cid: 'birth', issuerDid: 'did:plc:oem',
+        uri: 'at://did:plc:oem/dev.cldixon.f8130.release/1' }))
+      i.addRelease(release({ cid: 'mine', prevCid: 'birth' }))
+      for (let n = 0; n < 6; n++) {
+        i.addAttestation(
+          attestation({
+            cid: `att${n}`,
+            uri: `at://did:plc:v${n}/dev.cldixon.f8130.attestation/${n}`,
+            subjectCid: 'mine',
+            verifierDid: `did:plc:v${n}`,
+          }),
+        )
+      }
+    })
+
+    const relations = await index.relatedAccounts(MRO, 2)
+    assert.equal(relations.filter((r) => r.kind === 'vouchedFor').length, 2)
+    assert.equal(
+      relations.filter((r) => r.kind === 'earlier').length,
+      1,
+      'the supply chain was crowded out by the checkers',
+    )
+  })
+})
+
 describe('the counts', () => {
   /**
    * The regression this test exists for. Coverage counted attestations, so two

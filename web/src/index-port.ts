@@ -146,6 +146,40 @@ export type IssuerStat = {
   attested: number
 }
 
+/**
+ * How two organizations came to be on the same page as each other.
+ *
+ * Four relationships, and they are not the same kind of fact.
+ *
+ * The two attestation directions are as solid as anything here: an
+ * attestation is a signed record in the checker's own repository carrying a
+ * strong reference to a release in the issuer's, so both ends of the link are
+ * authored by the party they are attributed to.
+ *
+ * The two chain directions are weaker on purpose. A release names its
+ * predecessor, so a chain says who certified a part before and after whom —
+ * which is the closest this network comes to a supply chain, and is genuinely
+ * what a buyer wants. But `prev` is a claim by the issuer that wrote it, and
+ * the part may have changed hands more than once between two certificates. So
+ * they are labelled as what the records say rather than as trade.
+ */
+export type RelationKind =
+  /** Published attestations on this account's releases. */
+  | 'vouchedFor'
+  /** This account published attestations on theirs. */
+  | 'vouchedBy'
+  /** Certified a part before this account did. */
+  | 'earlier'
+  /** Certified a part after this account did. */
+  | 'later'
+
+export type Relation = {
+  kind: RelationKind
+  did: string
+  /** How many records support the link. Never a strength, only a count. */
+  count: number
+}
+
 export interface ReadIndex {
   /**
    * Releases and attestations interleaved, newest first.
@@ -195,4 +229,13 @@ export interface ReadIndex {
   /** What this account vouched for, newest observation first. */
   attestationsByVerifier(did: string, limit: number): Promise<AttestationRow[]>
   accountStats(did: string): Promise<AccountStats>
+  /**
+   * The organizations this account is on the record with.
+   *
+   * `limit` applies per relationship rather than overall, so a shop with two
+   * hundred checkers cannot push every supply-chain link off the page.
+   * Self-links are excluded: a station that certified a part twice is a fact
+   * about the part, not a relationship with itself.
+   */
+  relatedAccounts(did: string, limit: number): Promise<Relation[]>
 }

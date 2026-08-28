@@ -447,6 +447,14 @@ export function createApp(deps: AppDeps) {
   // repository.
 
   const ACCOUNT_LIMIT = 40
+  /**
+   * Per relationship, not overall.
+   *
+   * A shop with two hundred checkers must not be able to push every
+   * supply-chain link off the page, and the supply-chain half is the one
+   * nothing else in this application shows.
+   */
+  const RELATED_LIMIT = 25
 
   app.get('/profile/:id', async (c) => {
     if (!deps.index) return c.html(errorPage(503, 'No index is configured.'), 503)
@@ -460,24 +468,37 @@ export function createApp(deps: AppDeps) {
       )
     }
 
+    const asked = c.req.query('tab')
     const tab: AccountTab =
-      c.req.query('tab') === 'attestations' ? 'attestations' : 'releases'
+      asked === 'attestations' || asked === 'network' ? asked : 'releases'
 
     // Both counts always, whichever tab is showing, because the tabs carry
     // them: a "Checks 3" label that only appears once you are already on the
     // checks tab is not a way to discover the tab.
     const stats = await index.accountStats(account.did)
 
+    // The network tab is not a feed, so it costs neither of the record
+    // queries — and neither of the other two costs the relationship query.
     const events: FeedEvent[] =
-      tab === 'releases'
-        ? (await index.releasesByIssuer(account.did, ACCOUNT_LIMIT)).map((r) => ({
-            kind: 'release' as const,
-            at: r.observedAt,
-            release: r,
-          }))
-        : (await index.attestationsByVerifier(account.did, ACCOUNT_LIMIT)).map(
-            (a) => ({ kind: 'attestation' as const, at: a.observedAt, attestation: a }),
-          )
+      tab === 'network'
+        ? []
+        : tab === 'releases'
+          ? (await index.releasesByIssuer(account.did, ACCOUNT_LIMIT)).map((r) => ({
+              kind: 'release' as const,
+              at: r.observedAt,
+              release: r,
+            }))
+          : (await index.attestationsByVerifier(account.did, ACCOUNT_LIMIT)).map(
+              (a) => ({ kind: 'attestation' as const, at: a.observedAt, attestation: a }),
+            )
+
+    // Who this account is on the record with, and who those organizations
+    // are. One profile lookup for the whole tab rather than one per row.
+    const relations =
+      tab === 'network' ? await index.relatedAccounts(account.did, RELATED_LIMIT) : []
+    const relatedActors = relations.length
+      ? await index.actorsFor([...new Set(relations.map((r) => r.did))])
+      : new Map()
 
     // The account's own handle is seeded rather than looked up: it is the
     // answer already in hand, and on the releases tab it is frequently the
@@ -502,6 +523,8 @@ export function createApp(deps: AppDeps) {
         names: await namesFor(didsIn(events)),
         subjects: await subjectsFor(events),
         replies: await replyCounts(events),
+        relations,
+        relatedActors,
         viewer: await actingDid(currentActor(c)),
       }),
     )

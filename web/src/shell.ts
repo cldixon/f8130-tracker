@@ -698,6 +698,27 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
 .tabs a.on { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
 .tabs a .n { font-weight: 400; color: var(--muted); margin-left: .3rem; font-size: .82rem; }
 
+/* The network tab.
+   Rows rather than a grid of avatars: the count beside each organization is
+   the whole point — "three chains" and "one attestation" are different
+   strengths of link — and a grid has nowhere to put it. */
+.network { display: flex; flex-direction: column; gap: 1.4rem; }
+.relgroup h2 { font-size: 1rem; margin: 0 0 .15rem; }
+.relnote { margin: 0 0 .5rem; font-size: .78rem; color: var(--muted); }
+.relrow {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .65rem .9rem; border-bottom: 1px solid var(--line);
+  text-decoration: none; color: inherit;
+}
+.relrow:last-child { border-bottom: 0; }
+.relrow:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.rident { min-width: 0; flex: 1; }
+.rident strong { display: block; font-size: .92rem; }
+.rident em { font-style: normal; font-size: .74rem; color: var(--muted); }
+.rcount {
+  flex: 0 0 auto; font-size: .74rem; color: var(--muted); white-space: nowrap;
+}
+
 /* A name that leads to its account page. Underlined only on hover, because
    every card carries one and a feed of blue links reads as a link farm. */
 a.byline { color: inherit; text-decoration: none; }

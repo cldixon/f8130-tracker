@@ -22,6 +22,8 @@ import type {
   FeedEvent,
   IssuerStat,
   ReadIndex,
+  Relation,
+  RelationKind,
   ReleaseRow,
 } from './index-port.js'
 
@@ -253,6 +255,58 @@ export class MemoryIndex implements ReadIndex {
       attested: mine.filter((r) => covered.has(r.cid)).length,
       checks: this.attestations.filter((a) => a.verifierDid === did).length,
     }
+  }
+
+  async relatedAccounts(did: string, limit: number): Promise<Relation[]> {
+    const byCid = new Map(this.releases.map((r) => [r.cid, r]))
+    const mine = this.releases.filter((r) => r.issuerDid === did)
+    const mineCids = new Set(mine.map((r) => r.cid))
+
+    // Counted per kind and per counterparty, the same shape the SQL produces.
+    const tally = new Map<string, number>()
+    const add = (kind: RelationKind, other: string) => {
+      // A station that certified the same part twice is a fact about the part,
+      // not a relationship with itself.
+      if (!other || other === did) return
+      const key = `${kind}\u0000${other}`
+      tally.set(key, (tally.get(key) ?? 0) + 1)
+    }
+
+    for (const a of this.attestations) {
+      const subject = byCid.get(a.subjectCid)
+      if (!subject) continue
+      if (subject.issuerDid === did) add('vouchedFor', a.verifierDid)
+      if (a.verifierDid === did) add('vouchedBy', subject.issuerDid)
+    }
+
+    for (const r of this.releases) {
+      // The predecessor of one of this account's releases: whoever certified
+      // the part before it did.
+      if (r.issuerDid === did && r.prevCid) {
+        add('earlier', byCid.get(r.prevCid)?.issuerDid ?? '')
+      }
+      // And the mirror: a release naming one of this account's as its
+      // predecessor is whoever certified the part next.
+      if (r.prevCid && mineCids.has(r.prevCid)) add('later', r.issuerDid)
+    }
+
+    const all: Relation[] = [...tally].map(([key, count]) => {
+      const [kind, other] = key.split('\u0000')
+      return { kind: kind as RelationKind, did: other!, count }
+    })
+
+    // Ranked within each kind, so `limit` bounds every relationship rather
+    // than letting the largest one consume the whole budget.
+    const out: Relation[] = []
+    for (const kind of ['earlier', 'later', 'vouchedBy', 'vouchedFor'] as const) {
+      out.push(
+        ...all
+          .filter((r) => r.kind === kind)
+          .sort((x, y) => y.count - x.count || x.did.localeCompare(y.did))
+          .slice(0, limit),
+      )
+    }
+    return out
   }
 
   /**
