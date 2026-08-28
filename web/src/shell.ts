@@ -344,14 +344,20 @@ a.button:hover { filter: brightness(1.08); }
 .panel > summary::-webkit-details-marker { display: none; }
 .panel > summary:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .panel .pmark { flex: 0 0 auto; display: flex; color: var(--muted); }
-.panel .ico-svg { width: 1.15rem; height: 1.15rem; display: block; }
 .panel .ptitle { font-weight: 600; }
-.panel .pchev {
+.ico-svg { width: 1.15rem; height: 1.15rem; display: block; }
+/* The disclosure mark, wherever a <details> opens. Scoped to the element
+   rather than to the panel, because the account switcher is the same gesture
+   and was drawing a Unicode triangle at .7rem to say so — which rendered at
+   whatever size and weight the reader's font stack felt like, sat beside
+   stroked SVGs everywhere else, and pointed the same way whether it was open
+   or shut. */
+.pchev {
   flex: 0 0 auto; margin-left: auto; display: flex; color: var(--muted);
   transition: transform .18s ease-out;
 }
-.panel .pchev .ico-svg { width: 1.05rem; height: 1.05rem; }
-.panel[open] > summary .pchev { transform: rotate(180deg); }
+.pchev .ico-svg { width: 1.05rem; height: 1.05rem; }
+details[open] > summary .pchev { transform: rotate(180deg); }
 .panel .pbody { padding: 0 1rem 1rem; }
 .panel .pbody > .sub:first-child { margin-top: 0; }
 
@@ -574,7 +580,7 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
 .me .who b { display: block; font-size: .85rem; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .me .who em { font-style: normal; font-size: .72rem; color: var(--muted); }
-.me .caret { margin-left: auto; color: var(--muted); font-size: .7rem; }
+
 
 .switcher {
   max-height: 22rem; overflow-y: auto; margin: .3rem 0 0;
@@ -990,6 +996,50 @@ export function avatar(name: string, small = false) {
 }
 
 /**
+ * The icon set, and the one function that draws from it.
+ *
+ * Here rather than in views.ts because shell.ts already owns the stylesheet
+ * these are sized by, and because the account switcher needs the chevron —
+ * views.ts imports from this module, so the set could not stay there without
+ * either a cycle or a second copy of the same path data. The site had one
+ * disclosure affordance drawn as an SVG chevron and another as a Unicode
+ * triangle for exactly that reason.
+ *
+ * Lucide paths, all on a 24-unit box with a 2-unit stroke, so they sit
+ * together at any size.
+ */
+const ICONS: Record<string, string> = {
+  // circle-check
+  check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  // circle-x
+  cross: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+  // megaphone
+  megaphone:
+    '<path d="M11 6a13 13 0 0 0 8.4-2.8A1 1 0 0 1 21 4v12a1 1 0 0 1-1.6.8A13 13 0 0 0 11 14H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/>' +
+    '<path d="M6 14a12 12 0 0 0 2.4 7.2 2 2 0 0 0 3.2-2.4A8 8 0 0 1 10 14"/>' +
+    '<path d="M8 6v8"/>',
+  // file-text
+  document:
+    '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/>' +
+    '<path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  // package
+  part:
+    '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/>' +
+    '<path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/>',
+  // chevron-down
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+}
+
+export function icon(name: string) {
+  return raw(
+    `<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+      `stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+      (ICONS[name] ?? '') +
+      `</svg>`,
+  )
+}
+
+/**
  * What each role is called on screen.
  *
  * Exported because the account page needs the same words the identity
@@ -1026,7 +1076,7 @@ function identity(chrome: Chrome) {
         <b>${me ? me.displayName : 'The public'}</b>
         <em>${me ? (KIND_LABEL[me.kind] ?? me.kind) : 'signed out'}</em>
       </span>
-      <span class="caret">▾</span>
+      <span class="pchev">${icon('chevron')}</span>
     </summary>
     <form method="post" action="/act-as" class="switcher">
       <h4>Watch without an account</h4>

@@ -19,7 +19,7 @@ import type {
   ReleaseRow,
 } from './index-port.js'
 import { bareLabel, fieldLabel } from './compose.js'
-import { avatar, KIND_LABEL, layout, type Chrome, type Mode } from './shell.js'
+import { avatar, icon, KIND_LABEL, layout, type Chrome, type Mode } from './shell.js'
 import type { Arrival } from './dock.js'
 import type { Actor } from './writer.js'
 
@@ -1353,37 +1353,6 @@ const VERIFY_SCRIPT = `
  * server, and a stylesheet that fetches an icon font is a network round trip
  * for something that is four hundred bytes of markup.
  */
-const ICONS: Record<string, string> = {
-  // circle-check
-  check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
-  // circle-x
-  cross: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
-  // megaphone
-  megaphone:
-    '<path d="M11 6a13 13 0 0 0 8.4-2.8A1 1 0 0 1 21 4v12a1 1 0 0 1-1.6.8A13 13 0 0 0 11 14H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/>' +
-    '<path d="M6 14a12 12 0 0 0 2.4 7.2 2 2 0 0 0 3.2-2.4A8 8 0 0 1 10 14"/>' +
-    '<path d="M8 6v8"/>',
-  // file-text
-  document:
-    '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/>' +
-    '<path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
-  // package
-  part:
-    '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/>' +
-    '<path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/>',
-  // chevron-down
-  chevron: '<path d="m6 9 6 6 6-6"/>',
-}
-
-function icon(name: string) {
-  return raw(
-    `<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
-      `stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
-      (ICONS[name] ?? '') +
-      `</svg>`,
-  )
-}
-
 /**
  * A section of a page: named, collapsible, and stating its own condition.
  *
