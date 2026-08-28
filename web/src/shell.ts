@@ -944,7 +944,7 @@ button.ghost:hover { background: var(--skip-bg); }
 export type Mode = 'demo' | 'live'
 
 /** Which rail entry is lit. */
-export type NavKey = 'home' | 'inbox' | 'issuers' | 'profile' | 'docs' | null
+export type NavKey = 'home' | 'inbox' | 'issuers' | 'profile' | null
 
 /**
  * The one piece of per-request state every page shares: who the visitor is
@@ -1187,20 +1187,6 @@ const COMPOSER_SCRIPT = `
 `
 
 /**
- * The filing cabinet, which is the visitor's browser and not this server.
- *
- * A bundle carries every nonce, so it opens every withheld block on the
- * record it belongs to. This service must therefore never store one — not to
- * be helpful, not for a moment. The rule holds here: bundles are written to
- * localStorage by the browser that was handed them, read back by the same
- * browser, and never sent anywhere except transiently to the /form endpoint
- * that folds the tree and returns the page.
- *
- * That is also a more honest demonstration than a server-side store would be.
- * An issuer can reopen a form they issued because *they hold the nonces*, not
- * because they are signed in. Nobody can grant that, and nobody can revoke it.
- */
-/**
  * Dismissing the account switcher.
  *
  * It is a `details` element, which is the right markup — it works with
@@ -1230,7 +1216,26 @@ const SWITCHER_SCRIPT = `
 })()
 `
 
-const CABINET_SCRIPT = `
+/**
+ * Where a bundle lives, which is the visitor's browser and not this server.
+ *
+ * A bundle carries every nonce, so it opens every withheld block on the
+ * record it belongs to. This service must therefore never store one — not to
+ * be helpful, not for a moment. The rule holds here: bundles are written to
+ * localStorage by the browser that was handed them, read back by the same
+ * browser, and never sent anywhere except transiently to the /form endpoint
+ * that folds the tree and returns the page.
+ *
+ * That is also a more honest demonstration than a server-side store would be.
+ * An issuer can reopen a form they issued because *they hold the nonces*, not
+ * because they are signed in. Nobody can grant that, and nobody can revoke it.
+ *
+ * Two jobs, and the page that used to list what is in here was a third. It is
+ * gone; these are not. Keeping a bundle the moment it is handed over is the
+ * only chance there is to keep it, and opening a record with one is what
+ * holding it is *for*.
+ */
+const BUNDLES_SCRIPT = `
 (function () {
   // Not renamed with the app. This key addresses documents already sitting in
   // people's browsers, and a bundle cannot be reissued — the nonces are not
@@ -1267,21 +1272,6 @@ const CABINET_SCRIPT = `
       if (f) { f.elements['bundle'].value = held; f.submit() }
     }
   }
-
-  var list = document.getElementById('cabinet')
-  if (list) {
-    var all2 = read()
-    var uris = Object.keys(all2)
-    if (uris.length === 0) { list.innerHTML = '<div class="empty">This browser is holding no documents.</div>'; return }
-    list.innerHTML = uris.map(function (uri) {
-      var parts = uri.split('/')
-      var href = '/form?uri=' + encodeURIComponent(uri)
-      return '<div class="link"><div class="body" style="flex:1">' +
-        '<div class="title"><a href="' + href + '">' + parts[4] + '</a></div>' +
-        '<div class="detail mono" style="word-break:break-all">' + uri + '</div>' +
-        '</div></div>'
-    }).join('')
-  }
 })()
 `
 
@@ -1315,15 +1305,16 @@ export function layout(
 <div class="app">
   <aside class="rail">
     <a class="brand" href="/">OffWing<br><span>FAA 8130-3 certificates on atproto</span></a>
-    <!-- Four destinations, and each answers a different question. Feed: what
-         is happening. Receiving: what is waiting on me. Issuers: who is
-         publishing, and how much of it anybody has vouched for. Documents: what
-         I am holding, and the things I can do with it.
+    <!-- Each entry answers a different question. Feed: what is happening.
+         Receiving: what is waiting on me. Issuers: who is publishing, and how
+         much of it anybody has vouched for. Profile: what I have signed.
 
-         Checking a document and proving one field used to be nav entries of
-         their own. Both are operations on a bundle you hold, so they belong
-         where the bundles are rather than beside them — and one of the two was
-         not in the nav at all, which is how an entire page went unreachable.
+         Documents used to sit here — a list of the bundles this browser is
+         holding. It was the first screen this project had, from before there
+         was a feed to arrive on, and it had become the one entry that named a
+         container rather than a question. The storage it listed is untouched:
+         a browser still keeps every bundle it is handed, and a record page
+         still opens itself with one. What went is the page that listed them.
 
          Two labels per entry, because a rail and a tab bar want different
          words. Both are in the markup rather than one derived from the other,
@@ -1350,8 +1341,6 @@ export function layout(
             class="${on('profile')}"><span class="ico">☉</span>
             <span class="full">Profile</span><span class="tab">Profile</span></a>`
         : ''}
-      <a href="/cabinet" class="${on('docs')}"><span class="ico">▣</span>
-        <span class="full">Documents</span><span class="tab">Docs</span></a>
     </nav>
     ${actors.length > 0
       ? me
@@ -1369,7 +1358,7 @@ export function layout(
 </div>
 ${withComposer ? composer() : ''}
 ${withComposer ? html`${raw(`<script>${COMPOSER_SCRIPT}</script>`)}` : ''}
-${raw(`<script>${CABINET_SCRIPT}</script>`)}
+${raw(`<script>${BUNDLES_SCRIPT}</script>`)}
 ${actors.length > 0 ? html`${raw(`<script>${SWITCHER_SCRIPT}</script>`)}` : ''}
 </body>
 </html>`
