@@ -1,6 +1,7 @@
 import { Pool } from 'pg'
 
 import type {
+  AccountStats,
   ActorRow,
   FeedEvent,
   AttestationRow,
@@ -62,6 +63,28 @@ export function toAttestation(r: Record<string, any>): AttestationRow {
     issuerDid: String(r.subject_uri ?? '').split('/')[2] ?? '',
     verifiedAt: at(r.verified_at),
     observedAt: at(r.observed_at),
+  }
+}
+
+/**
+ * The actor columns, named once.
+ *
+ * Three statements read this table and they used to select different subsets,
+ * which is how the profile page nearly shipped with a CAGE code the feed's
+ * lookup did not return.
+ */
+const ACTOR_COLUMNS =
+  `SELECT did, handle, org_name, kind, cage, cert_number, first_seen FROM actor`
+
+export function toActor(r: Record<string, any>): ActorRow {
+  return {
+    did: r.did,
+    handle: r.handle,
+    displayName: r.org_name ?? null,
+    kind: r.kind ?? null,
+    cage: r.cage ?? null,
+    certificate: r.cert_number ?? null,
+    firstSeen: r.first_seen ? at(r.first_seen) : null,
   }
 }
 
@@ -195,7 +218,10 @@ export class PostgresIndex implements ReadIndex {
          FROM release GROUP BY issuer_did
        ) r ON r.issuer_did = a.did
        LEFT JOIN (
-         SELECT rel.issuer_did, COUNT(DISTINCT att.cid) AS attested
+         -- Distinct releases, not distinct attestations. Two operators
+         -- checking the same certificate is one release covered, and counting
+         -- the records let this column read "4 of 3".
+         SELECT rel.issuer_did, COUNT(DISTINCT rel.cid) AS attested
          FROM attestation att
          JOIN release rel ON rel.cid = att.subject_cid
          GROUP BY rel.issuer_did
@@ -214,13 +240,73 @@ export class PostgresIndex implements ReadIndex {
     const out = new Map<string, ActorRow>()
     if (dids.length === 0) return out
     const { rows } = await this.pool.query(
-      `SELECT did, org_name, kind FROM actor WHERE did = ANY($1)`,
+      `${ACTOR_COLUMNS} WHERE did = ANY($1)`,
       [dids],
     )
-    for (const r of rows) {
-      out.set(r.did, { did: r.did, displayName: r.org_name, kind: r.kind })
-    }
+    for (const r of rows) out.set(r.did, toActor(r))
     return out
+  }
+
+  /**
+   * One account by handle or by DID, whichever the caller has.
+   *
+   * Both in a single statement rather than a lookup and a fallback, because
+   * the two are not distinguishable without parsing: the handle column holds
+   * the DID for any organization whose handle this observer never resolved, so
+   * a DID really can be the correct answer to a handle query.
+   */
+  async accountFor(handleOrDid: string): Promise<ActorRow | null> {
+    const { rows } = await this.pool.query(
+      `${ACTOR_COLUMNS} WHERE did = $1 OR handle = $1 LIMIT 1`,
+      [handleOrDid],
+    )
+    return rows[0] ? toActor(rows[0]) : null
+  }
+
+  async releasesByIssuer(did: string, limit: number): Promise<ReleaseRow[]> {
+    const { rows } = await this.pool.query(
+      `SELECT * FROM release WHERE issuer_did = $1
+       ORDER BY observed_at DESC LIMIT $2`,
+      [did, limit],
+    )
+    return rows.map(toRelease)
+  }
+
+  async attestationsByVerifier(
+    did: string,
+    limit: number,
+  ): Promise<AttestationRow[]> {
+    const { rows } = await this.pool.query(
+      `SELECT * FROM attestation WHERE verifier_did = $1
+       ORDER BY observed_at DESC LIMIT $2`,
+      [did, limit],
+    )
+    return rows.map(toAttestation)
+  }
+
+  /**
+   * Three counts for one account, in one round trip.
+   *
+   * Scalar subqueries rather than joins: the three count different things over
+   * different tables, and a join would either multiply rows or need a
+   * DISTINCT on each aggregate to undo the multiplication.
+   */
+  async accountStats(did: string): Promise<AccountStats> {
+    const { rows } = await this.pool.query(
+      `SELECT
+         (SELECT COUNT(*) FROM release WHERE issuer_did = $1) AS releases,
+         (SELECT COUNT(DISTINCT r.cid)
+            FROM release r JOIN attestation a ON a.subject_cid = r.cid
+           WHERE r.issuer_did = $1) AS attested,
+         (SELECT COUNT(*) FROM attestation WHERE verifier_did = $1) AS checks`,
+      [did],
+    )
+    const r = rows[0] ?? {}
+    return {
+      releases: Number(r.releases ?? 0),
+      attested: Number(r.attested ?? 0),
+      checks: Number(r.checks ?? 0),
+    }
   }
 
   async handleFor(did: string): Promise<string | null> {

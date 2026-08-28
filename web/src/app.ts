@@ -36,6 +36,7 @@ import type {
   ReleaseRow,
 } from './index-port.js'
 import {
+  accountPage,
   cabinetPage,
   dashboardPage,
   disclosePage,
@@ -54,6 +55,7 @@ import {
   issuePage,
   partPage,
   threadPage,
+  type AccountTab,
   verifyPage,
   type FormFold,
 } from './views.js'
@@ -430,6 +432,78 @@ export function createApp(deps: AppDeps) {
         'x-accel-buffering': 'no',
       },
     })
+  })
+
+  // -------------------------------------------------------- account page
+  //
+  // One organization's repository, drawn as a profile. Addressed by handle —
+  // which here is a domain the organization proved control of through DNS —
+  // and by DID for anything this observer never resolved a handle for.
+  //
+  // The page is deliberately assembled from the same parts as the front page:
+  // the same cards, the same name resolution, the same "yours" marking. An
+  // account feed that looked different from the main feed would be claiming a
+  // difference that does not exist — it is the same records, filtered to one
+  // repository.
+
+  const ACCOUNT_LIMIT = 40
+
+  app.get('/profile/:id', async (c) => {
+    if (!deps.index) return c.html(errorPage(503, 'No index is configured.'), 503)
+    const index = deps.index
+
+    const account = await index.accountFor(c.req.param('id'))
+    if (!account) {
+      return c.html(
+        errorPage(404, 'This observer has not seen that organization.'),
+        404,
+      )
+    }
+
+    const tab: AccountTab = c.req.query('tab') === 'checks' ? 'checks' : 'releases'
+
+    // Both counts always, whichever tab is showing, because the tabs carry
+    // them: a "Checks 3" label that only appears once you are already on the
+    // checks tab is not a way to discover the tab.
+    const stats = await index.accountStats(account.did)
+
+    const events: FeedEvent[] =
+      tab === 'releases'
+        ? (await index.releasesByIssuer(account.did, ACCOUNT_LIMIT)).map((r) => ({
+            kind: 'release' as const,
+            at: r.observedAt,
+            release: r,
+          }))
+        : (await index.attestationsByVerifier(account.did, ACCOUNT_LIMIT)).map(
+            (a) => ({ kind: 'attestation' as const, at: a.observedAt, attestation: a }),
+          )
+
+    // The account's own handle is seeded rather than looked up: it is the
+    // answer already in hand, and on the releases tab it is frequently the
+    // only DID on the page, so the lookup would be a query for something the
+    // route was given.
+    const handles = await handlesFor(events)
+    handles.set(account.did, account.handle)
+
+    return c.html(
+      accountPage({
+        // Only your own account lights the rail. Lighting "Issuers" on
+        // somebody else's would be wrong twice over: it is a different page,
+        // and eleven of the organizations with account pages here issue
+        // nothing at all.
+        chrome: chrome(c, currentActor(c) === account.handle ? 'profile' : null),
+        mode,
+        account,
+        stats,
+        tab,
+        events,
+        handles,
+        names: await namesFor(didsIn(events)),
+        subjects: await subjectsFor(events),
+        replies: await replyCounts(events),
+        viewer: await actingDid(currentActor(c)),
+      }),
+    )
   })
 
   // ------------------------------------------------------------- dashboard

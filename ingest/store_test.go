@@ -124,6 +124,31 @@ func TestStationRecordNamesAnActor(t *testing.T) {
 	}
 }
 
+// The CAGE code was decoded off every station record and then discarded: the
+// insert did not name the column and the column did not exist. Nothing failed,
+// and the account page had one fewer thing to say about an organization than
+// the organization had published about itself.
+func TestStationRecordStoresItsCAGECode(t *testing.T) {
+	s, ctx := testStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := s.ApplyCommit(ctx, 1, now, []IndexedRecord{
+		stationRec("at://"+cascadia+"/dev.cldixon.f8130.station/self", "Cascadia MRO", "mro"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var cage, cert string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT cage, cert_number FROM actor WHERE did = $1`, cascadia,
+	).Scan(&cage, &cert); err != nil {
+		t.Fatal(err)
+	}
+	if cage != "SYN0005" || cert != "SYNTHETIC-CERT-12345" {
+		t.Errorf("cage/cert = %q/%q", cage, cert)
+	}
+}
+
 // A lessor would have failed the kind check before station records were
 // indexed, because nothing had ever written the column.
 func TestLessorProfileStores(t *testing.T) {

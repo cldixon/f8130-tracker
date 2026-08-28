@@ -82,6 +82,21 @@ and public: a roster change that renamed an existing handle would strand its
 identity and orphan every record it ever signed. The roster tests assert the
 five original handles are still present for exactly that reason.
 
+## The CAGE code needs one reindex
+
+The `actor` table gained a `cage` column when account pages were built. The
+schema statement is idempotent and adds it to a live database on the next
+boot, so nothing breaks and no data is lost — but the column arrives empty for
+every organization already indexed, because a station record is written once at
+provisioning and the firehose has no reason to replay it. The observer's
+self-repair does not cover this either: it fetches a missing profile only when
+it holds no display name, and these rows have one.
+
+So the value arrives on a rebuild. Set `F8130_REINDEX=1` on `ingest`, redeploy,
+then unset it; the index is rebuilt from sequence zero, every station record is
+re-read, and the CAGE codes land. Nothing else depends on it — until then the
+account pages simply show one fewer fact than the organizations published.
+
 Station profiles are the one thing a reindex cannot recover from the firehose,
 because they are written once at provisioning and never again. The ingest
 fetches a missing one directly over `com.atproto.sync.getRecord` — verified

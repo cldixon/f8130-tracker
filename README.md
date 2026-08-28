@@ -140,7 +140,7 @@ flowchart LR
     subgraph appview["AppView A — this project"]
         ING["ingest<br/>verifies every commit<br/>signature itself"]
         PG[("Postgres<br/>derived index<br/>rebuildable")]
-        WEB["offwing-web<br/>feed · receiving · issuers"]
+        WEB["offwing-web<br/>feed · receiving<br/>accounts · issuers"]
     end
 
     WD["AppView B — watchdog<br/>own index, own questions"]
@@ -199,7 +199,7 @@ Complete as a demonstration. Built:
 | `commitment/` | Go implementation of the same commitment scheme |
 | `ingest/` | firehose consumer, signature verification, derived Postgres index |
 | `cmd/ingest/` | `run` and `reindex` commands |
-| `web/` | the AppView — feed, receiving, form view, part timeline, issuers, JSON API |
+| `web/` | the AppView — feed, receiving, form view, part timeline, accounts, issuers, JSON API |
 | `seed/` | one-shot job: 29 fictional organizations and the eight set pieces |
 | `watchdog/` | AppView B — an independent reader with its own index and its own questions |
 | `testdata/vectors.json` | the cross-language contract both cores must satisfy |

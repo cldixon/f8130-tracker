@@ -85,8 +85,52 @@ export type FeedEvent =
  */
 export type ActorRow = {
   did: string
+  /**
+   * The domain the organization proved control of.
+   *
+   * Falls back to the DID when this observer never resolved one, which is why
+   * every reader of this field guards against the two being equal rather than
+   * treating a handle as necessarily friendlier than an identifier.
+   */
+  handle: string
   displayName: string | null
   kind: string | null
+  /** Fictional commercial identifier, self-asserted on the station record. */
+  cage: string | null
+  /** Fictional repair-station certificate number, where the kind implies one. */
+  certificate: string | null
+  /**
+   * When this observer first saw the DID publish anything at all.
+   *
+   * Not a joining date and not a claim by the organization: it is a fact about
+   * this index, and it moves if the index is rebuilt. Labelled as such
+   * wherever it is shown.
+   */
+  firstSeen: Date | null
+}
+
+/**
+ * What one account has published, counted.
+ *
+ * Separate from the lists it accompanies because the lists are paged and the
+ * counts are not: a profile that says "showing 40" over a shop with 300
+ * releases is worse than useless. All three are counts over this observer's
+ * index and none is a claim anybody made.
+ */
+export type AccountStats = {
+  /** Certificates issued from this repository. */
+  releases: number
+  /**
+   * How many of those somebody else has published a check on.
+   *
+   * Counted as releases with at least one attestation, not as attestations:
+   * two operators checking the same certificate is one release covered, and
+   * counting the records would let the number exceed the total it is shown
+   * against.
+   */
+  attested: number
+  /** Checks this account published on other organizations' releases. */
+  checks: number
 }
 
 export type IssuerStat = {
@@ -131,4 +175,24 @@ export interface ReadIndex {
   handleFor(did: string): Promise<string | null>
   /** Profiles for the DIDs on screen. Missing DIDs are simply absent. */
   actorsFor(dids: string[]): Promise<Map<string, ActorRow>>
+
+  /**
+   * One account, addressed by either name it has.
+   *
+   * A handle and a DID are both accepted because both are in circulation: the
+   * links in this application are built from handles, which read as domains
+   * and are what anybody would type, while a record only ever carries a DID.
+   * Resolving them in one place means a profile URL survives an organization
+   * that has published nothing but a DID.
+   *
+   * Null when this observer has never seen the account at all, which is a
+   * different answer from an account that has published no profile — that one
+   * returns a row with a null display name.
+   */
+  accountFor(handleOrDid: string): Promise<ActorRow | null>
+  /** What this account issued, newest observation first. */
+  releasesByIssuer(did: string, limit: number): Promise<ReleaseRow[]>
+  /** What this account vouched for, newest observation first. */
+  attestationsByVerifier(did: string, limit: number): Promise<AttestationRow[]>
+  accountStats(did: string): Promise<AccountStats>
 }

@@ -624,6 +624,75 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
 .act:hover { background: var(--skip-bg); }
 .post .meta { margin-top: .6rem; font-size: .78rem; color: var(--muted); }
 
+/* account page
+
+   The header a social client puts above somebody's posts, with the two things
+   a social client has and this does not left out. There is no cover image and
+   no bio, because an organization publishes neither and inventing them would
+   be the application asserting something the network never said.
+
+   What is here instead is the station record: a name, a role, a commercial
+   identifier and a certificate number, each of them self-asserted and none of
+   them committed to by any release. The page says so once, at the bottom,
+   rather than hedging every field. */
+.account {
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 1.1rem 1.15rem;
+}
+.account .who { display: flex; align-items: center; gap: .8rem; }
+.account .av { width: 3.25rem; height: 3.25rem; font-size: 1.1rem; }
+.account .ident { min-width: 0; }
+.account .ident h1 { font-size: 1.35rem; margin: 0; }
+.account .ident .role { color: var(--muted); font-size: .86rem; }
+/* The handle is a domain the organization proved control of through DNS, which
+   is the load-bearing half of the identity — so it gets its own line at full
+   size rather than being tucked in beside the name. */
+.account .hnd {
+  display: block; margin-top: .55rem; font-size: .88rem; word-break: break-all;
+}
+.account .hnd .ico { color: var(--pass); margin-right: .3rem; }
+.account .facts {
+  display: flex; flex-wrap: wrap; gap: .3rem 1.5rem; margin: .85rem 0 0;
+  padding-top: .8rem; border-top: 1px solid var(--line);
+}
+.account .facts > div { display: flex; align-items: baseline; gap: .4rem; min-width: 0; }
+.account .facts dt {
+  font-size: .62rem; font-weight: 700; letter-spacing: .08em;
+  color: var(--muted); text-transform: uppercase; white-space: nowrap;
+}
+.account .facts dd { margin: 0; font-size: .85rem; word-break: break-all; }
+/* Counts, not a score. Three numbers with the sentence that says what each one
+   is, because "5 of 12" over a shop means nothing without "checked by someone
+   other than the shop". */
+.account .counts {
+  display: flex; flex-wrap: wrap; gap: .35rem 1.6rem; margin-top: .85rem;
+  padding-top: .8rem; border-top: 1px solid var(--line);
+}
+.account .counts > div { font-size: .82rem; color: var(--muted); }
+.account .counts b { color: var(--fg); font-size: 1.05rem; font-weight: 700; }
+.account .selfsaid { margin: .8rem 0 0; font-size: .74rem; color: var(--muted); }
+.account .noprofile {
+  margin: .85rem 0 0; padding-top: .8rem; border-top: 1px solid var(--line);
+  font-size: .82rem; color: var(--muted);
+}
+
+/* Two tabs, and they are two collections in one repository rather than two
+   filters over one list: a release is a record this account signed about a
+   part, a check is a record it signed about somebody else's release. */
+.tabs { display: flex; gap: .25rem; margin: 1rem 0 .6rem; border-bottom: 1px solid var(--line); }
+.tabs a {
+  padding: .55rem .85rem; font-size: .9rem; text-decoration: none;
+  color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tabs a:hover { color: var(--fg); }
+.tabs a.on { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
+.tabs a .n { font-weight: 400; color: var(--muted); margin-left: .3rem; font-size: .82rem; }
+
+/* A name that leads to its account page. Underlined only on hover, because
+   every card carries one and a feed of blue links reads as a link farm. */
+a.byline { color: inherit; text-decoration: none; }
+a.byline:hover { text-decoration: underline; text-decoration-color: var(--accent); }
+
 .replies { margin-top: .6rem; display: flex; flex-direction: column; gap: .5rem; }
 /* Indented, and joined to the post above by a rail, because the nesting is
    the argument: everything below the first card lives in somebody else's
@@ -846,7 +915,7 @@ button.ghost:hover { background: var(--skip-bg); }
 export type Mode = 'demo' | 'live'
 
 /** Which rail entry is lit. */
-export type NavKey = 'home' | 'inbox' | 'issuers' | 'docs' | null
+export type NavKey = 'home' | 'inbox' | 'issuers' | 'profile' | 'docs' | null
 
 /**
  * The one piece of per-request state every page shares: who the visitor is
@@ -897,7 +966,15 @@ export function avatar(name: string, small = false) {
     style="background:hsl(${h % 360} 42% 40%)">${initials}</span>`
 }
 
-const KIND_LABEL: Record<string, string> = {
+/**
+ * What each role is called on screen.
+ *
+ * Exported because the account page needs the same words the identity
+ * switcher uses. One organization described as a "Repair station" in the rail
+ * and an "mro" on its own page is the kind of small inconsistency that reads
+ * as two different systems.
+ */
+export const KIND_LABEL: Record<string, string> = {
   oem: 'Manufacturer',
   mro: 'Repair station',
   operator: 'Operator',
@@ -1193,6 +1270,13 @@ export function layout(
         : ''}
       <a href="/parts" class="${on('issuers')}"><span class="ico">▤</span>
         <span class="full">Issuers</span><span class="tab">Issuers</span></a>
+      <!-- Only when somebody is signed in, because the public is not an
+           organization and has no repository to show. -->
+      ${me
+        ? html`<a href="/profile/${encodeURIComponent(me.handle)}"
+            class="${on('profile')}"><span class="ico">☉</span>
+            <span class="full">Profile</span><span class="tab">Profile</span></a>`
+        : ''}
       <a href="/cabinet" class="${on('docs')}"><span class="ico">▣</span>
         <span class="full">Documents</span><span class="tab">Docs</span></a>
     </nav>
