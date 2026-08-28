@@ -10,13 +10,16 @@ import type {
   VerificationReport,
 } from '@f8130/core'
 import type {
+  AccountStats,
+  ActorRow,
   AttestationRow,
   FeedEvent,
   IssuerStat,
+  Relation,
   ReleaseRow,
 } from './index-port.js'
 import { bareLabel, fieldLabel } from './compose.js'
-import { avatar, layout, type Chrome, type Mode } from './shell.js'
+import { avatar, icon, KIND_LABEL, layout, type Chrome, type Mode } from './shell.js'
 import type { Arrival } from './dock.js'
 import type { Actor } from './writer.js'
 
@@ -30,6 +33,17 @@ const fmt = (d: Date | string | null | undefined) => {
   const date = typeof d === 'string' ? new Date(d) : d
   return date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, 'Z')
 }
+
+/**
+ * A date at the precision the claim actually supports.
+ *
+ * "Observed since" is a fact about this index, not about the organization, and
+ * an index rebuild moves it. A month is about as much as that deserves on the
+ * line; the exact moment stays on hover, where somebody checking rather than
+ * reading will look for it.
+ */
+const monthYear = (d: Date) =>
+  `${d.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' })} ${d.getUTCFullYear()}`
 
 const short = (s: string, n = 14) =>
   s.length <= n * 2 ? s : `${s.slice(0, n)}…${s.slice(-6)}`
@@ -346,7 +360,8 @@ export function partPage(params: {
               <a href="${postPath(r.uri)}">${r.organizationName}</a>
             </div>
             <div class="detail">
-              ${nameOf(r.issuerDid)} · form <span class="mono">${r.formNumber}</span>
+              <a href="${profilePath(r.issuerDid, handles)}">${nameOf(r.issuerDid)}</a>
+              · form <span class="mono">${r.formNumber}</span>
             </div>
             <div class="detail muted">
               work performed is committed but not published —
@@ -361,7 +376,8 @@ export function partPage(params: {
                   <div>
                     <div class="label">Independently checked by</div>
                     ${checks.map(
-                      (a) => html`<span>${nameOf(a.verifierDid)}</span><br>`,
+                      (a) => html`<a href="${profilePath(a.verifierDid, handles)}"
+                        >${nameOf(a.verifierDid)}</a><br>`,
                     )}
                   </div>
                 </div>`
@@ -427,7 +443,8 @@ export function dashboardPage(params: {
             <tr><th>Issuer</th><th>Releases</th><th>Independently checked</th></tr>
             ${params.issuers.map(
               (s) => html`<tr>
-                <td title="${s.did}">${nameParty(s.did, params.names, params.handles, 12)}</td>
+                <td><a href="${profilePath(s.did, params.handles)}" title="${s.did}"
+                  >${nameParty(s.did, params.names, params.handles, 12)}</a></td>
                 <td>${s.releases}</td>
                 <td>
                   ${s.attested === 0 ? '—' : `${s.attested} of ${s.releases}`}
@@ -577,6 +594,23 @@ const ago = (at: Date, now: Date) => {
   return `${Math.round(s / 86400)}d ago`
 }
 
+/**
+ * Where an organization's account page lives.
+ *
+ * Addressed by handle when one is known, because a handle is a domain the
+ * organization proved control of and is the half of the identity a person can
+ * read, type or recognise. The DID is the fallback and is equally valid — the
+ * route resolves either — so an organization this observer never resolved a
+ * handle for still gets a working link rather than none.
+ */
+export function profilePath(
+  did: string,
+  handles?: Map<string, string>,
+): string {
+  const h = handles?.get(did)
+  return `/profile/${encodeURIComponent(h && h !== did ? h : did)}`
+}
+
 /** at://did/collection/rkey → the permalink this app serves it at. */
 export function postPath(uri: string): string {
   const parts = uri.split('/')
@@ -668,6 +702,18 @@ export function feedCard(
 ): HtmlEscapedString | Promise<HtmlEscapedString> {
   const nameOf = (did: string) => nameParty(did, names, handles)
 
+  /**
+   * A party's name, leading to their account page.
+   *
+   * Every organization on a card is now a way into everything that
+   * organization has signed, which is the move that turns a feed of unrelated
+   * documents into a network you can walk. The title keeps the DID reachable
+   * on hover, where it was before.
+   */
+  const named = (did: string, display?: string) =>
+    html`<a class="byline" href="${profilePath(did, handles)}"
+      title="${did}"><strong>${display ?? nameOf(did)}</strong></a>`
+
   // What the viewpoint control changes, and all it changes: which events are
   // marked as involving you. It grants no extra visibility — the withheld
   // blocks stay withheld whoever is looking, because the index never held
@@ -681,8 +727,7 @@ export function feedCard(
   // actually cryptographically meaningful, and it is also nine characters of
   // base32 that nobody reads — so it stays available on hover and on the
   // record's own page, and out of the way of the sentence.
-  const byline = (did: string) =>
-    html`<strong title="${did}">${nameOf(did)}</strong>${yours(did)}`
+  const byline = (did: string) => html`${named(did)}${yours(did)}`
 
   if (event.kind === 'release') {
     const r = event.release
@@ -690,7 +735,10 @@ export function feedCard(
     return html`<article class="event" data-cid="${r.cid}">
       <div class="who">
         ${avatar(r.organizationName, true)}
-        <strong title="${r.issuerDid}">${r.organizationName}</strong>${yours(r.issuerDid)}
+        <!-- Block 4 of the form rather than the station profile: this is the
+             name the issuer committed to on this document, and it is the one
+             that would have to change for the commitment to break. -->
+        ${named(r.issuerDid, r.organizationName)}${yours(r.issuerDid)}
         issued a release certificate
         <span class="when"><a href="${postPath(r.uri)}"
           >${ago(r.completedAt, now)}</a></span>
@@ -787,7 +835,8 @@ export function threadPage(params: {
       <div class="who">
         ${avatar(r.organizationName)}
         <span class="ident">
-          <strong>${r.organizationName}</strong>
+          <a class="byline" href="${profilePath(r.issuerDid, params.handles)}"
+            ><strong>${r.organizationName}</strong></a>
           <span class="hnd mono" title="${r.issuerDid}">${short(r.issuerDid, 14)}</span>
         </span>
       </div>
@@ -822,7 +871,9 @@ export function threadPage(params: {
             (a) => html`<article class="event attested reply" data-cid="${a.cid}">
               <div class="who">
                 ${avatar(nameOf(a.verifierDid), true)}
-                <strong>${nameOf(a.verifierDid)}</strong> accepted this certificate
+                <a class="byline" href="${profilePath(a.verifierDid, params.handles)}"
+                  title="${a.verifierDid}"><strong>${nameOf(a.verifierDid)}</strong></a>
+                accepted this certificate
                 <span class="when">${ago(a.verifiedAt, now)}</span>
               </div>
               <div class="meta">
@@ -832,6 +883,281 @@ export function threadPage(params: {
             </article>`,
           )}
     </div>`,
+    params.mode,
+    params.chrome,
+  )
+}
+
+/* ---------------------------------------------------------------- account */
+
+export type AccountTab = 'releases' | 'attestations' | 'network'
+
+/**
+ * The organizations one account is on the record with.
+ *
+ * The nearest thing this network has to a social graph, and it is built from
+ * records rather than from follows — nobody here declares a relationship, so
+ * every organization on this list had to be earned by publishing something.
+ *
+ * Two things put one here. A shared chain: a release names its predecessor, so
+ * two organizations that certified the same part are linked through it. And an
+ * attestation either published on the other's release.
+ *
+ * They are pooled rather than separated, and the pooling is what lets the page
+ * make the weaker claim. Split into "certified this account's parts before it
+ * did" and the rest, the headings were asserting a direction and a role — and
+ * a `prev` link cannot carry that weight, because it is the issuer's own claim
+ * about which record came before theirs and a part can change hands more than
+ * once between two certificates. Interaction is what the records actually
+ * support: these organizations published records about the same parts, or
+ * about each other. Who supplied whom is not in evidence and is not claimed.
+ *
+ * The connecting records are counted to order the list and then not shown. A
+ * number beside each name invited exactly the reading the pooling exists to
+ * avoid — that four records make a stronger or more trustworthy relationship
+ * than one, when what they mostly make is an older one.
+ */
+function relatedList(params: {
+  relations: Relation[]
+  actors: Map<string, ActorRow>
+}) {
+  // Four relationship kinds collapse into one row per organization. An
+  // organization that both shares a chain and published a check is one
+  // organization, more strongly connected — not two entries.
+  const totals = new Map<string, number>()
+  for (const r of params.relations) {
+    totals.set(r.did, (totals.get(r.did) ?? 0) + r.count)
+  }
+
+  const nameFor = (did: string) => {
+    const a = params.actors.get(did)
+    return a?.displayName ?? a?.handle ?? short(did, 12)
+  }
+
+  const rows = [...totals]
+    .sort(([aDid, a], [bDid, b]) => b - a || nameFor(aDid).localeCompare(nameFor(bDid)))
+
+  if (rows.length === 0) {
+    return html`<div class="card"><div class="empty">
+      This account has not interacted with anybody on the network yet.
+    </div></div>`
+  }
+
+  return html`<p class="relnote">
+      Organizations this account has interacted with on the network.
+    </p>
+    <div class="card">
+      ${rows.map(([did]) => {
+        const actor = params.actors.get(did)
+        const name = nameFor(did)
+        return html`<a class="relrow"
+          href="${profilePath(did, new Map([[did, actor?.handle ?? did]]))}">
+          ${avatar(name, true)}
+          <span class="rident">
+            <strong>${name}</strong>
+            ${actor?.kind
+              ? html`<em>${KIND_LABEL[actor.kind] ?? actor.kind}</em>`
+              : ''}
+          </span>
+        </a>`
+      })}
+    </div>`
+}
+
+/**
+ * One organization: who it says it is, and everything it has signed.
+ *
+ * The shape is a social profile because the data underneath is one. An account
+ * here is an atproto repository, its releases are the records it authored, and
+ * its attestations are records it authored about somebody else's — which is a
+ * post and a reply. So the page is a header over a feed, and the feed is drawn
+ * by the same `feedCard` the front page uses rather than by a second template
+ * that would drift from it.
+ *
+ * Two tabs rather than one merged list, because the two answer different
+ * questions and the second one is the one nobody thinks to ask. "What has this
+ * shop issued" is the obvious question. "What has this shop checked" is how you
+ * find out that eleven of the twenty-nine organizations here issue nothing at
+ * all and exist entirely as readers — the operators, brokers and lessors, whose
+ * account pages would otherwise be permanently empty and would say, wrongly,
+ * that they do nothing.
+ *
+ * Nothing on this page is a verdict. The counts are arithmetic over what this
+ * one observer indexed, and thin coverage is reported as two numbers rather
+ * than as a score for the reason the whole application is built around: most
+ * checks in a real supply chain are never announced, so an uncounted release is
+ * overwhelmingly an unremarkable one.
+ */
+export function accountPage(params: {
+  chrome?: Chrome
+  mode?: Mode
+  account: ActorRow
+  stats: AccountStats
+  tab: AccountTab
+  /** Whatever the chosen tab shows, already ordered newest first. */
+  events: FeedEvent[]
+  handles: Map<string, string>
+  names?: Map<string, string>
+  /** Releases the checks on screen are about, for the quoted cards. */
+  subjects?: Map<string, ReleaseRow>
+  /** How many published checks each release on this page has drawn. */
+  replies?: Map<string, number>
+  /** The network tab's content. Fetched only when that tab is the one open. */
+  relations?: Relation[]
+  /** Profiles for the organizations the network tab names. */
+  relatedActors?: Map<string, ActorRow>
+  /** The DID the visitor is acting as, so their own records are marked. */
+  viewer?: string
+  now?: Date
+}) {
+  const a = params.account
+  const now = params.now ?? new Date()
+  const name = a.displayName ?? a.handle
+  const role = a.kind ? (KIND_LABEL[a.kind] ?? a.kind) : null
+  const handleKnown = a.handle !== a.did
+  const base = profilePath(a.did, new Map([[a.did, a.handle]]))
+  const tabHref = (tab: AccountTab) =>
+    tab === 'releases' ? base : `${base}?tab=${tab}`
+
+  const fact = (label: string, value: string) =>
+    html`<div><dt>${label}</dt><dd class="mono">${value}</dd></div>`
+
+  return layout(
+    name,
+    html`<section class="account">
+      <div class="who">
+        ${avatar(name)}
+        <span class="ident">
+          <h1>${name}</h1>
+          ${role ? html`<span class="role">${role}</span>` : ''}
+        </span>
+      </div>
+
+      <!-- The handle is not decoration. An organization's handle here is its
+           domain, verified through DNS, which is what makes forgery at the
+           source expensive: issuing under this name means controlling this
+           domain and the signing key in the DID document behind it.
+           The @ is borrowed from every social client that ever showed one,
+           and it earns the borrowing: it says at a glance that the string is
+           somebody's name on a network rather than a link or a hostname. -->
+      <div class="hnd">
+        ${handleKnown
+          ? html`<span class="at mono">@${a.handle}</span>`
+          : html`<span class="unresolved">This observer has not resolved a
+              handle for this account.</span>`}
+        <!-- Deliberately not "member since". Nothing on this network records
+             when an organization joined it, and there is no membership to
+             date from — an account is a repository that started publishing.
+             So the claim is the one this observer can actually support: when
+             it first saw that happen. It moves if the index is rebuilt, which
+             is why the exact moment is on hover and only the month is on the
+             line. -->
+        ${a.firstSeen
+          ? html`<span class="since" title="First record observed here ${fmt(a.firstSeen)}"
+            >Observed since ${monthYear(a.firstSeen)}</span>`
+          : ''}
+      </div>
+
+      <dl class="facts">
+        ${a.cage ? fact('CAGE', a.cage) : ''}
+        ${a.certificate ? fact('Certificate', a.certificate) : ''}
+        ${fact('DID', a.did)}
+      </dl>
+
+      <!-- One word under each number. The words carried their own
+           explanations before, which made three counts read as three
+           sentences and buried the figures they were about; what a count
+           means belongs on hover and in the tab it leads to. -->
+      <div class="counts">
+        <div title="Release certificates issued from this repository"
+          ><b>${params.stats.releases}</b><span>Releases</span></div>
+        <!-- Still two numbers rather than one, and still never a score. A
+             release nobody has vouched for is the ordinary case: most checks
+             in a real supply chain are never announced at all. -->
+        <div title="Releases of this account's that somebody else has published an attestation on"
+          ><b>${params.stats.releases === 0
+            ? // "0 of 0" is not a fact about coverage, it is a restatement of
+              // the count beside it, and on an operator — which issues nothing
+              // by design — it reads as a shortfall rather than as a category
+              // that does not apply.
+              '—'
+            : `${params.stats.attested} of ${params.stats.releases}`}</b
+          ><span>Vouched</span></div>
+        <div title="Attestations this account published on other organizations' releases"
+          ><b>${params.stats.checks}</b><span>Attestations</span></div>
+      </div>
+
+      <!-- The disclaimer, in one line rather than four.
+           It used to explain the whole of why a station profile is not
+           evidence, which is true, correct, and three sentences of throat-
+           clearing above the thing the reader came for. The argument belongs
+           in the documentation; what belongs here is the fact and the
+           recourse — and naming the recourse is the honest half, because this
+           application is not it. No AppView can adjudicate a false profile,
+           and one that offered a "report" button would be claiming an
+           authority nobody has given it. -->
+      ${a.displayName
+        ? html`<p class="selfsaid">
+            Profile details are provided by the account holder and verified by
+            nobody. Anything suspicious is for your governing regulatory
+            authority, not for this application.
+          </p>`
+        : html`<p class="noprofile">
+            This organization has published no profile, so this observer knows
+            it only as a repository that signs records.
+          </p>`}
+    </section>
+
+    <!-- "Attestations" rather than "checks", and the word matters more than
+         it looks. Verification in this application is the seven-stage
+         pipeline run against a document you are holding — a private act,
+         which is why a failure is not publishable. An attestation is the
+         record somebody signs afterwards to say it held. Calling the tab
+         "verifications" would name the act rather than the records under it,
+         and would collide with the page that actually does the verifying. -->
+    <nav class="tabs">
+      <a href="${tabHref('releases')}" class="${params.tab === 'releases' ? 'on' : ''}"
+        >Releases<span class="n">${params.stats.releases}</span></a>
+      <a href="${tabHref('attestations')}"
+        class="${params.tab === 'attestations' ? 'on' : ''}"
+        >Attestations<span class="n">${params.stats.checks}</span></a>
+      <!-- No count. The other two are already in hand from the stats query;
+           this one would cost a fourth aggregate on every profile view to
+           put a number on a tab, and the tab is the thing worth having. -->
+      <a href="${tabHref('network')}" class="${params.tab === 'network' ? 'on' : ''}"
+        >Network</a>
+    </nav>
+
+    ${params.tab === 'network'
+      ? html`<div class="network">
+          ${relatedList({
+            relations: params.relations ?? [],
+            actors: params.relatedActors ?? new Map(),
+          })}
+        </div>`
+      : html`<div class="feed">
+      ${params.events.length === 0
+        ? html`<div class="card"><div class="empty">
+            <!-- One sentence. An empty tab is not the place to teach the
+                 design: a reader who has landed on an operator with no
+                 releases wants to know that, not to be held there for a
+                 paragraph about why. -->
+            ${params.tab === 'releases'
+              ? html`This observer has seen no release certificates from ${name}.`
+              : html`${name} has published no attestations.`}
+          </div></div>`
+        : params.events.map((e) =>
+            feedCard(
+              e,
+              params.handles,
+              now,
+              params.viewer,
+              params.replies,
+              params.names,
+              params.subjects,
+            ),
+          )}
+        </div>`}`,
     params.mode,
     params.chrome,
   )
@@ -1027,37 +1353,6 @@ const VERIFY_SCRIPT = `
  * server, and a stylesheet that fetches an icon font is a network round trip
  * for something that is four hundred bytes of markup.
  */
-const ICONS: Record<string, string> = {
-  // circle-check
-  check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
-  // circle-x
-  cross: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
-  // megaphone
-  megaphone:
-    '<path d="M11 6a13 13 0 0 0 8.4-2.8A1 1 0 0 1 21 4v12a1 1 0 0 1-1.6.8A13 13 0 0 0 11 14H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/>' +
-    '<path d="M6 14a12 12 0 0 0 2.4 7.2 2 2 0 0 0 3.2-2.4A8 8 0 0 1 10 14"/>' +
-    '<path d="M8 6v8"/>',
-  // file-text
-  document:
-    '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/>' +
-    '<path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
-  // package
-  part:
-    '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/>' +
-    '<path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/>',
-  // chevron-down
-  chevron: '<path d="m6 9 6 6 6-6"/>',
-}
-
-function icon(name: string) {
-  return raw(
-    `<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
-      `stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
-      (ICONS[name] ?? '') +
-      `</svg>`,
-  )
-}
-
 /**
  * A section of a page: named, collapsible, and stating its own condition.
  *

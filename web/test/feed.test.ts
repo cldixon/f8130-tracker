@@ -166,8 +166,11 @@ describe('the feed page', () => {
     })
     const body = await (await app.request('/')).text()
 
-    assert.match(body, /title="did:plc:issuer">Cascadia MRO/)
-    assert.match(body, /title="did:plc:operator">Example Air/)
+    // The byline is now the link to the account page, so the DID rides on the
+    // anchor rather than on the name it wraps. Still on hover, still not in
+    // the sentence, which is the whole of what this test is about.
+    assert.match(body, /title="did:plc:issuer"><strong>Cascadia MRO/)
+    assert.match(body, /title="did:plc:operator"><strong>Example Air/)
     // Not rendered into the line itself any more.
     assert.ok(!body.includes('class="did"'), 'a DID is back in the content')
   })
@@ -951,7 +954,7 @@ describe('the feed over a production-shaped index', () => {
   test('a station record still gives the receiver its display name', async () => {
     const { app } = await liveShaped({ handle: `example-air.${DOMAIN}`, name: 'Example Air' })
     const who = card(await (await app.request('/')).text())
-    assert.match(who, /Example Air<\/strong> accepted this certificate/)
+    assert.match(who, /Example Air<\/strong><\/a> accepted this certificate/)
   })
 
   /**

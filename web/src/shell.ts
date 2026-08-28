@@ -344,14 +344,20 @@ a.button:hover { filter: brightness(1.08); }
 .panel > summary::-webkit-details-marker { display: none; }
 .panel > summary:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .panel .pmark { flex: 0 0 auto; display: flex; color: var(--muted); }
-.panel .ico-svg { width: 1.15rem; height: 1.15rem; display: block; }
 .panel .ptitle { font-weight: 600; }
-.panel .pchev {
+.ico-svg { width: 1.15rem; height: 1.15rem; display: block; }
+/* The disclosure mark, wherever a <details> opens. Scoped to the element
+   rather than to the panel, because the account switcher is the same gesture
+   and was drawing a Unicode triangle at .7rem to say so — which rendered at
+   whatever size and weight the reader's font stack felt like, sat beside
+   stroked SVGs everywhere else, and pointed the same way whether it was open
+   or shut. */
+.pchev {
   flex: 0 0 auto; margin-left: auto; display: flex; color: var(--muted);
   transition: transform .18s ease-out;
 }
-.panel .pchev .ico-svg { width: 1.05rem; height: 1.05rem; }
-.panel[open] > summary .pchev { transform: rotate(180deg); }
+.pchev .ico-svg { width: 1.05rem; height: 1.05rem; }
+details[open] > summary .pchev { transform: rotate(180deg); }
 .panel .pbody { padding: 0 1rem 1rem; }
 .panel .pbody > .sub:first-child { margin-top: 0; }
 
@@ -574,7 +580,7 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
 .me .who b { display: block; font-size: .85rem; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .me .who em { font-style: normal; font-size: .72rem; color: var(--muted); }
-.me .caret { margin-left: auto; color: var(--muted); font-size: .7rem; }
+
 
 .switcher {
   max-height: 22rem; overflow-y: auto; margin: .3rem 0 0;
@@ -623,6 +629,98 @@ main { padding: 1.25rem 0 5rem; min-width: 0; }
 }
 .act:hover { background: var(--skip-bg); }
 .post .meta { margin-top: .6rem; font-size: .78rem; color: var(--muted); }
+
+/* account page
+
+   The header a social client puts above somebody's posts, with the two things
+   a social client has and this does not left out. There is no cover image and
+   no bio, because an organization publishes neither and inventing them would
+   be the application asserting something the network never said.
+
+   What is here instead is the station record: a name, a role, a commercial
+   identifier and a certificate number, each of them self-asserted and none of
+   them committed to by any release. The page says so once, at the bottom,
+   rather than hedging every field. */
+.account {
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 1.1rem 1.15rem;
+}
+.account .who { display: flex; align-items: center; gap: .8rem; }
+.account .av { width: 3.25rem; height: 3.25rem; font-size: 1.1rem; }
+.account .ident { min-width: 0; }
+.account .ident h1 { font-size: 1.35rem; margin: 0; }
+.account .ident .role { color: var(--muted); font-size: .86rem; }
+/* The handle is a domain the organization proved control of through DNS, which
+   is the load-bearing half of the identity — so it gets its own line at full
+   size rather than being tucked in beside the name. */
+.account .hnd {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .9rem;
+  margin-top: .55rem; font-size: .88rem;
+}
+.account .hnd .at { word-break: break-all; }
+.account .hnd .unresolved { color: var(--muted); }
+.account .hnd .since { color: var(--muted); font-size: .8rem; cursor: help; }
+.account .facts {
+  display: flex; flex-wrap: wrap; gap: .3rem 1.5rem; margin: .85rem 0 0;
+  padding-top: .8rem; border-top: 1px solid var(--line);
+}
+.account .facts > div { display: flex; align-items: baseline; gap: .4rem; min-width: 0; }
+.account .facts dt {
+  font-size: .62rem; font-weight: 700; letter-spacing: .08em;
+  color: var(--muted); text-transform: uppercase; white-space: nowrap;
+}
+.account .facts dd { margin: 0; font-size: .85rem; word-break: break-all; }
+/* Counts, not a score. Three numbers with the sentence that says what each one
+   is, because "5 of 12" over a shop means nothing without "checked by someone
+   other than the shop". */
+.account .counts {
+  display: flex; flex-wrap: wrap; gap: .35rem 1.6rem; margin-top: .85rem;
+  padding-top: .8rem; border-top: 1px solid var(--line);
+}
+/* Number over word, the way a social client stacks a follower count. The
+   figure is what the eye lands on and the label only tells it what it landed
+   on, which is the arrangement that survives three counts side by side. */
+.account .counts > div { display: flex; flex-direction: column; gap: .05rem; cursor: help; }
+.account .counts b { color: var(--fg); font-size: 1.15rem; font-weight: 700; }
+.account .counts span {
+  font-size: .7rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.account .selfsaid { margin: .8rem 0 0; font-size: .74rem; color: var(--muted); }
+.account .noprofile {
+  margin: .85rem 0 0; padding-top: .8rem; border-top: 1px solid var(--line);
+  font-size: .82rem; color: var(--muted);
+}
+
+/* Two tabs, and they are two collections in one repository rather than two
+   filters over one list: a release is a record this account signed about a
+   part, a check is a record it signed about somebody else's release. */
+.tabs { display: flex; gap: .25rem; margin: 1rem 0 .6rem; border-bottom: 1px solid var(--line); }
+.tabs a {
+  padding: .55rem .85rem; font-size: .9rem; text-decoration: none;
+  color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tabs a:hover { color: var(--fg); }
+.tabs a.on { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
+.tabs a .n { font-weight: 400; color: var(--muted); margin-left: .3rem; font-size: .82rem; }
+
+/* The network tab. */
+.relnote { margin: 0 0 .7rem; font-size: .78rem; color: var(--muted); }
+.relrow {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .65rem .9rem; border-bottom: 1px solid var(--line);
+  text-decoration: none; color: inherit;
+}
+.relrow:last-child { border-bottom: 0; }
+.relrow:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.rident { min-width: 0; flex: 1; }
+.rident strong { display: block; font-size: .92rem; }
+.rident em { font-style: normal; font-size: .74rem; color: var(--muted); }
+
+/* A name that leads to its account page. Underlined only on hover, because
+   every card carries one and a feed of blue links reads as a link farm. */
+a.byline { color: inherit; text-decoration: none; }
+a.byline:hover { text-decoration: underline; text-decoration-color: var(--accent); }
 
 .replies { margin-top: .6rem; display: flex; flex-direction: column; gap: .5rem; }
 /* Indented, and joined to the post above by a rail, because the nesting is
@@ -846,7 +944,7 @@ button.ghost:hover { background: var(--skip-bg); }
 export type Mode = 'demo' | 'live'
 
 /** Which rail entry is lit. */
-export type NavKey = 'home' | 'inbox' | 'issuers' | 'docs' | null
+export type NavKey = 'home' | 'inbox' | 'issuers' | 'profile' | 'docs' | null
 
 /**
  * The one piece of per-request state every page shares: who the visitor is
@@ -897,7 +995,59 @@ export function avatar(name: string, small = false) {
     style="background:hsl(${h % 360} 42% 40%)">${initials}</span>`
 }
 
-const KIND_LABEL: Record<string, string> = {
+/**
+ * The icon set, and the one function that draws from it.
+ *
+ * Here rather than in views.ts because shell.ts already owns the stylesheet
+ * these are sized by, and because the account switcher needs the chevron —
+ * views.ts imports from this module, so the set could not stay there without
+ * either a cycle or a second copy of the same path data. The site had one
+ * disclosure affordance drawn as an SVG chevron and another as a Unicode
+ * triangle for exactly that reason.
+ *
+ * Lucide paths, all on a 24-unit box with a 2-unit stroke, so they sit
+ * together at any size.
+ */
+const ICONS: Record<string, string> = {
+  // circle-check
+  check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  // circle-x
+  cross: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+  // megaphone
+  megaphone:
+    '<path d="M11 6a13 13 0 0 0 8.4-2.8A1 1 0 0 1 21 4v12a1 1 0 0 1-1.6.8A13 13 0 0 0 11 14H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/>' +
+    '<path d="M6 14a12 12 0 0 0 2.4 7.2 2 2 0 0 0 3.2-2.4A8 8 0 0 1 10 14"/>' +
+    '<path d="M8 6v8"/>',
+  // file-text
+  document:
+    '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/>' +
+    '<path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  // package
+  part:
+    '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/>' +
+    '<path d="M12 22V12"/><polyline points="3.29 7 12 12 20.71 7"/><path d="m7.5 4.27 9 5.15"/>',
+  // chevron-down
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+}
+
+export function icon(name: string) {
+  return raw(
+    `<svg class="ico-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+      `stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+      (ICONS[name] ?? '') +
+      `</svg>`,
+  )
+}
+
+/**
+ * What each role is called on screen.
+ *
+ * Exported because the account page needs the same words the identity
+ * switcher uses. One organization described as a "Repair station" in the rail
+ * and an "mro" on its own page is the kind of small inconsistency that reads
+ * as two different systems.
+ */
+export const KIND_LABEL: Record<string, string> = {
   oem: 'Manufacturer',
   mro: 'Repair station',
   operator: 'Operator',
@@ -926,7 +1076,7 @@ function identity(chrome: Chrome) {
         <b>${me ? me.displayName : 'The public'}</b>
         <em>${me ? (KIND_LABEL[me.kind] ?? me.kind) : 'signed out'}</em>
       </span>
-      <span class="caret">▾</span>
+      <span class="pchev">${icon('chevron')}</span>
     </summary>
     <form method="post" action="/act-as" class="switcher">
       <h4>Watch without an account</h4>
@@ -1193,6 +1343,13 @@ export function layout(
         : ''}
       <a href="/parts" class="${on('issuers')}"><span class="ico">▤</span>
         <span class="full">Issuers</span><span class="tab">Issuers</span></a>
+      <!-- Only when somebody is signed in, because the public is not an
+           organization and has no repository to show. -->
+      ${me
+        ? html`<a href="/profile/${encodeURIComponent(me.handle)}"
+            class="${on('profile')}"><span class="ico">☉</span>
+            <span class="full">Profile</span><span class="tab">Profile</span></a>`
+        : ''}
       <a href="/cabinet" class="${on('docs')}"><span class="ico">▣</span>
         <span class="full">Documents</span><span class="tab">Docs</span></a>
     </nav>

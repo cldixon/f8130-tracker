@@ -69,11 +69,28 @@ async function main() {
     // empty until the generator produces its first event, and the part page
     // for the sample bundles has nothing to show.
     const seen = new Date(Date.now() - 60_000)
+    const cast = demoActors(domain)
     for (const [handle, issued, prev] of [
       ['northwind-turbine.' + domain, birth, undefined],
       ['cascadia-mro.' + domain, overhaul, { uri: birth.uri, cid: String(birth.cid) }],
     ] as const) {
-      memory.setHandle(issued.uri.split('/')[2]!, handle)
+      const did = issued.uri.split('/')[2]!
+      memory.setHandle(did, handle)
+      // The station record these two would have published, which the writer
+      // does for anybody who issues through the app but nothing did for the
+      // pair signed before an index existed. Without it their account pages
+      // were the only two in the demonstration with no name on them.
+      const org = cast.find((a) => a.handle === handle)
+      if (org) {
+        memory.setActor({
+          did,
+          displayName: org.displayName,
+          kind: org.kind,
+          cage: org.cage ?? null,
+          certificate: org.certificate ?? null,
+          firstSeen: seen,
+        })
+      }
       memory.addRelease(
         releaseRow({
           uri: issued.uri,

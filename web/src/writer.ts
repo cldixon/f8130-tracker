@@ -37,6 +37,16 @@ export type Actor = {
   handle: string
   displayName: string
   kind: OrgKind
+  /**
+   * The two self-asserted identifiers a station record carries.
+   *
+   * Here so that demo mode can stand in for a station record completely rather
+   * than nearly: on the live path these reach the index off the firehose, and
+   * an account page that showed a CAGE code in production and a blank in the
+   * demonstration would be describing a difference that is not real.
+   */
+  cage?: string
+  certificate?: string
 }
 
 export type Written = { uri: string; cid: string }
@@ -181,6 +191,8 @@ export function demoActors(domain: string): Actor[] {
     handle: org.handle,
     displayName: org.displayName,
     kind: org.kind,
+    cage: org.cage,
+    ...(org.certificate ? { certificate: org.certificate } : {}),
   }))
 }
 
@@ -213,7 +225,13 @@ export class MemoryRecordWriter implements RecordWriter {
       addRelease(row: any): void
       addAttestation(row: any): void
       setHandle(did: string, handle: string): void
-      setActor(row: { did: string; displayName: string | null; kind: string | null }): void
+      setActor(row: {
+        did: string
+        displayName: string | null
+        kind: string | null
+        cage?: string | null
+        certificate?: string | null
+      }): void
     },
     private readonly cast: Actor[],
   ) {}
@@ -232,7 +250,13 @@ export class MemoryRecordWriter implements RecordWriter {
   private profile(did: string, handle: string): void {
     const actor = this.cast.find((a) => a.handle === handle)
     if (!actor) return
-    this.index.setActor({ did, displayName: actor.displayName, kind: actor.kind })
+    this.index.setActor({
+      did,
+      displayName: actor.displayName,
+      kind: actor.kind,
+      cage: actor.cage ?? null,
+      certificate: actor.certificate ?? null,
+    })
   }
 
   async createRelease(params: {

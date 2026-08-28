@@ -239,13 +239,15 @@ func upsertStation(ctx context.Context, tx pgx.Tx, rec IndexedRecord) error {
 		handle = did
 	}
 	_, err := tx.Exec(ctx, `
-		INSERT INTO actor (did, handle, org_name, kind, cert_number)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO actor (did, handle, org_name, kind, cert_number, cage)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (did) DO UPDATE SET
 			org_name    = EXCLUDED.org_name,
 			kind        = EXCLUDED.kind,
-			cert_number = EXCLUDED.cert_number
-	`, did, handle, st.DisplayName, st.Kind, nullIfEmpty(st.Certificate))
+			cert_number = EXCLUDED.cert_number,
+			cage        = EXCLUDED.cage
+	`, did, handle, st.DisplayName, st.Kind,
+		nullIfEmpty(st.Certificate), nullIfEmpty(st.CAGE))
 	return err
 }
 

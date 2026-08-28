@@ -20,6 +20,7 @@ import {
 
 import { createApp } from '../src/app.js'
 import type {
+  ActorRow,
   AttestationRow,
   IssuerStat,
   ReadIndex,
@@ -57,6 +58,22 @@ const emptyIndex = (over: Partial<ReadIndex> = {}): ReadIndex => ({
   issuerStats: async () => [],
   handleFor: async () => null,
   actorsFor: async () => new Map(),
+  accountFor: async () => null,
+  releasesByIssuer: async () => [],
+  attestationsByVerifier: async () => [],
+  accountStats: async () => ({ releases: 0, attested: 0, checks: 0 }),
+  relatedAccounts: async () => [],
+  ...over,
+})
+
+/** An indexed profile, with the fields a test does not care about filled in. */
+const actorRow = (over: Partial<ActorRow> & { did: string }): ActorRow => ({
+  handle: over.did,
+  displayName: null,
+  kind: null,
+  cage: null,
+  certificate: null,
+  firstSeen: null,
   ...over,
 })
 
@@ -300,7 +317,7 @@ describe('browsing with an index', () => {
           new Map(
             dids.map((did) => [
               did,
-              { did, displayName: 'Cascadia MRO', kind: 'mro' as const },
+              actorRow({ did, displayName: 'Cascadia MRO', kind: 'mro' }),
             ]),
           ),
       }),

@@ -14,8 +14,19 @@ CREATE TABLE IF NOT EXISTS actor (
   -- which point the two lessors on the roster would have failed the check on
   -- insert. Nothing had ever written this column, so nothing had ever noticed.
   kind         TEXT CHECK (kind IN ('oem', 'mro', 'operator', 'broker', 'lessor')),
+  -- Fictional commercial identifier, seven characters so it cannot collide
+  -- with a real five-character CAGE code. Decoded off the station record since
+  -- station records were first indexed, and until the account page existed
+  -- there was nowhere to put it, so it was decoded and thrown away.
+  cage         TEXT,
   first_seen   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a
+-- column added after the first deployment needs saying twice. Idempotent, and
+-- the value arrives on the next station record this observer sees -- or on the
+-- next `ingest reindex`, which re-reads every profile from the repositories.
+ALTER TABLE actor ADD COLUMN IF NOT EXISTS cage TEXT;
 
 CREATE TABLE IF NOT EXISTS release (
   cid           TEXT PRIMARY KEY,
