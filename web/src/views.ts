@@ -1736,53 +1736,6 @@ export const inboxCheckBody = receivedBody
 /** The received certificate, without a page around it. */
 export const inboxScanBody = receivedBody
 
-/* --------------------------------------------------------------- cabinet */
-
-/**
- * What this browser is holding.
- *
- * Rendered client-side from localStorage, because that is genuinely where the
- * documents are. The server sends an empty shell and could not fill it in if
- * it wanted to: it has never seen these bundles and must never store one.
- *
- * The demonstration that matters is on the record page rather than here — an
- * issuer opening a form they issued and finding every withheld block readable,
- * not because they are signed in but because they hold the nonces. No service
- * granted that and no service can withdraw it.
- */
-export function cabinetPage(params: { chrome?: Chrome; mode?: Mode }) {
-  return layout(
-    'Your documents',
-    html`<h1>Your documents</h1>
-    <p class="sub">
-      Bundles this browser is holding. A bundle opens every withheld block on
-      the record it belongs to.
-    </p>
-
-    <div class="seam">
-      <strong>These are not stored on this server.</strong> They are in your
-      browser only. Clearing your site data deletes them, and they cannot be
-      reissued.
-    </div>
-
-    <div class="card" id="cabinet">
-      <div class="empty">Reading this browser&rsquo;s storage&hellip;</div>
-    </div>
-
-    <h2>What you can do with one</h2>
-    <div class="pactions">
-      <a class="act" href="/verify">Check a document</a>
-      <a class="act" href="/disclose">Prove one field</a>
-    </div>
-    <p class="sub">
-      Checking works on any bundle, including one somebody else handed you.
-      Proving one field builds a redacted copy that opens a single block.
-    </p>`,
-    params.mode,
-    params.chrome,
-  )
-}
-
 export function feedPage(params: {
   chrome?: Chrome
   mode?: Mode

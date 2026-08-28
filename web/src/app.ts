@@ -37,7 +37,6 @@ import type {
 } from './index-port.js'
 import {
   accountPage,
-  cabinetPage,
   dashboardPage,
   disclosePage,
   errorPage,
@@ -645,11 +644,7 @@ export function createApp(deps: AppDeps) {
   })
 
   // --------------------------------------------------------------- verify
-  app.get('/cabinet', (c) =>
-    c.html(cabinetPage({ mode, chrome: chrome(c, 'docs') })),
-  )
-
-  app.get('/verify', (c) => c.html(verifyPage(mode, undefined, undefined, chrome(c, 'docs'))))
+  app.get('/verify', (c) => c.html(verifyPage(mode, undefined, undefined, chrome(c))))
 
   app.post('/verify', async (c) => {
     const form = await c.req.parseBody()
@@ -661,7 +656,7 @@ export function createApp(deps: AppDeps) {
       parsed = JSON.parse(raw)
     } catch {
       return c.html(
-        verifyPage(mode, undefined, 'That is not valid JSON.', chrome(c, 'docs')),
+        verifyPage(mode, undefined, 'That is not valid JSON.', chrome(c)),
         400,
       )
     }
@@ -692,10 +687,10 @@ export function createApp(deps: AppDeps) {
             }
           : null
       return c.html(
-        verifyPage(mode, report, undefined, chrome(c, 'docs'), vouch?.subjectCid ? vouch : null),
+        verifyPage(mode, report, undefined, chrome(c), vouch?.subjectCid ? vouch : null),
       )
     } catch (err) {
-      return c.html(verifyPage(mode, undefined, describe(err), chrome(c, 'docs')), 400)
+      return c.html(verifyPage(mode, undefined, describe(err), chrome(c)), 400)
     }
   })
 
@@ -739,7 +734,7 @@ export function createApp(deps: AppDeps) {
 
   // ------------------------------------------------- selective disclosure
   app.get('/disclose', (c) =>
-    c.html(disclosePage({ mode, chrome: chrome(c, 'docs'), fields: FIELD_ORDER })),
+    c.html(disclosePage({ mode, chrome: chrome(c), fields: FIELD_ORDER })),
   )
 
   app.post('/disclose', async (c) => {
@@ -1162,7 +1157,7 @@ export function createApp(deps: AppDeps) {
           )
         }
         return c.html(
-          verifyPage(mode, undefined, undefined, chrome(c, 'docs'), null, written.uri),
+          verifyPage(mode, undefined, undefined, chrome(c), null, written.uri),
         )
       } catch (err) {
         return c.html(errorPage(400, describe(err)), 400)

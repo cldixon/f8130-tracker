@@ -1650,24 +1650,16 @@ describe('narrated forms reaching the wire', () => {
   })
 })
 
-describe('the filing cabinet', () => {
-  /**
-   * The rule this page exists to respect: a bundle carries every nonce, so a
-   * service that stored one could be compelled to hand over every withheld
-   * block on the record. It must never hold one, not even helpfully.
-   */
-  test('is the browser, and the page says the server holds nothing', async () => {
-    const { net } = await demoNetwork(DOMAIN)
-    const app = createApp({ resolver: net, repo: net, mode: 'live' })
-    const body = await (await app.request('/cabinet')).text()
-
-    assert.match(body, /not stored on this server/)
-    assert.match(body, /not stored on this server/)
-    // The list is empty markup; only a browser can fill it in.
-    assert.match(body, /id="cabinet"/)
-    assert.match(body, /Reading this browser/)
-  })
-
+/**
+ * Bundles live in the visitor's browser, never on this server — a bundle
+ * carries every nonce, so a service holding one could be compelled to hand
+ * over every withheld block on the record it belongs to.
+ *
+ * The page that listed what a browser was holding is gone with the Documents
+ * rail entry. The storage behind it is not, and these are the two things that
+ * were ever load-bearing about it.
+ */
+describe('bundles a browser is holding', () => {
   test('a record page offers to open itself with a bundle the browser holds', async () => {
     const { net, overhaul } = await demoNetwork(DOMAIN)
     const app = createApp({ resolver: net, repo: net, mode: 'live' })
@@ -1696,8 +1688,10 @@ describe('the shape on a phone', () => {
     const { app } = await feedApp((i) => i.addRelease(release()))
     const body = await (await app.request('/')).text()
 
-    // A rail has room for a word a tab bar under a thumb does not.
-    assert.match(body, /<span class="full">Documents<\/span><span class="tab">Docs<\/span>/)
+    // A rail has room for a word a tab bar under a thumb does not — and where
+    // it does not need one, both labels are still written out rather than one
+    // being inferred from the other.
+    assert.match(body, /<span class="full">Feed<\/span><span class="tab">Feed<\/span>/)
     assert.match(body, /<span class="full">Issuers<\/span><span class="tab">Issuers<\/span>/)
 
     // Both are in the markup rather than one being derived, so a screen
